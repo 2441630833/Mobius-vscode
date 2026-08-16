@@ -1,0 +1,80 @@
+/* Continue chat panel — Cursor-style single header row.
+ * Hide workbench title chrome only while Continue Chat owns the classic-IDE aux bar.
+ * Agents Window must keep Files / Changes composite-bar tabs visible. */
+
+.monaco-workbench .part.auxiliarybar.pane-composite-part:has(.composite#workbench\.panel\.chat) > .title,
+.monaco-workbench .part.auxiliarybar.pane-composite-part:has(.composite#workbench\.panel\.chat) > .composite.title {
+	display: none !important;
+}
+
+.monaco-workbench .part.auxiliarybar.pane-composite-part:has(.composite#workbench\.panel\.chat) > .title > .title-label,
+.monaco-workbench .part.auxiliarybar.pane-composite-part:has(.composite#workbench\.panel\.chat) > .composite.title > .title-label {
+	display: none !important;
+}
+
+.monaco-workbench .part.auxiliarybar.pane-composite-part:has(.composite#workbench\.panel\.chat) > .title.has-composite-bar > .composite-bar-container,
+.monaco-workbench .part.auxiliarybar.pane-composite-part:has(.composite#workbench\.panel\.chat) > .composite.title.has-composite-bar > .composite-bar-container {
+	display: none !important;
+}
+
+.monaco-workbench .part.auxiliarybar .composite#workbench\.panel\.chat .pane-body {
+	width: 100%;
+	min-width: 0;
+	max-width: 100%;
+	box-sizing: border-box;
+}
+
+.monaco-workbench .part.auxiliarybar .composite#workbench\.panel\.chat .pane-body:focus {
+	outline: none;
+}
+
+/* Hide duplicate New Chat split button — session tab bar has the single + control. */
+.monaco-workbench .part.auxiliarybar.pane-composite-part > .title .title-actions .action-item:has(.action-label[aria-label="New Chat"]),
+.monaco-workbench .part.auxiliarybar.pane-composite-part > .composite.title .title-actions .action-item:has(.action-label[aria-label="New Chat"]),
+.monaco-workbench .part.auxiliarybar.pane-composite-part > .title .title-actions .action-item:has(.action-label[aria-label="New Edits"]),
+.monaco-workbench .part.auxiliarybar.pane-composite-part > .composite.title .title-actions .action-item:has(.action-label[aria-label="New Edits"]),
+.monaco-workbench .part.auxiliarybar.pane-composite-part > .title .title-actions .action-item.menu-entry:has(.codicon-plus),
+.monaco-workbench .part.auxiliarybar.pane-composite-part > .composite.title .title-actions .action-item.menu-entry:has(.codicon-plus) {
+	display: none !important;
+}
+
+/* Mobius uses Continue — hide leftover Copilot auth chrome in the title bar. */
+.monaco-workbench .titlebar .action-item:has(.action-label[aria-label="Sign In"]),
+.monaco-workbench .titlebar .action-item:has(.action-label[aria-label="Accounts"]) {
+	display: none !important;
+}
+
+/* Copilot status-bar Sign In (icon + label + dropdown beak) when title bar sign-in is disabled */
+.monaco-workbench .part.statusbar .statusbar-item[id="chat.statusBarEntry"],
+.monaco-workbench .part.statusbar .items-container > .statusbar-item[id="chat.statusBarEntry"] {
+	display: none !important;
+}
+
+/* Hide Continue extension tab-autocomplete / Next Edit status chip in Mobius. */
+.monaco-workbench .part.statusbar .statusbar-item[id*="Continue.continue"],
+.monaco-workbench .part.statusbar .statusbar-item:has(a.statusbar-item-label[aria-label*="Continue"]),
+.monaco-workbench .part.statusbar .statusbar-item:has(a.statusbar-item-label[aria-label*="tab autocomplete"]),
+.monaco-workbench .part.statusbar .statusbar-item:has(a.statusbar-item-label[aria-label*="Next Edit"]) {
+	display: none !important;
+}
+
+/* Hide legacy Continue activity bar entry if persisted from an older build. */
+.monaco-workbench .part.activitybar .monaco-action-bar .action-item:has(.action-label[aria-label="Continue"]) {
+	display: none !important;
+}
+
+/* Activity bar footer: hide Accounts when preference was not persisted yet */
+.monaco-workbench .part.activitybar .monaco-action-bar .action-item:has(.action-label[aria-label="Accounts"]) {
+	display: none !important;
+}
+
+/* Continue chat panel: hide leftover Copilot settings gears (keep Continue "Open Settings"). */
+.monaco-workbench .part.auxiliarybar.pane-composite-part .action-item:has(.action-label[aria-label="Open Customizations"]),
+.monaco-workbench .part.auxiliarybar.pane-composite-part .action-item:has(.action-label[aria-label="Chat Settings"]) {
+	display: none !important;
+}
+
+.agent-sessions-workbench .part.titlebar .action-item:has(.sessions-account-titlebar-widget),
+.agent-sessions-workbench .mobile-account-indicator {
+	display: none !important;
+}
