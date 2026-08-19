@@ -35,6 +35,8 @@ import { IToggleChatModeArgs, ToggleAgentModeActionId } from '../../actions/chat
 import { ChatInputPickerActionViewItem, IChatInputPickerOptions } from './chatInputPickerActionItem.js';
 import { IOpenerService } from '../../../../../../platform/opener/common/opener.js';
 import { IWorkbenchAssignmentService } from '../../../../../services/assignment/common/assignmentService.js';
+import { isContinuePhysicalAiIde } from '../../../../continue/browser/continueProduct.js';
+import { getMobiusChatModes } from '../../../../continue/browser/continueMobiusModeRouting.js';
 
 export interface IModePickerDelegate {
 	readonly currentMode: IObservable<IChatMode>;
@@ -74,6 +76,7 @@ export class ModePickerActionItem extends ChatInputPickerActionViewItem {
 		@IWorkbenchAssignmentService assignmentService: IWorkbenchAssignmentService,
 	) {
 		const forceOldAskMode = _productService.defaultChatAgent?.extensionId === 'Continue.continue';
+		const useMobiusModePicker = isContinuePhysicalAiIde() || forceOldAskMode;
 		const assignments = observableValue<{ showOldAskMode: boolean }>('modePickerAssignments', {
 			// VS Code hides builtin Ask behind an experiment. Mobius's default
 			// Continue participant has no Copilot "new Ask" agent, so keep Ask
@@ -90,6 +93,19 @@ export class ModePickerActionItem extends ChatInputPickerActionViewItem {
 		const policyDisabledCategory = { label: localize('managedByOrganization', "Managed by your organization"), order: 999, showHeader: true };
 
 		const agentModeDisabledViaPolicy = configurationService.inspect<boolean>(ChatConfiguration.AgentEnabled).policyValue === false;
+		const mobiusFlatCategory = { label: '', order: 0 };
+
+		const getMobiusModePickerActions = (): IActionWidgetDropdownAction[] => {
+			const modes = delegate.currentChatModes.get();
+			const currentMode = delegate.currentMode.get();
+			return getMobiusChatModes(modes).map(mode => {
+				const action = mode.id === ChatMode.Agent.id || mode.id === ChatMode.Ask.id
+					? makeAction(mode, currentMode)
+					: makeActionFromCustomMode(mode, currentMode);
+				action.category = mobiusFlatCategory;
+				return action;
+			});
+		};
 
 		const makeAction = (mode: IChatMode, currentMode: IChatMode): IActionWidgetDropdownAction => {
 			const isDisabledViaPolicy =
@@ -189,11 +205,15 @@ export class ModePickerActionItem extends ChatInputPickerActionViewItem {
 			}) ?? [];
 			// Add filtered custom modes
 			const customActions = customModes.custom?.map(mode => makeActionFromCustomMode(mode, currentMode)) ?? [];
-			return [defaultAction, ...builtInActions, ...customActions];
+			return dedupeModePickerActionsByLabel([defaultAction, ...builtInActions, ...customActions]);
 		};
 
 		const actionProvider: IActionWidgetDropdownActionProvider = {
 			getActions: () => {
+				if (useMobiusModePicker) {
+					return getMobiusModePickerActions();
+				}
+
 				const modes = delegate.currentChatModes.get();
 				const currentMode = delegate.currentMode.get();
 				const agentMode = modes.builtin.find(mode => mode.id === ChatMode.Agent.id);
@@ -222,18 +242,20 @@ export class ModePickerActionItem extends ChatInputPickerActionViewItem {
 				const customModeActions = customModes.custom?.map(mode => makeActionFromCustomMode(mode, currentMode)) ?? [];
 				customModeActions.sort((a, b) => a.label.localeCompare(b.label));
 
-				const orderedModes = coalesce([
+				return dedupeModePickerActionsByLabel(coalesce([
 					agentMode && makeAction(agentMode, currentMode),
 					...otherBuiltinModes.map(mode => mode && makeAction(mode, currentMode)),
 					...customBuiltinModeActions,
 					...customModeActions
-				]);
-				return orderedModes;
+				]));
 			}
 		};
 
 		const dynamicActionProvider: IActionWidgetDropdownActionProvider = {
 			getActions: () => {
+				if (useMobiusModePicker) {
+					return getMobiusModePickerActions();
+				}
 				const currentTarget = getCustomAgentTarget();
 				if (currentTarget !== Target.Undefined) {
 					return getActionsForCustomAgentTarget(currentTarget);
@@ -245,7 +267,7 @@ export class ModePickerActionItem extends ChatInputPickerActionViewItem {
 		const modePickerActionWidgetOptions: Omit<IActionWidgetDropdownOptions, 'label' | 'labelRenderer'> = {
 			actionProvider: dynamicActionProvider,
 			actionBarActionProvider: {
-				getActions: () => this.getModePickerActionBarActions()
+				getActions: () => useMobiusModePicker ? [] : this.getModePickerActionBarActions()
 			},
 			showItemKeybindings: true,
 			reporter: { id: 'ChatModePicker', name: 'ChatModePicker', includeOptions: true },
@@ -309,6 +331,20 @@ export class ModePickerActionItem extends ChatInputPickerActionViewItem {
 		dom.reset(element, ...labelElements);
 		return null;
 	}
+}
+
+function dedupeModePickerActionsByLabel(actions: IActionWidgetDropdownAction[]): IActionWidgetDropdownAction[] {
+	const seen = new Set<string>();
+	const result: IActionWidgetDropdownAction[] = [];
+	for (const action of actions) {
+		const key = action.label.trim().toLowerCase();
+		if (seen.has(key)) {
+			continue;
+		}
+		seen.add(key);
+		result.push(action);
+	}
+	return result;
 }
 
 function isModeConsideredBuiltIn(mode: IChatMode, productService: IProductService): boolean {

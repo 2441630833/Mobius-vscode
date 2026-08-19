@@ -43,6 +43,7 @@ import { CONTINUE_LM_VENDOR, CONTINUE_LM_VENDOR_DISPLAY, ContinueLanguageModelPr
 import { registerContinueLanguageModelReloader, triggerContinueLanguageModelReload } from './continueLanguageModelReload.js';
 import { CONTINUE_EXTENSION_ID, CONTINUE_EXTENSION_IDENTIFIER, isContinuePhysicalAiIde } from './continueProduct.js';
 import { registerContinueChatAgentContribution } from './continueChatAgent.js';
+import { registerContinueMobiusBundledAgentsContribution } from './continueMobiusBundledAgents.js';
 import './mobiusCommitAction.js';
 import { IWorkspaceTrustEnablementService, IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import './media/continueChat.css';
@@ -113,9 +114,23 @@ if (isContinuePhysicalAiIde()) {
 			},
 		},
 	});
+
+	Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+		id: 'mobiusModeRouting',
+		title: 'Mobius Mode Routing',
+		type: 'object',
+		properties: {
+			'mobius.autoModeRouting.enabled': {
+				type: 'boolean',
+				default: true,
+				description: 'When enabled, the Agents composer infers Agent / Ask / Plan / Game from each outgoing message and switches the mode picker before send. Use /agent, /ask, /plan, or /game at the start of a message to force a mode.',
+			},
+		},
+	});
 }
 
 registerContinueChatAgentContribution();
+registerContinueMobiusBundledAgentsContribution();
 
 /**
  * Mobius is a local dev environment — auto-trust opened folders so

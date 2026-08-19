@@ -296,6 +296,9 @@ const desktopResourcePatterns = [
 	// Sessions - built-in prompts and skills
 	'vs/sessions/prompts/*.prompt.md',
 	'vs/sessions/skills/**',
+
+	// Mobius bundled custom agents (Plan / Game)
+	'vs/workbench/contrib/continue/mobius/agents/*.agent.md',
 ];
 
 // Resources for server target (minimal - no UI)

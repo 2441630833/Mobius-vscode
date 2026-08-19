@@ -107,6 +107,9 @@ const vscodeResourceIncludes = [
 	'out-build/vs/sessions/prompts/*.prompt.md',
 	'out-build/vs/sessions/skills/**',
 
+	// Mobius bundled custom agents (Plan / Game)
+	'out-build/vs/workbench/contrib/continue/mobius/agents/*.agent.md',
+
 	// Extensions
 	'out-build/vs/workbench/contrib/extensions/browser/media/{theme-icon.png,language-icon.svg}',
 	'out-build/vs/workbench/services/extensionManagement/common/media/*.{svg,png}',

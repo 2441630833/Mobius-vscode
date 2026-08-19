@@ -100,12 +100,11 @@ class NodeModuleRequireInterceptor extends RequireInterceptor {
 		let apiModuleFactory: INodeModuleFactory | undefined;
 
 		const lookup = (url: string): string => {
-			// Get the vscode-module factory - which is the same logic that's also used by
-			// the CommonJS require interceptor
-			if (!apiModuleFactory) {
-				apiModuleFactory = this._factories.get('vscode');
-				assertType(apiModuleFactory);
-			}
+			// Always resolve from the live factory map (git-base can load while path
+			// index is still being built).
+			const factory = this._factories.get('vscode') ?? apiModuleFactory;
+			assertType(factory);
+			apiModuleFactory = factory;
 
 			const uri = URI.parse(url);
 

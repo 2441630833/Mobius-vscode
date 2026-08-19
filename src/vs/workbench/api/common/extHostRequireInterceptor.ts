@@ -52,14 +52,19 @@ export abstract class RequireInterceptor {
 
 	async install(): Promise<void> {
 
-		this._installInterceptor();
+		// Build the path index in parallel with config; install hooks only after both
+		// are ready so require('vscode') resolves the real extension (not nullExtensionDescription).
+		const extensionPathsPromise = this._extHostExtensionService.getExtensionPathIndex();
 
 		performance.mark('code/extHost/willWaitForConfig');
 		const configProvider = await this._extHostConfiguration.getConfigProvider();
 		performance.mark('code/extHost/didWaitForConfig');
-		const extensionPaths = await this._extHostExtensionService.getExtensionPathIndex();
+
+		const extensionPaths = await extensionPathsPromise;
 
 		this.register(new VSCodeNodeModuleFactory(this._apiFactory, extensionPaths, this._extensionRegistry, configProvider, this._logService));
+		this._installInterceptor();
+
 		this.register(this._instaService.createInstance(NodeModuleAliasingModuleFactory));
 		if (this._initData.remote.isRemote) {
 			this.register(this._instaService.createInstance(OpenNodeModuleFactory, extensionPaths, this._initData.environment.appUriScheme));

@@ -25,7 +25,47 @@ import { reportNewChatPickerClosed } from '../../../chat/browser/newChatPickerTe
 import { CopilotCLISessionType } from '../../agentHost/browser/baseAgentHostSessionsProvider.js';
 import { LocalSessionType } from '../../localChatSessions/browser/localChatSessionsProvider.js';
 import { isContinuePhysicalAiIde } from '../../../../../workbench/contrib/continue/browser/continueProduct.js';
+import { getMobiusChatModes } from '../../../../../workbench/contrib/continue/browser/continueMobiusModeRouting.js';
 import { URI } from '../../../../../base/common/uri.js';
+import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+
+/** Mobius bundled / workspace custom agents shown in the Agents welcome picker. */
+const MOBIUS_NAMED_MODES = ['Plan', 'Game'] as const;
+
+function getModeNameKey(mode: IChatMode): string {
+	return mode.name.get().toLowerCase();
+}
+
+function isMobiusBundledAgentUri(uri: URI | undefined): boolean {
+	if (!uri) {
+		return false;
+	}
+	const path = uri.path.replace(/\\/g, '/').toLowerCase();
+	return path.includes('/mobius/agents/') || path.includes('/continue/mobius/agents/');
+}
+
+function addUniqueModeByName(result: IChatMode[], mode: IChatMode): void {
+	const key = getModeNameKey(mode);
+	const existingIndex = result.findIndex(m => getModeNameKey(m) === key);
+	if (existingIndex === -1) {
+		result.push(mode);
+		return;
+	}
+	const existing = result[existingIndex];
+	const existingBundled = isMobiusBundledAgentUri(existing.uri?.get());
+	const candidateBundled = isMobiusBundledAgentUri(mode.uri?.get());
+	if (existingBundled && !candidateBundled) {
+		result[existingIndex] = mode;
+	}
+}
+
+function dedupeChatModesByName(modes: IChatMode[]): IChatMode[] {
+	const result: IChatMode[] = [];
+	for (const mode of modes) {
+		addUniqueModeByName(result, mode);
+	}
+	return result;
+}
 
 interface IModePickerItem {
 	readonly kind: 'mode';
@@ -64,10 +104,14 @@ export class ModePickerModel extends Disposable {
 	constructor(
 		@IChatSessionsService private readonly chatSessionsService: IChatSessionsService,
 		@IChatModeService private readonly chatModeService: IChatModeService,
+		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
 	) {
 		super();
 		if (isContinuePhysicalAiIde()) {
 			this._ensureWorkspaceModes();
+			this._register(this.workspaceContextService.onDidChangeWorkspaceFolders(() => {
+				this._recreateChatModes(this._sessionResource ?? LocalChatSessionUri.getNewSessionUri(), this._selectedModeId);
+			}));
 		}
 	}
 
@@ -107,11 +151,17 @@ export class ModePickerModel extends Disposable {
 	}
 
 	getAvailableModes(): IChatMode[] {
+		if (isContinuePhysicalAiIde()) {
+			return this.getMobiusPickerModes();
+		}
+
 		const sessionType = this._sessionResource
 			? getChatSessionType(this._sessionResource)
 			: (isContinuePhysicalAiIde() ? LocalSessionType.id : CopilotCLISessionType.id);
 		const customAgentTarget = this.chatSessionsService.getCustomAgentTargetForSessionType(sessionType);
-		const effectiveTarget = customAgentTarget && customAgentTarget !== Target.Undefined ? customAgentTarget : Target.GitHubCopilot;
+		const effectiveTarget = isContinuePhysicalAiIde()
+			? Target.Undefined
+			: (customAgentTarget && customAgentTarget !== Target.Undefined ? customAgentTarget : Target.GitHubCopilot);
 
 		const result: IChatMode[] = [ChatMode.Agent];
 		if (isContinuePhysicalAiIde()) {
@@ -125,23 +175,41 @@ export class ModePickerModel extends Disposable {
 				if (visibility && !visibility.userInvocable) {
 					continue;
 				}
-				result.push(mode);
+				addUniqueModeByName(result, mode);
 			}
 		}
 
 		return result;
 	}
 
-	private _ensureWorkspaceModes(): void {
-		if (this._chatModes) {
-			return;
+	getMobiusPickerModes(): IChatMode[] {
+		if (!this._chatModes) {
+			return [ChatMode.Agent, ChatMode.Ask];
 		}
-		const modes = this.chatModeService.createModes(LocalChatSessionUri.getNewSessionUri());
+		return getMobiusChatModes(this._chatModes);
+	}
+
+	private _recreateChatModes(sessionResource: URI, selectedModeId: string | undefined): void {
+		const modes = this.chatModeService.createModes(sessionResource);
 		this._chatModesDisposable.value = modes;
 		this._chatModes = modes;
 		this._modeChangeListener.value = modes.onDidChange(() => {
 			this._onDidChange.fire();
 		});
+		void modes.waitForPendingUpdates().then(() => {
+			this._onDidChange.fire();
+		});
+		if (selectedModeId !== undefined) {
+			this._selectedModeId = selectedModeId;
+		}
+		this._onDidChange.fire();
+	}
+
+	private _ensureWorkspaceModes(): void {
+		if (this._chatModes) {
+			return;
+		}
+		this._recreateChatModes(LocalChatSessionUri.getNewSessionUri(), undefined);
 	}
 
 	private _setSession(session: ISession, selectedModeId: string | undefined): void {
@@ -154,14 +222,7 @@ export class ModePickerModel extends Disposable {
 			return;
 		}
 		this._sessionResource = sessionResource;
-		const modes = this.chatModeService.createModes(sessionResource);
-		this._chatModesDisposable.value = modes;
-		this._chatModes = modes;
-		this._modeChangeListener.value = modes.onDidChange(() => {
-			this._onDidChange.fire();
-		});
-		this._selectedModeId = selectedModeId;
-		this._onDidChange.fire();
+		this._recreateChatModes(sessionResource, selectedModeId);
 	}
 
 	private _findModeById(id: string): IChatMode | undefined {
@@ -171,7 +232,18 @@ export class ModePickerModel extends Disposable {
 		if (id === ChatMode.Ask.id) {
 			return ChatMode.Ask;
 		}
-		return this._chatModes?.findModeById(id);
+		const byId = this._chatModes?.findModeById(id);
+		if (byId) {
+			return byId;
+		}
+		if (isContinuePhysicalAiIde()) {
+			for (const name of MOBIUS_NAMED_MODES) {
+				if (id === name || id.toLowerCase() === name.toLowerCase()) {
+					return this._chatModes?.findModeByName(name);
+				}
+			}
+		}
+		return undefined;
 	}
 }
 
@@ -294,11 +366,15 @@ export class ModePicker extends Disposable {
 	}
 
 	private _buildItems(modes: IChatMode[]): IActionListItem<ModePickerItem>[] {
+		if (isContinuePhysicalAiIde()) {
+			return this._buildMobiusItems(modes);
+		}
+
 		const items: IActionListItem<ModePickerItem>[] = [];
 
 		const selectedModeId = this._modePickerModel.selectedMode.id;
 		const builtinModes = modes.filter(mode => isBuiltinChatMode(mode));
-		const customModes = modes.filter(mode => !isBuiltinChatMode(mode));
+		const customModes = dedupeChatModesByName(modes.filter(mode => !isBuiltinChatMode(mode)));
 
 		for (const mode of builtinModes) {
 			items.push({
@@ -331,6 +407,16 @@ export class ModePicker extends Disposable {
 		});
 
 		return items;
+	}
+
+	private _buildMobiusItems(modes: IChatMode[]): IActionListItem<ModePickerItem>[] {
+		const selectedModeId = this._modePickerModel.selectedMode.id;
+		return modes.map(mode => ({
+			kind: ActionListItemKind.Action,
+			label: mode.label.get(),
+			group: { title: '', icon: selectedModeId === mode.id ? Codicon.check : Codicon.blank },
+			item: { kind: 'mode', mode },
+		}));
 	}
 
 	private _selectMode(mode: IChatMode): void {

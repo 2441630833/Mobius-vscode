@@ -15,6 +15,7 @@ import { PromptsType } from '../../common/promptSyntax/promptTypes.js';
 import { ChatViewId } from '../chat.js';
 import { ContextKeyExpr } from '../../../../../platform/contextkey/common/contextkey.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
+import { isContinuePhysicalAiIde } from '../../../continue/browser/continueProduct.js';
 
 abstract class ConfigAgentActionImpl extends Action2 {
 	public override async run(accessor: ServicesAccessor): Promise<void> {
@@ -93,6 +94,8 @@ class ManageAgentsActionDisabled extends ConfigAgentActionImpl { constructor() {
 export function registerAgentActions(): void {
 	registerAction2(ManageAgentsAction);
 	registerAction2(ManageAgentsActionDisabled);
-	registerAction2(PickerConfigAgentAction);
-	registerAction2(PickerConfigAgentActionDisabled);
+	if (!isContinuePhysicalAiIde()) {
+		registerAction2(PickerConfigAgentAction);
+		registerAction2(PickerConfigAgentActionDisabled);
+	}
 }

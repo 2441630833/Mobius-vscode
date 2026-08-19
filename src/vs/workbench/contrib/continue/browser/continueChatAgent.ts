@@ -285,7 +285,34 @@ CRITICAL RULES:
 15. TOOL CALL FORMAT (CRITICAL): Tools are provided via the API tools/function-calling channel. ALWAYS use that channel (tool_calls / tool_use). NEVER invent plain-text or XML-looking tool markup in your message content — it is not executed. To edit or run a command, emit a real native function call.
 16. ENCODING / CHINESE TEXT (CRITICAL): All workspace files are UTF-8. When editing, copy non-ASCII characters (especially Chinese) EXACTLY from read_file output — do not re-type, translate-through-pinyin, or "normalize" them. If you see mojibake like 鏉茬藁 / 閿俐 / 锟斤拷 instead of real Chinese, STOP and re-read the file with read_file before editing; never write mojibake back to disk.`;
 
-const PLAN_EXECUTE_SYSTEM = `You are in Plan mode. Help the user understand the work and produce a concrete implementation plan. Do not write, patch, or delete files. Do not run commands that change the workspace. When they want the plan applied, tell them to switch to Agent (or Game for Godot).`;
+const PLAN_EXECUTE_SYSTEM = `You are in Plan mode. Help the user understand the work and produce a concrete implementation plan in markdown.
+
+Use read-only tools (list_dir, read_file, grep_search, semantic_search, file_search) when you need to inspect the codebase. Do NOT write, patch, or delete files. Do NOT run terminal commands.
+
+Always invoke tools through the API function-calling channel — never write seed:tool_call, XML, or other fake tool markup in message text (that is not executed).
+
+When the user wants changes applied, tell them to switch to Agent (or Game for Godot).`;
+
+const PLAN_MODE_READ_TOOLS = new Set([
+	'read_file',
+	'read_file_range',
+	'list_dir',
+	'ls',
+	'grep_search',
+	'file_search',
+	'file_glob_search',
+	'codebase',
+	'semantic_search',
+	'get_errors',
+	'get_problems',
+]);
+
+const PLAN_MODE_TOOL_TURN_LIMIT = 12;
+
+const PLAN_TEXTUAL_TOOL_NUDGE = `Your previous turn wrote tool calls as plain chat text (for example seed:tool_call or XML). That is INVALID — nothing ran.
+Use the API tools/function-calling channel with read-only tools only, then write the implementation plan in markdown.`;
+
+const PLAN_FINISH_NUDGE = `Stop exploring. Write the full implementation plan now: goal, affected files, numbered steps, and acceptance criteria. Do not modify any files.`;
 
 class ContinueChatAgent implements IChatAgentImplementation {
 	private readonly _skillEmbeddingIndex: ContinueSkillEmbeddingIndex;
@@ -368,7 +395,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		const isGameMode = request.agentId === CONTINUE_AGENT_IDS.game
 			|| isGameModeName(request.modeInstructions?.name)
 			|| hasGameDevIntent(request.message);
-		const isPlanMode = isNamedChatMode(request.modeInstructions?.name, 'plan');
+		const isPlanMode = isPlanModeRequest(request);
 		const isAgentMode = (request.agentId === CONTINUE_AGENT_IDS.agent
 			|| request.agentId === CONTINUE_AGENT_IDS.game)
 			&& !isPlanMode;
@@ -602,6 +629,10 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			terminalContextBlock,
 		);
 
+		if (isPlanMode) {
+			await this._runPlanMode(modelId, messages, progress, token, request, cwd);
+			return {};
+		}
 		if (!isAgentMode) {
 			await this._streamOnce(modelId, messages, progress, token);
 			return {};
@@ -1578,6 +1609,143 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			|| toolName === 'semantic_search'
 		) {
 			stats.exploreOnly = true;
+		}
+	}
+
+	private async _runPlanMode(
+		modelId: string,
+		messages: IChatMessage[],
+		progress: (parts: IChatProgress[]) => void,
+		token: CancellationToken,
+		request: IChatAgentRequest,
+		cwd: URI | undefined,
+	): Promise<void> {
+		await this._ensureCopilotToolImplementationsMounted(token);
+		const allTools = await loadAgentToolSuperset(
+			this._languageModelToolsService,
+			this._commandService,
+			this._logService,
+		);
+		const planTools = allTools.filter(tool => PLAN_MODE_READ_TOOLS.has(tool.function.name));
+		let forceRequiredTools = false;
+
+		for (let turn = 0; turn < PLAN_MODE_TOOL_TURN_LIMIT; turn++) {
+			if (token.isCancellationRequested) {
+				break;
+			}
+
+			const streamed = await this._streamOnce(
+				modelId,
+				messages,
+				progress,
+				token,
+				planTools,
+				undefined,
+				false,
+				forceRequiredTools,
+			);
+			forceRequiredTools = false;
+			const { assistantText, toolUses, recoveredTextualTools, truncatedTextualToolDump } = streamed;
+
+			if (recoveredTextualTools) {
+				forceRequiredTools = true;
+			}
+
+			if (!toolUses.length) {
+				if (looksLikeTextualToolDump(assistantText) || truncatedTextualToolDump) {
+					messages = [
+						...messages,
+						...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : []),
+						{ role: ChatMessageRole.User, content: [{ type: 'text', value: PLAN_TEXTUAL_TOOL_NUDGE }] },
+					];
+					forceRequiredTools = true;
+					continue;
+				}
+				if (turn < PLAN_MODE_TOOL_TURN_LIMIT - 1 && looksLikeIncompleteInvestigation(assistantText)) {
+					messages = [
+						...messages,
+						...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : []),
+						{ role: ChatMessageRole.User, content: [{ type: 'text', value: PLAN_FINISH_NUDGE }] },
+					];
+					continue;
+				}
+				break;
+			}
+
+			const assistantContent: IChatMessage['content'] = [];
+			if (assistantText.trim()) {
+				assistantContent.push({ type: 'text', value: assistantText });
+			}
+			for (const call of toolUses) {
+				assistantContent.push(call);
+			}
+			messages = [
+				...messages,
+				{ role: ChatMessageRole.Assistant, content: assistantContent },
+			];
+
+			for (const call of toolUses) {
+				if (token.isCancellationRequested) {
+					break;
+				}
+				const continueName = remapCopilotNameToContinueFallback(call.name);
+				if ((!continueName || !PLAN_MODE_READ_TOOLS.has(continueName)) && !PLAN_MODE_READ_TOOLS.has(call.name)) {
+					const blocked = `Plan mode blocked tool "${call.name}". Use read-only tools only, then write the plan.`;
+					messages = [
+						...messages,
+						{
+							role: ChatMessageRole.User,
+							content: [{
+								type: 'tool_result',
+								toolCallId: call.toolCallId,
+								value: [{ type: 'text', value: blocked }],
+								isError: true,
+							}],
+						},
+					];
+					continue;
+				}
+
+				progress([{
+					kind: 'externalToolInvocationUpdate',
+					toolCallId: call.toolCallId,
+					toolName: call.name,
+					isComplete: false,
+					invocationMessage: `${formatSupersetToolDisplayName(call.name)}…`,
+				}]);
+
+				const { ok, text } = await this._executeTool(
+					call,
+					cwd,
+					request.sessionResource,
+					request.requestId,
+					token,
+				);
+
+				progress([{
+					kind: 'externalToolInvocationUpdate',
+					toolCallId: call.toolCallId,
+					toolName: call.name,
+					isComplete: true,
+					pastTenseMessage: ok
+						? `${formatSupersetToolDisplayName(call.name)} done`
+						: `${formatSupersetToolDisplayName(call.name)} failed`,
+					errorMessage: ok ? undefined : text,
+				}]);
+
+				messages = [
+					...messages,
+					{
+						role: ChatMessageRole.User,
+						content: [{
+							type: 'tool_result',
+							toolCallId: call.toolCallId,
+							value: [{ type: 'text', value: text }],
+							isError: !ok,
+						}],
+					},
+				];
+			}
 		}
 	}
 
@@ -2838,6 +3006,7 @@ function indexOfTextualToolDumpStart(text: string): number {
 		return -1;
 	}
 	const patterns = [
+		/seed:tool_call\b/i,
 		/<\/?tool_call\b/i,
 		/<\/?function_calls?\b/i,
 		/<\/?invoke\b/i,
@@ -2972,6 +3141,23 @@ function recoverTextualToolCalls(text: string): {
 	const toolUses: IChatResponseToolUsePart[] = [];
 	let cleaned = text;
 	const nameAlt = RECOVERABLE_TOOL_NAMES.join('|');
+
+	// Some local models emit `seed:tool_call<function name="list_dir">` instead of native tool_calls.
+	const seedToolRe = /seed:tool_call\s*(?:<\s*function\s+name\s*=\s*["']([^"']+)["']\s*\/?>|(\w+)\b)?/gi;
+	cleaned = cleaned.replace(seedToolRe, (_full, fnName1?: string, fnName2?: string) => {
+		const rawName = (fnName1 || fnName2 || '').trim();
+		if (!rawName) {
+			return '';
+		}
+		const name = normalizeRecoveredToolName(rawName);
+		toolUses.push({
+			type: 'tool_use',
+			name,
+			toolCallId: `recovered_${name}_${toolUses.length}_${Date.now()}`,
+			parameters: {},
+		});
+		return '';
+	});
 
 	// Cursor/Copilot-style: <tool_call>tool_name ... </tool_call>
 	// Allow unclosed dumps (model often truncates) by falling back to end-of-string.
@@ -3362,6 +3548,14 @@ function buildChatMessages(
 
 function isNamedChatMode(name: string | undefined, expected: string): boolean {
 	return typeof name === 'string' && name.trim().toLowerCase() === expected.toLowerCase();
+}
+
+function isPlanModeRequest(request: IChatAgentRequest): boolean {
+	if (isNamedChatMode(request.modeInstructions?.name, 'plan')) {
+		return true;
+	}
+	const uriPath = request.modeInstructions?.uri?.path;
+	return typeof uriPath === 'string' && /[/\\]plan\.agent\.md$/i.test(uriPath);
 }
 
 function createContinueAgentData(

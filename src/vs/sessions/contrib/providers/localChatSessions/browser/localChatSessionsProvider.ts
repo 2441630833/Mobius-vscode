@@ -11,18 +11,19 @@ import { autorun, constObservable, IObservable, IReader, ISettableObservable, ob
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { URI, UriComponents } from '../../../../../base/common/uri.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { IChatService, IChatSendRequestOptions, IChatDetail, convertLegacyChatSessionTiming } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
+import { IChatService, IChatSendRequestOptions, IChatDetail, convertLegacyChatSessionTiming, ChatSendResult } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
 import { IChatSessionFileChange2, IChatSessionProviderOptionItem, SessionType } from '../../../../../workbench/contrib/chat/common/chatSessionsService.js';
 import { ISession, IChat, ISessionGitRepository, ISessionFolder, ISessionWorkspace, SessionStatus, ISessionType, ISessionFileChange, toSessionId, SESSION_WORKSPACE_GROUP_LOCAL, IChatCheckpoints } from '../../../../services/sessions/common/session.js';
 import { ChatAgentLocation, ChatConfiguration, ChatModeKind, ChatPermissionLevel, isChatPermissionLevel } from '../../../../../workbench/contrib/chat/common/constants.js';
 import { basename, dirname, isEqual } from '../../../../../base/common/resources.js';
 import { ISendRequestOptions, ISessionChangeEvent, ISessionModelPickerOptions, ISessionsProvider } from '../../../../services/sessions/common/sessionsProvider.js';
-import { isBuiltinChatMode, IChatMode } from '../../../../../workbench/contrib/chat/common/chatModes.js';
-import { IChatModel } from '../../../../../workbench/contrib/chat/common/model/chatModel.js';
+import { isBuiltinChatMode, ChatMode, IChatMode, IChatModeService } from '../../../../../workbench/contrib/chat/common/chatModes.js';
+import { IChatModel, IChatRequestModel } from '../../../../../workbench/contrib/chat/common/model/chatModel.js';
 import { IGitService } from '../../../../../workbench/contrib/git/common/gitService.js';
 import { localize } from '../../../../../nls.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { isContinuePhysicalAiIde } from '../../../../../workbench/contrib/continue/browser/continueProduct.js';
+import { formatMobiusModeAutoSwitchMessage, IMobiusModeAutoSwitch, inferMobiusModeFromPrompt, MOBIUS_AUTO_MODE_ROUTING_KEY, resolveMobiusChatMode } from '../../../../../workbench/contrib/continue/browser/continueMobiusModeRouting.js';
 import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
@@ -435,6 +436,7 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 		@ILanguageModelsService private readonly languageModelsService: ILanguageModelsService,
 		@ILanguageModelToolsService private readonly toolsService: ILanguageModelToolsService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IChatModeService private readonly chatModeService: IChatModeService,
 		@ILabelService private readonly labelService: ILabelService,
 		@ILogService private readonly logService: ILogService,
 				@IStorageService private readonly storageService: IStorageService,
@@ -1068,6 +1070,8 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 	private async _dispatchSend(session: LocalSession, chatResource: URI, options: ISendRequestOptions): ReturnType<IChatService['sendRequest']> {
 		const { query, attachedContext } = options;
 
+		const modeAutoSwitch = await this._maybeAutoRouteMobiusMode(session, query);
+
 		// Resolve mode
 		const modeKind = session.chatMode?.kind ?? ChatModeKind.Agent;
 		const modeIsBuiltin = session.chatMode ? isBuiltinChatMode(session.chatMode) : true;
@@ -1099,7 +1103,11 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 		// Set model/mode/permission state on the chat model before sending
 		const modelRef = await this._updateChatSessionState(chatResource, session);
 		try {
-			return await this.chatService.sendRequest(chatResource, query, sendOptions);
+			const result = await this.chatService.sendRequest(chatResource, query, sendOptions);
+			if (modeAutoSwitch && ChatSendResult.isSent(result)) {
+				this._showMobiusModeAutoSwitch(chatResource, modeAutoSwitch);
+			}
+			return result;
 		} finally {
 			modelRef?.dispose();
 		}
@@ -1165,6 +1173,45 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 			model.inputModel.setState({ permissionLevel });
 		}
 		return modelRef;
+	}
+
+	private async _maybeAutoRouteMobiusMode(session: LocalSession, query: string): Promise<IMobiusModeAutoSwitch | undefined> {
+		if (!isContinuePhysicalAiIde()) {
+			return undefined;
+		}
+		if (!this.configurationService.getValue<boolean>(MOBIUS_AUTO_MODE_ROUTING_KEY)) {
+			return undefined;
+		}
+		const inference = inferMobiusModeFromPrompt(query);
+		if (!inference) {
+			return undefined;
+		}
+		const fromMode = session.chatMode ?? ChatMode.Agent;
+		const targetMode = await resolveMobiusChatMode(inference.mode, session.resource, this.chatModeService);
+		if (!targetMode || targetMode.id === fromMode.id) {
+			return undefined;
+		}
+		session.setMode(targetMode);
+		this.logService.info(
+			`[Mobius] Auto-routed mode picker to ${targetMode.name.get()} (${inference.reason})`,
+		);
+		return { fromMode, toMode: targetMode, reason: inference.reason };
+	}
+
+	private _showMobiusModeAutoSwitch(chatResource: URI, switchInfo: IMobiusModeAutoSwitch): void {
+		const request = this.chatService.getSession(chatResource)?.lastRequest;
+		if (!request) {
+			this.logService.warn('[Mobius] Mode auto switch notice skipped: no chat request model');
+			return;
+		}
+		this._appendMobiusModeAutoSwitchProgress(request, switchInfo);
+	}
+
+	private _appendMobiusModeAutoSwitchProgress(request: IChatRequestModel, switchInfo: IMobiusModeAutoSwitch): void {
+		this.chatService.appendProgress(request, {
+			kind: 'markdownContent',
+			content: formatMobiusModeAutoSwitchMessage(switchInfo),
+		});
 	}
 
 	private _findSession(sessionId: string): LocalSession | undefined {

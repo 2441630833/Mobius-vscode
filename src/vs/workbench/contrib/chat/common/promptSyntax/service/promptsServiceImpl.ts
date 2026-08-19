@@ -49,6 +49,29 @@ import { isContributionEnabled } from '../../enablement.js';
 import { assertNever } from '../../../../../../base/common/assert.js';
 import { ExtensionPromptFileService } from './extensionPromptFileService.js';
 
+function customAgentDiscoveryPriority(agent: ICustomAgent): number {
+	const path = agent.uri.path.replace(/\\/g, '/').toLowerCase();
+	if (agent.source.storage === PromptsStorage.local) {
+		if (path.includes('/.github/agents/')) {
+			return 100;
+		}
+		if (path.includes('/.claude/agents/')) {
+			return 95;
+		}
+		return 90;
+	}
+	if (agent.source.storage === PromptsStorage.user) {
+		return 50;
+	}
+	if (agent.source.storage === PromptsStorage.extension) {
+		if (path.includes('/mobius/agents/') || path.includes('/continue/mobius/agents/')) {
+			return 10;
+		}
+		return 20;
+	}
+	return 0;
+}
+
 /**
  * Provides prompt services.
  */
@@ -618,7 +641,26 @@ export class PromptsService extends Disposable implements IPromptsService {
 				result.push(file.agent);
 			}
 		}
-		return result;
+		return this._dedupeCustomAgentsByName(result);
+	}
+
+	private _dedupeCustomAgentsByName(agents: readonly ICustomAgent[]): readonly ICustomAgent[] {
+		const byName = new Map<string, ICustomAgent>();
+		for (const agent of agents) {
+			const key = agent.name.trim().toLowerCase();
+			if (!key) {
+				continue;
+			}
+			const existing = byName.get(key);
+			if (!existing || this._shouldPreferCustomAgent(agent, existing)) {
+				byName.set(key, agent);
+			}
+		}
+		return Array.from(byName.values());
+	}
+
+	private _shouldPreferCustomAgent(candidate: ICustomAgent, existing: ICustomAgent): boolean {
+		return customAgentDiscoveryPriority(candidate) > customAgentDiscoveryPriority(existing);
 	}
 
 	private async computeAgentDiscoveryInfo(token: CancellationToken): Promise<IAgentDiscoveryInfo> {

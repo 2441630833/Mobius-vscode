@@ -16,6 +16,8 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../../../../
 import { IInstantiationService } from '../../../../../../platform/instantiation/common/instantiation.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../../../workbench/common/contributions.js';
 import { IToggleChatModeArgs, ToggleAgentModeActionId } from '../../../../../../workbench/contrib/chat/browser/actions/chatExecuteActions.js';
+import { isContinuePhysicalAiIde } from '../../../../../../workbench/contrib/continue/browser/continueProduct.js';
+import { getMobiusChatModes } from '../../../../../../workbench/contrib/continue/browser/continueMobiusModeRouting.js';
 import { IChatPhoneInputPresenter, IChatPhonePresenterImpl } from '../../../../../../workbench/contrib/chat/browser/widget/input/chatPhoneInputPresenter.js';
 import { IModePickerDelegate } from '../../../../../../workbench/contrib/chat/browser/widget/input/modePickerActionItem.js';
 import { IModelPickerDelegate } from '../../../../../../workbench/contrib/chat/browser/widget/input/modelPickerActionItem.js';
@@ -189,7 +191,9 @@ class MobileChatPhoneInputPresenter extends Disposable implements IChatPhonePres
 			const modelItems = modelDelegate.getModels();
 			const currentModel = modelDelegate.currentModel.get();
 
-			const allModes = [...modes.builtin, ...modes.custom];
+			const allModes = isContinuePhysicalAiIde()
+				? getMobiusChatModes(modes)
+				: [...modes.builtin, ...modes.custom];
 			allModes.forEach((mode, index) => {
 				const icon = mode.icon.get();
 				sheetItems.push({
