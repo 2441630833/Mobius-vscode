@@ -31,6 +31,7 @@ import { ActiveSessionContextKeys } from '../../../changes/common/changes.js';
 import { ISessionsPartService } from '../../../../services/sessions/browser/sessionsPartService.js';
 import { ISessionsService } from '../../../../services/sessions/browser/sessionsService.js';
 import { IChatService } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
+import { IGitService } from '../../../../../workbench/contrib/git/common/gitService.js';
 
 const CLOSE_SESSION_COMMAND_ID = 'sessionsViewPane.closeSession';
 registerAction2(class CloseSessionAction extends Action2 {
@@ -872,7 +873,7 @@ registerAction2(class GitCommitAndDoneAction extends Action2 {
 	constructor() {
 		super({
 			id: 'agentSession.gitCommitAndDone',
-			title: localize2('gitCommitAndDone', 'Git Commit & Done'),
+			title: localize2('gitCommitAndDone', 'Git Commit Done'),
 			icon: Codicon.check,
 			precondition: ChatContextKeys.requestInProgress.negate(),
 			menu: [{
@@ -892,6 +893,7 @@ registerAction2(class GitCommitAndDoneAction extends Action2 {
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const sessionsService = accessor.get(ISessionsService);
 		const chatService = accessor.get(IChatService);
+		const gitService = accessor.get(IGitService);
 		const activeSession = sessionsService.activeSession.get();
 		if (!activeSession || activeSession.status.get() === SessionStatus.Untitled) {
 			return;
@@ -905,11 +907,13 @@ registerAction2(class GitCommitAndDoneAction extends Action2 {
 		const folder = workspace?.folders[0];
 		const gitRepo = folder?.gitRepository;
 		const hasUncommittedChanges = (gitRepo?.uncommittedChanges ?? 0) > 0;
-		if (hasUncommittedChanges) {
+		const repoRoot = folder?.workingDirectory ?? folder?.root;
+		if (hasUncommittedChanges && repoRoot) {
 			try {
+				const repoPath = repoRoot.fsPath;
 				const instruction = gitRepo?.upstreamBranchName
-					? 'Stage all uncommitted changes, commit them with a meaningful commit message summarizing the changes, and push to the remote.'
-					: 'Stage all uncommitted changes and commit them with a meaningful commit message summarizing the changes.';
+					? `In the git repository at ${repoPath}, stage all uncommitted changes, commit them with a meaningful commit message summarizing the changes, and push to the remote. Do not ask which repository to use — use ${repoPath}.`
+					: `In the git repository at ${repoPath}, stage all uncommitted changes and commit them with a meaningful commit message summarizing the changes. Do not ask which repository to use — use ${repoPath}.`;
 				const result = await chatService.sendRequest(
 					activeSession.resource,
 					instruction,
@@ -922,6 +926,13 @@ registerAction2(class GitCommitAndDoneAction extends Action2 {
 				}
 			} catch {
 				// Chat request failed — silently skip. The user can try again.
+			} finally {
+				try {
+					const repo = await gitService.openRepository(repoRoot);
+					await repo?.status();
+				} catch {
+					// Fall back to the git extension's onDidChange event chain.
+				}
 			}
 		}
 		// Session NOT archived — the user continues working in the same session.

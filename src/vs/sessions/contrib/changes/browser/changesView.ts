@@ -241,7 +241,10 @@ class ChangesWorkbenchButtonBarWidget extends Disposable {
 			container,
 			{
 				telemetrySource: 'changesView',
-				buttonConfigProvider: (_action, index) => {
+				buttonConfigProvider: (action, index) => {
+					if (action.id === 'git-commit-done') {
+						return { showIcon: true, showLabel: true, isSecondary: false };
+					}
 					return { showIcon: true, showLabel: index === 0 };
 				}
 			}
@@ -311,6 +314,10 @@ class ChangesWorkbenchButtonBarWidget extends Disposable {
 		this._register(autorun(reader => {
 			const operationActionGroups = operationActionGroupsObs.read(reader);
 			const menuActions = menuActionsObs.read(reader);
+			const filteredMenuActions = {
+				primary: menuActions.primary.filter(action => action.id !== 'agentSession.gitCommitAndDone'),
+				secondary: menuActions.secondary.filter(action => action.id !== 'agentSession.gitCommitAndDone'),
+			};
 
 			const primaryActions: IAction[] = [];
 			const operationActions = operationActionGroups.flat();
@@ -335,8 +342,8 @@ class ChangesWorkbenchButtonBarWidget extends Disposable {
 				primaryActions.push(...operationActions);
 			}
 
-			primaryActions.push(...menuActions.primary);
-			buttonBar.update(primaryActions, menuActions.secondary);
+			primaryActions.push(...filteredMenuActions.primary);
+			buttonBar.update(primaryActions, filteredMenuActions.secondary);
 		}));
 	}
 }

@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { constObservable, derived, derivedOpts, IObservable, ObservablePromise } from '../../../../../base/common/observable.js';
+import { constObservable, derived, derivedOpts, IObservable, IReader, ObservablePromise } from '../../../../../base/common/observable.js';
 import { isEqual } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
@@ -29,8 +29,10 @@ class GitRepositoryChangesetResolver implements IChangesetResolver {
 		@IGitService private readonly _gitService: IGitService
 	) {
 		this._repositoryUriObs = derivedOpts({ equalsFn: isEqual }, reader => {
-			const gitRepository = workspace.read(reader)?.folders[0].gitRepository;
-			return gitRepository?.workTreeUri ?? gitRepository?.uri;
+			const workspaceFolder = workspace.read(reader)?.folders[0];
+			const gitRepository = workspaceFolder?.gitRepository;
+			// Fall back to the workspace folder while git metadata is still binding.
+			return gitRepository?.workTreeUri ?? gitRepository?.uri ?? workspaceFolder?.root;
 		});
 	}
 
@@ -236,6 +238,7 @@ export class UncommittedChangesChangeset extends AbstractChangeset {
 
 	readonly isLoadingChanges: IObservable<boolean>;
 	readonly changes: IObservable<readonly ISessionFileChange[]>;
+	override readonly operations: IObservable<readonly ISessionChangesetOperation[]>;
 		readonly originalCheckpointRef = constObservable('HEAD');
 	readonly modifiedCheckpointRef = constObservable<string | undefined>(undefined);
 
@@ -257,6 +260,11 @@ export class UncommittedChangesChangeset extends AbstractChangeset {
 			return gitRepository?.uncommittedChanges ?? 0;
 		});
 
+		const isGitRepositoryClean = (reader: IReader): boolean => {
+			const gitRepository = workspaceObs.read(reader)?.folders[0].gitRepository;
+			return gitRepository !== undefined && (gitRepository.uncommittedChanges ?? 0) === 0;
+		};
+
 		const changesPromiseObs = derived(reader => {
 			const originalCheckpointRef = this.originalCheckpointRef.read(reader);
 			const modifiedCheckpointRef = this.modifiedCheckpointRef.read(reader);
@@ -269,8 +277,7 @@ export class UncommittedChangesChangeset extends AbstractChangeset {
 		});
 
 				this.isLoadingChanges = derived(reader => {
-				// No uncommitted changes → not loading (e.g. right after commit)
-				if (this._hasUncommittedObs.read(reader) === 0) {
+				if (isGitRepositoryClean(reader)) {
 					return false;
 				}
 				const sessionChanges = chatsObs.read(reader)[0]?.changes.read(reader);
@@ -281,44 +288,42 @@ export class UncommittedChangesChangeset extends AbstractChangeset {
 		});
 
 			this.changes = derivedOpts({ equalsFn: sessionFileChangesEqual }, reader => {
-				// When there are no uncommitted changes (e.g. right after a commit),
-				// return empty immediately so the UI clears the file list.
-				const uncommittedCount = this._hasUncommittedObs.read(reader);
-				if (uncommittedCount === 0) {
-					return [];
-				}
-				// Prefer the session's own changes observable (populated by the
-				// local provider with tracked + untracked files, reactively updated),
-				// falling back to the resolver diff for other providers.
 				const sessionChanges = chatsObs.read(reader)[0]?.changes.read(reader);
 				if (sessionChanges && sessionChanges.length > 0) {
 					return sessionChanges;
 				}
+				// Only clear after git is wired and reports a clean tree (post-commit).
+				// Before git binds, uncommittedChanges is 0 — do not treat that as clean.
+				if (isGitRepositoryClean(reader)) {
+					return [];
+				}
 				return changesPromiseObs.read(reader).read(reader) ?? [];
 			});
+
+		this.operations = derived<readonly ISessionChangesetOperation[]>(reader => {
+			if (!this._commandService) {
+				return [];
+			}
+			const hasUncommitted = this._hasUncommittedObs.read(reader) > 0;
+			const sessionChanges = chatsObs.read(reader)[0]?.changes.read(reader);
+			const hasSessionChanges = sessionChanges !== undefined && sessionChanges.length > 0;
+			if (!hasUncommitted && !hasSessionChanges) {
+				return [];
+			}
+			return [{
+				id: 'git-commit-done',
+				label: localize('mobius.gitCommitDone', "Git Commit Done"),
+				icon: Codicon.check,
+				group: 'commit',
+				scopes: [SessionChangesetOperationScope.Changeset],
+				status: SessionChangesetOperationStatus.Idle,
+			}] satisfies readonly ISessionChangesetOperation[];
+		});
 	}
 
-	override readonly operations = derived<readonly ISessionChangesetOperation[]>(reader => {
-		if (!this._commandService) {
-			return [];
-		}
-		const hasChanges = this._hasUncommittedObs.read(reader);
-		if (!hasChanges) {
-			return [];
-		}
-		return [{
-			id: 'mobius-commit',
-			label: localize('mobius.commitChanges', "Commit Changes"),
-			icon: Codicon.gitCommit,
-			group: 'commit',
-			scopes: [SessionChangesetOperationScope.Changeset],
-			status: SessionChangesetOperationStatus.Idle,
-		}] satisfies readonly ISessionChangesetOperation[];
-	});
-
 	override async invokeOperation(operationId: string): Promise<void> {
-		if (operationId === 'mobius-commit' && this._commandService) {
-			await this._commandService.executeCommand('mobius.generateCommitMessage');
+		if (operationId === 'git-commit-done' && this._commandService) {
+			await this._commandService.executeCommand('agentSession.gitCommitAndDone');
 		}
 	}
 }

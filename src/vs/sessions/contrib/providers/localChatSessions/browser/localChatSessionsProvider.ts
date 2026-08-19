@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Emitter, Event } from '../../../../../base/common/event.js';
+import { timeout } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableMap, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../../base/common/network.js';
@@ -234,14 +235,21 @@ class LocalSession extends Disposable {
 		}
 
 		try {
-			const repo = await this.gitService.openRepository(repoUri);
+			let repo = await this.gitService.openRepository(repoUri);
+			for (let attempt = 0; !repo && attempt < 5; attempt++) {
+				await timeout(1000);
+				if (this._store.isDisposed) {
+					return;
+				}
+				repo = await this.gitService.openRepository(repoUri);
+			}
 			if (!repo) {
 				return;
 			}
 
 			const folder = workspace.folders[0];
 			const baseGitRepo: ISessionGitRepository = folder.gitRepository ?? {
-				uri: folder.root,
+				uri: repo.rootUri,
 				workTreeUri: undefined,
 				baseBranchName: undefined,
 				gitHubInfo: constObservable(undefined),
@@ -265,6 +273,7 @@ class LocalSession extends Disposable {
 						...folder,
 						gitRepository: {
 							...baseGitRepo,
+							uri: repo.rootUri,
 							branchName,
 							upstreamBranchName,
 							uncommittedChanges,
@@ -273,6 +282,11 @@ class LocalSession extends Disposable {
 				}, undefined);
 
 				const allStateChanges = [...state.workingTreeChanges, ...state.untrackedChanges, ...state.indexChanges];
+
+				if (uncommittedChanges === 0) {
+					this._changes.set([], undefined);
+					return;
+				}
 
 				const version = ++diffVersion;
 				repo.diffBetweenWithStats2('HEAD').then(async diffChanges => {
