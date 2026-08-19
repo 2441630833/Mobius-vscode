@@ -13,9 +13,9 @@ import { IActionWidgetService } from '../../../../../platform/actionWidget/brows
 import { ActionListItemKind, IActionListDelegate, IActionListItem } from '../../../../../platform/actionWidget/browser/actionList.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
-import { ChatMode, IChatMode, IChatModes, IChatModeService } from '../../../../../workbench/contrib/chat/common/chatModes.js';
+import { ChatMode, IChatMode, IChatModes, IChatModeService, isBuiltinChatMode } from '../../../../../workbench/contrib/chat/common/chatModes.js';
 import { IChatSessionsService } from '../../../../../workbench/contrib/chat/common/chatSessionsService.js';
-import { getChatSessionType } from '../../../../../workbench/contrib/chat/common/model/chatUri.js';
+import { getChatSessionType, LocalChatSessionUri } from '../../../../../workbench/contrib/chat/common/model/chatUri.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { Target } from '../../../../../workbench/contrib/chat/common/promptSyntax/promptTypes.js';
 import { AICustomizationManagementCommands } from '../../../../../workbench/contrib/chat/browser/aiCustomization/aiCustomizationManagement.js';
@@ -23,6 +23,8 @@ import { AICustomizationManagementSection } from '../../../../../workbench/contr
 import type { ISession } from '../../../../services/sessions/common/session.js';
 import { reportNewChatPickerClosed } from '../../../chat/browser/newChatPickerTelemetry.js';
 import { CopilotCLISessionType } from '../../agentHost/browser/baseAgentHostSessionsProvider.js';
+import { LocalSessionType } from '../../localChatSessions/browser/localChatSessionsProvider.js';
+import { isContinuePhysicalAiIde } from '../../../../../workbench/contrib/continue/browser/continueProduct.js';
 import { URI } from '../../../../../base/common/uri.js';
 
 interface IModePickerItem {
@@ -64,6 +66,9 @@ export class ModePickerModel extends Disposable {
 		@IChatModeService private readonly chatModeService: IChatModeService,
 	) {
 		super();
+		if (isContinuePhysicalAiIde()) {
+			this._ensureWorkspaceModes();
+		}
 	}
 
 	reset(): void {
@@ -78,6 +83,15 @@ export class ModePickerModel extends Disposable {
 
 	setSession(session: ISession | undefined, selectedModeId: string | undefined): void {
 		if (!session) {
+			if (isContinuePhysicalAiIde()) {
+				this._sessionResource = undefined;
+				this._ensureWorkspaceModes();
+				if (selectedModeId !== undefined) {
+					this._selectedModeId = selectedModeId;
+				}
+				this._onDidChange.fire();
+				return;
+			}
 			if (!this._sessionResource) {
 				return;
 			}
@@ -93,14 +107,17 @@ export class ModePickerModel extends Disposable {
 	}
 
 	getAvailableModes(): IChatMode[] {
-		const sessionType = this._sessionResource ? getChatSessionType(this._sessionResource) : CopilotCLISessionType.id;
+		const sessionType = this._sessionResource
+			? getChatSessionType(this._sessionResource)
+			: (isContinuePhysicalAiIde() ? LocalSessionType.id : CopilotCLISessionType.id);
 		const customAgentTarget = this.chatSessionsService.getCustomAgentTargetForSessionType(sessionType);
 		const effectiveTarget = customAgentTarget && customAgentTarget !== Target.Undefined ? customAgentTarget : Target.GitHubCopilot;
 
-		// Always include the default Agent mode.
 		const result: IChatMode[] = [ChatMode.Agent];
+		if (isContinuePhysicalAiIde()) {
+			result.push(ChatMode.Ask);
+		}
 
-		// Add custom modes matching the target and visible to users.
 		for (const mode of (this._chatModes?.custom ?? [])) {
 			const target = mode.target.get();
 			if (target === effectiveTarget || target === Target.Undefined) {
@@ -113,6 +130,18 @@ export class ModePickerModel extends Disposable {
 		}
 
 		return result;
+	}
+
+	private _ensureWorkspaceModes(): void {
+		if (this._chatModes) {
+			return;
+		}
+		const modes = this.chatModeService.createModes(LocalChatSessionUri.getNewSessionUri());
+		this._chatModesDisposable.value = modes;
+		this._chatModes = modes;
+		this._modeChangeListener.value = modes.onDidChange(() => {
+			this._onDidChange.fire();
+		});
 	}
 
 	private _setSession(session: ISession, selectedModeId: string | undefined): void {
@@ -136,11 +165,13 @@ export class ModePickerModel extends Disposable {
 	}
 
 	private _findModeById(id: string): IChatMode | undefined {
-		const mode = this._chatModes?.findModeById(id);
-		if (mode) {
-			return mode;
+		if (id === ChatMode.Agent.id) {
+			return ChatMode.Agent;
 		}
-		return undefined;
+		if (id === ChatMode.Ask.id) {
+			return ChatMode.Ask;
+		}
+		return this._chatModes?.findModeById(id);
 	}
 }
 
@@ -266,18 +297,18 @@ export class ModePicker extends Disposable {
 		const items: IActionListItem<ModePickerItem>[] = [];
 
 		const selectedModeId = this._modePickerModel.selectedMode.id;
+		const builtinModes = modes.filter(mode => isBuiltinChatMode(mode));
+		const customModes = modes.filter(mode => !isBuiltinChatMode(mode));
 
-		// Default Agent mode
-		const agentMode = modes[0];
-		items.push({
-			kind: ActionListItemKind.Action,
-			label: agentMode.label.get(),
-			group: { title: '', icon: selectedModeId === agentMode.id ? Codicon.check : Codicon.blank },
-			item: { kind: 'mode', mode: agentMode },
-		});
+		for (const mode of builtinModes) {
+			items.push({
+				kind: ActionListItemKind.Action,
+				label: mode.label.get(),
+				group: { title: '', icon: selectedModeId === mode.id ? Codicon.check : Codicon.blank },
+				item: { kind: 'mode', mode },
+			});
+		}
 
-		// Custom modes (with separator if any exist)
-		const customModes = modes.slice(1);
 		if (customModes.length > 0) {
 			items.push({ kind: ActionListItemKind.Separator, label: '' });
 			for (const mode of customModes) {

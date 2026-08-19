@@ -402,6 +402,12 @@ export class NewChatWidget extends Disposable {
 			await this.sessionsManagementService.sendNewChatRequest(session, { query, attachedContext, background });
 		} catch (e) {
 			this.logService.error('Failed to send request:', e);
+			// A rejected first send disposes the draft session; re-seed so the
+			// composer is not stuck with canSendRequest=false.
+			const folderUri = this._workspacePicker.selectedFolderUri;
+			if (folderUri && !background) {
+				this._createNewSession(folderUri);
+			}
 		}
 
 		// A background send graduated the composer's in-flight session and

@@ -783,6 +783,10 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 		};
 	}
 
+	setSessionMode(sessionId: string, mode: IChatMode | undefined): void {
+		this._findSession(sessionId)?.setMode(mode);
+	}
+
 		setModel(sessionId: string, modelId: string): void {
 		// Must update both untitled (_newSessions) and committed (_sessionCache)
 		// sessions so picker selection stays in sync after the first message.

@@ -43,7 +43,7 @@ import { SaveReason } from '../../../common/editor.js';
 import { ILanguageModelToolsService } from '../../chat/common/tools/languageModelToolsService.js';
 import { CONTINUE_EXTENSION_ID, isContinuePhysicalAiIde } from './continueProduct.js';
 import { CONTINUE_LM_VENDOR } from './continueLanguageModelProvider.js';
-import { buildContinueSkillsContext, hasScaffoldProjectIntent, hasWebSearchIntent } from './continueSkillsContext.js';
+import { buildContinueSkillsContextFast, extractSkillRoutingQuery, hasScaffoldProjectIntent, hasWebSearchIntent, loadSkillWarmSnapshot } from './continueSkillsContext.js';
 import { ContinueSkillEmbeddingIndex } from './continueSkillEmbeddings.js';
 import { classifySkillRoutingOutcome, ContinueSkillFeedbackStore } from './continueSkillFeedback.js';
 import { AgentMemoryStore, ContinueSelfEvolving, TaskExecutionRecorder } from './continueSelfEvolving.js';
@@ -63,6 +63,8 @@ import {
 	unsupportedCopilotToolRecovery,
 } from './continueCopilotToolsBridge.js';
 import { executeRunTerminalCommand } from './continueTerminalTool.js';
+import { executeGodotTool, gameDevSystemHint, hasGameDevIntent, isGameModeName, isGodotTool } from './continueGodotTools.js';
+import { acquireIndexingPause } from './continueIndexingPause.js';
 import { captureTerminalContext } from './continueTerminalContext.js';
 import { preprocessAgentRequestOcr, collectAgentRequestImageParts } from './continueOcrPreprocessor.js';
 import { BUNDLED_OLLAMA_OCR } from './continueModelConfig.js';
@@ -73,6 +75,7 @@ const CONTINUE_AGENT_IDS = {
 	ask: `${CONTINUE_EXTENSION_ID}.chat`,
 	edit: `${CONTINUE_EXTENSION_ID}.edits`,
 	agent: `${CONTINUE_EXTENSION_ID}.agent`,
+	game: `${CONTINUE_EXTENSION_ID}.game`,
 } as const;
 
 /**
@@ -282,6 +285,8 @@ CRITICAL RULES:
 15. TOOL CALL FORMAT (CRITICAL): Tools are provided via the API tools/function-calling channel. ALWAYS use that channel (tool_calls / tool_use). NEVER invent plain-text or XML-looking tool markup in your message content — it is not executed. To edit or run a command, emit a real native function call.
 16. ENCODING / CHINESE TEXT (CRITICAL): All workspace files are UTF-8. When editing, copy non-ASCII characters (especially Chinese) EXACTLY from read_file output — do not re-type, translate-through-pinyin, or "normalize" them. If you see mojibake like 鏉茬藁 / 閿俐 / 锟斤拷 instead of real Chinese, STOP and re-read the file with read_file before editing; never write mojibake back to disk.`;
 
+const PLAN_EXECUTE_SYSTEM = `You are in Plan mode. Help the user understand the work and produce a concrete implementation plan. Do not write, patch, or delete files. Do not run commands that change the workspace. When they want the plan applied, tell them to switch to Agent (or Game for Godot).`;
+
 class ContinueChatAgent implements IChatAgentImplementation {
 	private readonly _skillEmbeddingIndex: ContinueSkillEmbeddingIndex;
 	private readonly _skillFeedbackStore: ContinueSkillFeedbackStore;
@@ -307,10 +312,16 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		storageService: IStorageService,
 	) {
 				this._skillEmbeddingIndex = new ContinueSkillEmbeddingIndex(
-			this._requestService,
 			this._fileService,
 			this._logService,
 		);
+		void this._skillEmbeddingIndex.warmup(() => loadSkillWarmSnapshot(
+			this._promptsService,
+			this._fileService,
+			this._configurationService,
+			this._logService,
+			CancellationToken.None,
+		));
 		this._skillFeedbackStore = new ContinueSkillFeedbackStore(storageService, this._logService);
 
 		const selfEvolutionEnabled = this._configurationService.getValue<boolean>('continue.selfEvolution.enabled') ?? true;
@@ -354,32 +365,42 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			`[Continue] Agent using model '${modelId}' (requested: ${request.userSelectedModelId ?? 'none'})`,
 		);
 
-		const isAgentMode = request.agentId === CONTINUE_AGENT_IDS.agent;
+		const isGameMode = request.agentId === CONTINUE_AGENT_IDS.game
+			|| isGameModeName(request.modeInstructions?.name)
+			|| hasGameDevIntent(request.message);
+		const isPlanMode = isNamedChatMode(request.modeInstructions?.name, 'plan');
+		const isAgentMode = (request.agentId === CONTINUE_AGENT_IDS.agent
+			|| request.agentId === CONTINUE_AGENT_IDS.game)
+			&& !isPlanMode;
+		const releaseIndexingPause = isAgentMode
+			? acquireIndexingPause(this._commandService, this._logService)
+			: () => { };
+		try {
 		let skillCatalog: string | undefined;
 		let skillAttachments: string[] = [];
 		let routedSkillNames: string[] = [];
 		if (isAgentMode) {
-			const skills = await buildContinueSkillsContext(
-				request,
-				this._promptsService,
-				this._fileService,
-				this._configurationService,
-				this._logService,
-				token,
+			const fast = buildContinueSkillsContextFast(
+				extractSkillRoutingQuery(request),
 				this._skillEmbeddingIndex,
 				this._skillFeedbackStore,
+				this._logService,
 			);
-			skillCatalog = skills.systemText || undefined;
-			skillAttachments = [...skills.attachmentTexts];
-			routedSkillNames = [...skills.routedSkillNames];
-			if (skills.routedSkillNames.length) {
+			if (fast) {
+				skillCatalog = fast.systemText || undefined;
+				skillAttachments = [...fast.attachmentTexts];
+				routedSkillNames = [...fast.routedSkillNames];
+			} else {
+				this._logService.info('[Continue] Skills cache cold — first token without waiting on skill disk');
+			}
+			if (routedSkillNames.length) {
 				progress([{
 					kind: 'markdownContent',
 					content: new MarkdownString(
 						localize(
 							'continue.skillsAutoRouted',
 							"Auto-routed skills: {0}",
-							skills.routedSkillNames.map(n => `\`${n}\``).join(', '),
+							routedSkillNames.map(n => `\`${n}\``).join(', '),
 						),
 					),
 				}]);
@@ -416,14 +437,27 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			? await loadContinueAgentRules(this._commandService, request.message, this._logService)
 			: undefined;
 
+		let agentSystem = AGENT_EXECUTE_SYSTEM;
+		if (continueRules) {
+			agentSystem += `\n\n<continue-rules>\n${continueRules}\n</continue-rules>`;
+		}
+		const modeBody = request.modeInstructions?.content?.trim();
+		if ((isAgentMode || isPlanMode) && modeBody) {
+			agentSystem += `\n\n<mode-instructions name="${request.modeInstructions?.name ?? ''}">\n${modeBody}\n</mode-instructions>`;
+		}
+		if (isGameMode) {
+			agentSystem += `\n\n<game-dev>\n${gameDevSystemHint()}\n</game-dev>`;
+		}
 		const executeSystem = isAgentMode
-			? appendWorkingDirectoryHint(
-				continueRules
-					? `${AGENT_EXECUTE_SYSTEM}\n\n<continue-rules>\n${continueRules}\n</continue-rules>`
-					: AGENT_EXECUTE_SYSTEM,
-				cwd,
-			)
-			: undefined;
+			? appendWorkingDirectoryHint(agentSystem, cwd)
+			: isPlanMode
+				? appendWorkingDirectoryHint(
+					modeBody
+						? `${PLAN_EXECUTE_SYSTEM}\n\n<mode-instructions name="${request.modeInstructions?.name ?? ''}">\n${modeBody}\n</mode-instructions>`
+						: PLAN_EXECUTE_SYSTEM,
+					cwd,
+				)
+				: undefined;
 
 				let ocrExtract: string | undefined;
 		let visionImageParts: Awaited<ReturnType<typeof collectAgentRequestImageParts>>['parts'] | undefined;
@@ -580,7 +614,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			this._commandService,
 			this._logService,
 		);
-		const codeChangeIntent = hasCodeChangeIntent(request.message) || isExecuteNowMessage(request.message);
+		const codeChangeIntent = hasCodeChangeIntent(request.message) || isExecuteNowMessage(request.message) || isGameMode;
 		const investigateIntent = hasInvestigateIntent(request.message);
 		/** Keep looping until the user task is done (edits OR investigation), not mere Q&A. */
 		const untilDoneIntent = (codeChangeIntent || investigateIntent);
@@ -1311,6 +1345,18 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		}
 
 		return {};
+		} finally {
+			releaseIndexingPause();
+			if (isAgentMode) {
+				void this._skillEmbeddingIndex.warmup(() => loadSkillWarmSnapshot(
+					this._promptsService,
+					this._fileService,
+					this._configurationService,
+					this._logService,
+					CancellationToken.None,
+				));
+			}
+		}
 	}
 
 	/**
@@ -1761,6 +1807,18 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			// red as "Read File failed" even if Continue would have succeeded.
 			if (effectiveName === 'read_file' || effectiveName === 'read_file_range') {
 				return this._readFileLocal(params, cwd);
+			}
+
+			if (isGodotTool(effectiveName)) {
+				return executeGodotTool(
+					this._languageModelToolsService,
+					this._logService,
+					this._workspaceService,
+					{ sessionResource, workingDirectory: cwd, chatRequestId },
+					effectiveName,
+					params,
+					token,
+				);
 			}
 
 			// Prefer Copilot tools when registered. Soften args to Copilot's
@@ -3302,17 +3360,26 @@ function buildChatMessages(
 	return messages;
 }
 
-function createContinueAgentData(id: string, name: string, mode: ChatModeKind): IChatAgentData {
+function isNamedChatMode(name: string | undefined, expected: string): boolean {
+	return typeof name === 'string' && name.trim().toLowerCase() === expected.toLowerCase();
+}
+
+function createContinueAgentData(
+	id: string,
+	name: string,
+	mode: ChatModeKind,
+	opts?: { isDefault?: boolean; fullName?: string; description?: string },
+): IChatAgentData {
 	return {
 		id,
 		name,
-		fullName: 'Continue',
-		description: localize('continue.agentDescription', "Continue AI assistant"),
+		fullName: opts?.fullName ?? 'Continue',
+		description: opts?.description ?? localize('continue.agentDescription', "Continue AI assistant"),
 		extensionId: new ExtensionIdentifier(CONTINUE_EXTENSION_ID),
 		extensionVersion: undefined,
 		extensionPublisherId: 'Continue',
 		extensionDisplayName: 'Continue',
-		isDefault: true,
+		isDefault: opts?.isDefault ?? true,
 		isDynamic: true,
 		isCore: false,
 		metadata: {},
@@ -3369,15 +3436,33 @@ class ContinueChatAgentContribution extends Disposable implements IWorkbenchCont
 				terminalChatService,
 				storageService,
 			);
-		const registrations = [
+		const registrations: Array<{
+			id: string;
+			name: string;
+			mode: ChatModeKind;
+			opts?: { isDefault?: boolean; fullName?: string; description?: string };
+		}> = [
 			{ id: CONTINUE_AGENT_IDS.ask, name: 'Continue', mode: ChatModeKind.Ask },
 			{ id: CONTINUE_AGENT_IDS.edit, name: 'Continue', mode: ChatModeKind.Edit },
 			{ id: CONTINUE_AGENT_IDS.agent, name: 'Continue', mode: ChatModeKind.Agent },
+			{
+				id: CONTINUE_AGENT_IDS.game,
+				name: 'Game',
+				mode: ChatModeKind.Agent,
+				opts: {
+					isDefault: false,
+					fullName: 'Game',
+					description: localize(
+						'continue.gameAgentDescription',
+						"Godot game-dev: write game-dev/, import, test, then godot_play to run the mini-game",
+					),
+				},
+			},
 		];
 
-		for (const { id, name, mode } of registrations) {
+		for (const { id, name, mode, opts } of registrations) {
 			this._register(this.chatAgentService.registerDynamicAgent(
-				createContinueAgentData(id, name, mode),
+				createContinueAgentData(id, name, mode, opts),
 				impl,
 			));
 		}

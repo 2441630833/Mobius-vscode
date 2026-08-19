@@ -23,7 +23,7 @@ export interface EnvModelProfile {
 	readonly model: string;
 }
 
-/** Sync with config/ollama.port — used by OCR + embeddings only (no local chat). */
+/** Sync with config/ollama.port — used by OCR only (embeddings are in-process). */
 export const BUNDLED_OLLAMA_PORT = 25137;
 
 /** Bundled local OCR (image → text) before cloud/agent turns. Sync with scripts/ollama-common.ps1. */

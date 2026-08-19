@@ -410,11 +410,22 @@ export class ChatAgentService extends Disposable implements IChatAgentService {
 		data.isDynamic = true;
 		const agent = { data, impl: agentImpl };
 		this._agents.set(data.id, agent);
+		// Same enablement as registerAgentImplementation: a default participant
+		// with an impl must turn chat on. Continue (Mobius) only registers via
+		// this path, so skipping it hides the composer mode picker (chatIsEnabled).
+		if (data.isDefault) {
+			this._hasDefaultAgent.set(true);
+		}
+		this._updateContextKeys();
 		this._onDidChangeAgents.fire(new MergedChatAgent(data, agentImpl));
 
 		return toDisposable(() => {
 			this._agents.delete(data.id);
+			this._updateContextKeys();
 			this._onDidChangeAgents.fire(undefined);
+			if (data.isDefault) {
+				this._hasDefaultAgent.set(Iterable.some(this._agents.values(), a => a.data.isDefault && !!a.impl));
+			}
 		});
 	}
 

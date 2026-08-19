@@ -110,4 +110,23 @@ suite('ChatAgents', function () {
 			assert.throws(() => chatAgentService.registerAgentImplementation(testAgentId, agentImpl));
 		});
 	});
+
+	test('registerDynamicAgent enables chatIsEnabled for a default participant', () => {
+		assert.strictEqual(contextKeyService.getContextKeyValue('chatIsEnabled'), false);
+
+		const impl: IChatAgentImplementation = {
+			invoke: async () => { return {}; },
+		};
+		const registration = chatAgentService.registerDynamicAgent({
+			...testAgentData,
+			isDefault: true,
+		}, impl);
+
+		assert.strictEqual(contextKeyService.getContextKeyValue('chatIsEnabled'), true);
+		assert.strictEqual(chatAgentService.getActivatedAgents().length, 1);
+
+		registration.dispose();
+		assert.strictEqual(contextKeyService.getContextKeyValue('chatIsEnabled'), false);
+		assert.strictEqual(chatAgentService.getActivatedAgents().length, 0);
+	});
 });

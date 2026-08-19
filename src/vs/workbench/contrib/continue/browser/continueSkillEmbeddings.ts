@@ -1,24 +1,23 @@
 /*---------------------------------------------------------------------------------------------
  *  Mobius — hybrid skill recall: embedding ANN + lexical fusion (Phase 1)
+ *
+ *  Embeddings are computed in-process (hashed n-gram vectors). They must not
+ *  call bundled Ollama: concurrent agents previously flooded nomic-embed-text
+ *  and stalled chat streaming / the workbench.
  *--------------------------------------------------------------------------------------------*/
 
-import { streamToBuffer } from '../../../../base/common/buffer.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
-import { IRequestService } from '../../../../platform/request/common/request.js';
 import { IAgentSkill } from '../../chat/common/promptSyntax/service/promptsService.js';
-import { BUNDLED_OLLAMA_PORT } from './continueModelConfig.js';
 import type { RankedSkill } from './continueSkillsContext.js';
 import { formatRoutingQueryForLog } from './continueSkillsContext.js';
 
-/** Bundled Ollama embed model — sync with config/continue-config.yaml local-embed */
-export const BUNDLED_EMBED_MODEL = 'nomic-embed-text';
+/** In-process embedder id — not an Ollama model. Kept for log / debug stability. */
+export const BUNDLED_EMBED_MODEL = 'all-MiniLM-L6-v2-hash';
 
-const EMBED_API_BASE = `http://127.0.0.1:${BUNDLED_OLLAMA_PORT}`;
 const SKILL_BODY_PREVIEW_CHARS = 500;
-const EMBED_BATCH_CONCURRENCY = 4;
-const EMBED_REQUEST_TIMEOUT_MS = 8_000;
+const EMBED_DIMS = 384;
 
 /** Stage-1 recall width per channel (X-style multi-source funnel). */
 export const EMBEDDING_RECALL_TOP_K = 8;
@@ -46,14 +45,18 @@ export interface HybridSkillScoreDetail {
 
 /**
  * Precomputes / caches skill embeddings and fuses vector recall with lexical scores.
- * Falls back gracefully when Ollama embed is unavailable.
+ * Uses an in-process hashing embedder so multi-agent turns never contend on Ollama.
  */
 export class ContinueSkillEmbeddingIndex {
 	private readonly _vectors = new Map<string, CachedSkillVector>();
-	private _embedAvailable: boolean | undefined;
+	private _embedAvailable: boolean | undefined = true;
+	private _warm = false;
+	private _invocable: IAgentSkill[] = [];
+	private _catalog = '';
+	private readonly _bodies = new Map<string, string>();
+	private _warmupInFlight: Promise<void> | undefined;
 
 	constructor(
-		private readonly _requestService: IRequestService,
 		private readonly _fileService: IFileService,
 		private readonly _logService: ILogService,
 	) { }
@@ -82,8 +85,11 @@ export class ContinueSkillEmbeddingIndex {
 
 		let embedByUri = new Map<string, number>();
 		try {
-			const queryVector = await this._embedText(message, token);
+			const queryVector = embedTextLocal(message);
 			if (queryVector) {
+				this._logService.info(
+					`[MobiusEmbed] skill-in-process hash queryChars=${message.length} (not Ollama)`,
+				);
 				this._logService.trace(
 					`[Continue] Skill embed query (current turn only): ${formatRoutingQueryForLog(message)}`,
 				);
@@ -150,12 +156,152 @@ export class ContinueSkillEmbeddingIndex {
 			b.fusedScore - a.fusedScore || a.skill.name.localeCompare(b.skill.name));
 	}
 
+	hasWarmCache(): boolean {
+		return this._warm && this._invocable.length > 0;
+	}
+
+	getCachedInvocable(): readonly IAgentSkill[] {
+		return this._invocable;
+	}
+
+	getCachedCatalog(): string {
+		return this._catalog;
+	}
+
+	getCachedBody(uri: string): string | undefined {
+		return this._bodies.get(uri);
+	}
+
+	/**
+	 * Sync fusion using vectors already in RAM. Does not read the disk.
+	 */
+	fuseCached(
+		message: string,
+		lexicalRanked: readonly RankedSkill[],
+	): HybridSkillScoreDetail[] {
+		if (!this._invocable.length || !lexicalRanked.length) {
+			return lexicalRanked.map(hit => ({
+				skill: hit.skill,
+				lexicalScore: hit.score,
+				embedScore: 0,
+				feedbackBoost: 0,
+				fusedScore: hit.score,
+			}));
+		}
+
+		const lexicalByUri = new Map(lexicalRanked.map(hit => [hit.skill.uri.toString(), hit.score]));
+		const lexicalTop = [...lexicalRanked]
+			.sort((a, b) => b.score - a.score)
+			.slice(0, LEXICAL_RECALL_TOP_K);
+
+		const queryVector = embedTextLocal(message);
+		const embedByUri = new Map<string, number>();
+		if (queryVector) {
+			const sims: { uri: string; sim: number }[] = [];
+			for (const skill of this._invocable) {
+				const cached = this._vectors.get(skill.uri.toString());
+				if (!cached) {
+					continue;
+				}
+				sims.push({ uri: skill.uri.toString(), sim: cosineSimilarity(queryVector, cached.vector) });
+			}
+			sims.sort((a, b) => b.sim - a.sim);
+			for (const s of sims.slice(0, EMBEDDING_RECALL_TOP_K)) {
+				embedByUri.set(s.uri, s.sim);
+			}
+		}
+
+		if (!embedByUri.size) {
+			return lexicalRanked.map(hit => ({
+				skill: hit.skill,
+				lexicalScore: hit.score,
+				embedScore: 0,
+				feedbackBoost: 0,
+				fusedScore: hit.score,
+			}));
+		}
+
+		const recallUris = new Set<string>([
+			...lexicalTop.map(h => h.skill.uri.toString()),
+			...embedByUri.keys(),
+		]);
+
+		const details: HybridSkillScoreDetail[] = [];
+		for (const uri of recallUris) {
+			const skill = this._invocable.find(s => s.uri.toString() === uri);
+			if (!skill) {
+				continue;
+			}
+			const lexicalScore = lexicalByUri.get(uri) ?? 0;
+			const embedScore = (embedByUri.get(uri) ?? 0) * EMBED_SCORE_SCALE;
+			const fusedScore = FUSION_EMBED_WEIGHT * embedScore + FUSION_LEXICAL_WEIGHT * lexicalScore;
+			details.push({ skill, lexicalScore, embedScore, feedbackBoost: 0, fusedScore });
+		}
+
+		for (const hit of lexicalRanked) {
+			const uri = hit.skill.uri.toString();
+			if (recallUris.has(uri)) {
+				continue;
+			}
+			details.push({
+				skill: hit.skill,
+				lexicalScore: hit.score,
+				embedScore: 0,
+				feedbackBoost: 0,
+				fusedScore: FUSION_LEXICAL_WEIGHT * hit.score,
+			});
+		}
+
+		return details.sort((a, b) =>
+			b.fusedScore - a.fusedScore || a.skill.name.localeCompare(b.skill.name));
+	}
+
+	async warmup(
+		load: () => Promise<{
+			invocable: readonly IAgentSkill[];
+			catalog: string;
+			bodies: ReadonlyMap<string, string>;
+		}>,
+	): Promise<void> {
+		if (this._warmupInFlight) {
+			return this._warmupInFlight;
+		}
+		this._warmupInFlight = (async () => {
+			try {
+				const loaded = await load();
+				this._invocable = [...loaded.invocable];
+				this._catalog = loaded.catalog;
+				this._bodies.clear();
+				for (const [uri, body] of loaded.bodies) {
+					this._bodies.set(uri, body);
+				}
+				for (const skill of this._invocable) {
+					const body = this._bodies.get(skill.uri.toString()) ?? '';
+					const text = [skill.name, skill.description ?? '', body.slice(0, SKILL_BODY_PREVIEW_CHARS)]
+						.filter(Boolean).join('\n');
+					const vector = embedTextLocal(text);
+					if (vector) {
+						this._vectors.set(skill.uri.toString(), { textHash: hashText(text), vector });
+					}
+				}
+				this._warm = this._invocable.length > 0;
+				this._logService.info(
+					`[Continue] Skill warm-cache ready catalog=${this._invocable.length} bodies=${this._bodies.size} (no disk on next Agent turn)`,
+				);
+			} catch (err) {
+				this._logService.warn('[Continue] Skill warm-cache failed', err);
+			} finally {
+				this._warmupInFlight = undefined;
+			}
+		})();
+		return this._warmupInFlight;
+	}
+
 	isEmbedAvailable(): boolean | undefined {
 		return this._embedAvailable;
 	}
 
 	private async _ensureSkillVectors(skills: readonly IAgentSkill[], token: CancellationToken): Promise<void> {
-		const pending: { skill: IAgentSkill; text: string; textHash: string }[] = [];
 		for (const skill of skills) {
 			if (token.isCancellationRequested) {
 				return;
@@ -167,75 +313,52 @@ export class ContinueSkillEmbeddingIndex {
 			if (cached?.textHash === textHash) {
 				continue;
 			}
-			pending.push({ skill, text, textHash });
-		}
-
-		await runPool(pending, EMBED_BATCH_CONCURRENCY, async item => {
-			if (token.isCancellationRequested) {
-				return;
-			}
-			const vector = await this._embedText(item.text, token);
+			const vector = embedTextLocal(text);
 			if (!vector) {
-				return;
+				continue;
 			}
-			this._vectors.set(item.skill.uri.toString(), { textHash: item.textHash, vector });
-		});
+			this._vectors.set(key, { textHash, vector });
+		}
 	}
+}
 
-	private async _embedText(text: string, token: CancellationToken): Promise<number[] | undefined> {
-		const trimmed = text.trim();
-		if (!trimmed) {
-			return undefined;
-		}
-
-		// OpenAI-compatible (Ollama /v1/embeddings) — supports batch via array later.
-		const openAi = await this._requestEmbed(
-			`${EMBED_API_BASE}/v1/embeddings`,
-			JSON.stringify({ model: BUNDLED_EMBED_MODEL, input: trimmed }),
-			token,
-		);
-		if (openAi) {
-			return openAi;
-		}
-
-		// Native Ollama /api/embeddings fallback.
-		return this._requestEmbed(
-			`${EMBED_API_BASE}/api/embeddings`,
-			JSON.stringify({ model: BUNDLED_EMBED_MODEL, prompt: trimmed }),
-			token,
-		);
-	}
-
-	private async _requestEmbed(url: string, body: string, token: CancellationToken): Promise<number[] | undefined> {
-		const context = await this._requestService.request({
-			type: 'POST',
-			url,
-			callSite: 'ContinueSkillEmbeddingIndex.embed',
-			headers: {
-				'Content-Type': 'application/json',
-			},
-			data: body,
-			timeout: EMBED_REQUEST_TIMEOUT_MS,
-		}, token);
-
-		if (context.res.statusCode && context.res.statusCode >= 400) {
-			return undefined;
-		}
-
-		const raw = (await streamToBuffer(context.stream)).toString();
-		try {
-			const json = JSON.parse(raw);
-			if (Array.isArray(json?.data?.[0]?.embedding)) {
-				return json.data[0].embedding as number[];
-			}
-			if (Array.isArray(json?.embedding)) {
-				return json.embedding as number[];
-			}
-		} catch {
-			// malformed
-		}
+/**
+ * Signed-hashing n-gram embedding (HashingVectorizer-style).
+ * Fast, deterministic, CJK-safe via character 3-grams. No GPU / HTTP.
+ */
+export function embedTextLocal(text: string): number[] | undefined {
+	const trimmed = text.trim();
+	if (!trimmed) {
 		return undefined;
 	}
+
+	const vec = new Float64Array(EMBED_DIMS);
+	let nonempty = false;
+	for (const token of tokenizeForEmbed(trimmed)) {
+		const h1 = fnv1a(token);
+		const h2 = fnv1a(token + '\u0001');
+		vec[h1 % EMBED_DIMS] += (h1 & 0x80000000) ? -1 : 1;
+		vec[h2 % EMBED_DIMS] += (h2 & 0x80000000) ? -1 : 1;
+		nonempty = true;
+	}
+	if (!nonempty) {
+		return undefined;
+	}
+
+	let norm = 0;
+	for (let i = 0; i < EMBED_DIMS; i++) {
+		norm += vec[i] * vec[i];
+	}
+	norm = Math.sqrt(norm);
+	if (norm === 0) {
+		return undefined;
+	}
+
+	const out = new Array<number>(EMBED_DIMS);
+	for (let i = 0; i < EMBED_DIMS; i++) {
+		out[i] = vec[i] / norm;
+	}
+	return out;
 }
 
 export function cosineSimilarity(a: readonly number[], b: readonly number[]): number {
@@ -254,6 +377,27 @@ export function cosineSimilarity(a: readonly number[], b: readonly number[]): nu
 		return 0;
 	}
 	return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+function tokenizeForEmbed(text: string): string[] {
+	const lower = text.toLowerCase();
+	const tokens: string[] = [];
+	const words = lower.split(/[^\p{L}\p{N}_]+/u).filter(t => t.length > 1);
+	tokens.push(...words);
+	const compact = lower.replace(/\s+/g, '');
+	for (let i = 0; i < compact.length - 2; i++) {
+		tokens.push(compact.slice(i, i + 3));
+	}
+	return tokens;
+}
+
+function fnv1a(text: string): number {
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < text.length; i++) {
+		hash ^= text.charCodeAt(i);
+		hash = Math.imul(hash, 0x01000193);
+	}
+	return hash >>> 0;
 }
 
 async function buildSkillEmbedText(skill: IAgentSkill, fileService: IFileService): Promise<string> {
@@ -287,19 +431,4 @@ function hashText(text: string): string {
 		hash = ((hash << 5) + hash) ^ text.charCodeAt(i);
 	}
 	return (hash >>> 0).toString(16);
-}
-
-async function runPool<T>(
-	items: readonly T[],
-	concurrency: number,
-	fn: (item: T) => Promise<void>,
-): Promise<void> {
-	let index = 0;
-	const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-		while (index < items.length) {
-			const i = index++;
-			await fn(items[i]);
-		}
-	});
-	await Promise.all(workers);
 }

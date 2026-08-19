@@ -73,7 +73,13 @@ export class ModePickerActionItem extends ChatInputPickerActionViewItem {
 		@IOpenerService openerService: IOpenerService,
 		@IWorkbenchAssignmentService assignmentService: IWorkbenchAssignmentService,
 	) {
-		const assignments = observableValue<{ showOldAskMode: boolean }>('modePickerAssignments', { showOldAskMode: false });
+		const forceOldAskMode = _productService.defaultChatAgent?.extensionId === 'Continue.continue';
+		const assignments = observableValue<{ showOldAskMode: boolean }>('modePickerAssignments', {
+			// VS Code hides builtin Ask behind an experiment. Mobius's default
+			// Continue participant has no Copilot "new Ask" agent, so keep Ask
+			// visible in the composer picker (Agent / Ask / custom Game, Plan).
+			showOldAskMode: forceOldAskMode,
+		});
 
 		// Get custom agent target dynamically (may change when switching session types)
 		const getCustomAgentTarget = () => delegate.customAgentTarget?.() ?? Target.Undefined;
@@ -255,11 +261,14 @@ export class ModePickerActionItem extends ChatInputPickerActionViewItem {
 			}
 		}));
 
-		assignmentService.getTreatment('chat.showOldAskMode').then(showOldAskMode => {
-			assignments.set({ showOldAskMode: showOldAskMode === 'enabled' }, undefined);
-		});
+		const applyShowOldAskMode = (treatment: unknown) => {
+			assignments.set({
+				showOldAskMode: forceOldAskMode || treatment === 'enabled',
+			}, undefined);
+		};
+		assignmentService.getTreatment('chat.showOldAskMode').then(applyShowOldAskMode);
 		this._register(assignmentService.onDidRefetchAssignments(async () => {
-			assignments.set({ showOldAskMode: await assignmentService.getTreatment('chat.showOldAskMode') === 'enabled' }, undefined);
+			applyShowOldAskMode(await assignmentService.getTreatment('chat.showOldAskMode'));
 		}));
 	}
 

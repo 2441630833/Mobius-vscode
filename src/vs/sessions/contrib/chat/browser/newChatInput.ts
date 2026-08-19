@@ -60,6 +60,8 @@ import { autorun, IObservable } from '../../../../base/common/observable.js';
 import { ChatInputNotificationWidget } from '../../../../workbench/contrib/chat/browser/widget/input/chatInputNotificationWidget.js';
 import { INewChatModelPickerService, NewChatModelPickerService } from './newChatModelPicker.js';
 import { ModelPicker, ModelPickerActionViewItem } from './modelPicker.js';
+import { PickerActionViewItem, getSessionsWelcomeModePickerModel } from '../../providers/copilotChatSessions/browser/copilotChatSessionsActions.js';
+import { ModePicker, ModePickerModel } from '../../providers/copilotChatSessions/browser/modePicker.js';
 import { ISessionContext, SessionContext } from '../../../services/sessions/browser/sessionContext.js';
 import { AGENT_SESSIONS_SCOPED_INPUT_HISTORY_SETTING } from './sessionsChatHistory.js';
 
@@ -151,6 +153,7 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 	private _slashCommandHandler: SlashCommandHandler | undefined;
 	private _agentHostInputCompletionHandler: AgentHostInputCompletionHandler | undefined;
 	private readonly _scopedInstantiationService: IInstantiationService;
+	private readonly _fallbackModePickerModel: ModePickerModel;
 
 	// Input state
 	private _draftState: IDraftState | undefined = {
@@ -191,6 +194,8 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 			[INewChatModelPickerService, new NewChatModelPickerService()],
 			[ISessionContext, new SessionContext(this.options.session)],
 		)));
+		// Used only when the welcome ModePicker registers after this toolbar paints.
+		this._fallbackModePickerModel = this._register(this.instantiationService.createInstance(ModePickerModel));
 		this._history = this._register(this.instantiationService.createInstance(ChatHistoryNavigator, ChatAgentLocation.Chat));
 		if (this.options.historyKey) {
 			this._register(autorun(reader => this._setHistoryKey(this.options.historyKey?.read(reader))));
@@ -490,6 +495,15 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 		}));
 	}
 
+	private _resolveModePickerModel(): ModePickerModel {
+		return getSessionsWelcomeModePickerModel() ?? this._fallbackModePickerModel;
+	}
+
+	private _createModePickerViewItem(): PickerActionViewItem {
+		const picker = this._scopedInstantiationService.createInstance(ModePicker, this._resolveModePickerModel());
+		return new PickerActionViewItem(picker);
+	}
+
 	private _createInputToolbar(container: HTMLElement): void {
 		const toolbar = dom.append(container, dom.$('.sessions-chat-toolbar'));
 
@@ -504,6 +518,11 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 				if (action.id === 'sessions.modelPicker') {
 					const picker = this._scopedInstantiationService.createInstance(ModelPicker, this.options.session);
 					return new ModelPickerActionViewItem(picker);
+				}
+				// Fallback when IActionViewItemService has not registered the
+				// Copilot/local ModePicker yet (welcome composer paints first).
+				if (action.id === 'sessions.defaultCopilot.modePicker') {
+					return this._createModePickerViewItem();
 				}
 				return undefined;
 			},

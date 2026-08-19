@@ -4,7 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { BaseActionViewItem } from '../../../../../base/browser/ui/actionbar/actionViewItems.js';
-import { Disposable, DisposableStore, IDisposable } from '../../../../../base/common/lifecycle.js';
+import { Emitter } from '../../../../../base/common/event.js';
+import { Disposable, DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { IReader, autorun } from '../../../../../base/common/observable.js';
 import { isWeb } from '../../../../../base/common/platform.js';
 import { localize2 } from '../../../../../nls.js';
@@ -23,8 +24,9 @@ import { SessionItemContextMenuId } from '../../../sessions/browser/views/sessio
 import { BranchPicker } from './branchPicker.js';
 import { ClaudePermissionModePicker } from './claudePermissionModePicker.js';
 import { ClaudeCodeSessionType, COPILOT_PROVIDER_ID, CopilotChatSessionsProvider, CopilotCloudSessionType } from './copilotChatSessionsProvider.js';
-import { LocalSessionType } from '../../localChatSessions/browser/localChatSessionsProvider.js';
+import { LocalChatSessionsProvider, LOCAL_PROVIDER_ID, LocalSessionType } from '../../localChatSessions/browser/localChatSessionsProvider.js';
 import { IsolationPicker } from './isolationPicker.js';
+import { IChatMode } from '../../../../../workbench/contrib/chat/common/chatModes.js';
 import { ModePicker, ModePickerModel } from './modePicker.js';
 import { CopilotPermissionPickerDelegate, PermissionPicker } from './permissionPicker.js';
 import { CopilotCLISessionType } from '../../agentHost/browser/baseAgentHostSessionsProvider.js';
@@ -89,7 +91,20 @@ registerAction2(class extends Action2 {
 				id: Menus.NewSessionConfig,
 				group: 'navigation',
 				order: 0,
-				when: ContextKeyExpr.or(IsActiveSessionCopilotChatCLI, IsActiveSessionCopilotChatLocal, IsActiveSessionLocal),
+				when: ContextKeyExpr.or(
+					IsActiveSessionCopilotChatCLI,
+					IsActiveSessionCopilotChatLocal,
+					IsActiveSessionLocal,
+					// Welcome composer has no active session yet (type ''), but
+					// Mobius local chat still needs the Agent/Ask/Game/Plan chip.
+					ContextKeyExpr.and(
+						IsNewChatSessionContext,
+						ContextKeyExpr.or(
+							ContextKeyExpr.equals(ActiveSessionTypeContext.key, ''),
+							IsActiveSessionLocal,
+						),
+					),
+				),
 			}],
 		});
 	}
@@ -158,6 +173,41 @@ export class PickerActionViewItem extends BaseActionViewItem {
 	}
 }
 
+/** Shared welcome-composer mode picker model (see NewChatInputWidget fallback). */
+let welcomeModePickerModel: ModePickerModel | undefined;
+
+export function getSessionsWelcomeModePickerModel(): ModePickerModel | undefined {
+	return welcomeModePickerModel;
+}
+
+function applyPickerModeToSession(
+	session: ISession,
+	mode: IChatMode,
+	sessionsProvidersService: ISessionsProvidersService,
+): void {
+	const provider = sessionsProvidersService.getProvider(session.providerId);
+	if (provider instanceof CopilotChatSessionsProvider) {
+		provider.getSession(session.sessionId)?.setMode(mode);
+	} else if (provider instanceof LocalChatSessionsProvider) {
+		provider.setSessionMode(session.sessionId, mode);
+	}
+}
+
+function syncSessionModeFromPicker(
+	session: ISession,
+	modePickerModel: ModePickerModel,
+	sessionsProvidersService: ISessionsProvidersService,
+	reader: IReader,
+): void {
+	const sessionModeId = session.mode.read(reader)?.id;
+	const selectedModeId = sessionModeId ?? modePickerModel.selectedModeId;
+	modePickerModel.setSession(session, selectedModeId);
+	const pickerMode = modePickerModel.selectedMode;
+	if (pickerMode.id !== sessionModeId) {
+		applyPickerModeToSession(session, pickerMode, sessionsProvidersService);
+	}
+}
+
 // -- Action View Item Registrations --
 
 class CopilotPickerActionViewItemContribution extends Disposable implements IWorkbenchContribution {
@@ -172,19 +222,44 @@ class CopilotPickerActionViewItemContribution extends Disposable implements IWor
 	) {
 		super();
 		const modePickerModel = this._register(instantiationService.createInstance(ModePickerModel));
+		welcomeModePickerModel = modePickerModel;
+		this._register(toDisposable(() => {
+			if (welcomeModePickerModel === modePickerModel) {
+				welcomeModePickerModel = undefined;
+			}
+		}));
 		this._register(autorun(reader => {
 			const session = sessionsService.activeSession.read(reader);
 			if (session) {
 				const provider = sessionsProvidersService.getProvider(session.providerId);
-				if (provider instanceof CopilotChatSessionsProvider) {
-					const selectedModeId = session.mode.read(reader)?.id;
-					modePickerModel.setSession(session, selectedModeId);
+				const isLocalChat = provider instanceof LocalChatSessionsProvider || provider?.id === LOCAL_PROVIDER_ID;
+				if (provider instanceof CopilotChatSessionsProvider || isLocalChat) {
+					syncSessionModeFromPicker(session, modePickerModel, sessionsProvidersService, reader);
 					return;
 				}
 			}
 			modePickerModel.setSession(undefined, undefined);
 		}));
+		this._register(modePickerModel.onDidChange(() => {
+			const session = sessionsService.activeSession.get();
+			if (!session) {
+				return;
+			}
+			const provider = sessionsProvidersService.getProvider(session.providerId);
+			const isLocalChat = provider instanceof LocalChatSessionsProvider || provider?.id === LOCAL_PROVIDER_ID;
+			if (!(provider instanceof CopilotChatSessionsProvider || isLocalChat)) {
+				return;
+			}
+			const pickerMode = modePickerModel.selectedMode;
+			if (pickerMode.id !== session.mode.get()?.id) {
+				applyPickerModeToSession(session, pickerMode, sessionsProvidersService);
+			}
+		}));
 
+		// MenuWorkbenchToolBar only rebuilds view items on this event. Register
+		// without it and a welcome composer created during restore keeps the
+		// default "Mode" text button forever.
+		const onDidRegisterViewItems = this._register(new Emitter<void>());
 		this._register(actionViewItemService.register(
 			Menus.NewSessionRepositoryConfig, 'sessions.defaultCopilot.isolationPicker',
 			(_action, _options, scopedInstantiationService) => {
@@ -192,6 +267,7 @@ class CopilotPickerActionViewItemContribution extends Disposable implements IWor
 				const picker = scopedInstantiationService.createInstance(IsolationPicker, session);
 				return new PickerActionViewItem(picker);
 			},
+			onDidRegisterViewItems.event,
 		));
 		this._register(actionViewItemService.register(
 			Menus.NewSessionRepositoryConfig, 'sessions.defaultCopilot.branchPicker',
@@ -200,6 +276,7 @@ class CopilotPickerActionViewItemContribution extends Disposable implements IWor
 				const picker = scopedInstantiationService.createInstance(BranchPicker, session);
 				return new PickerActionViewItem(picker);
 			},
+			onDidRegisterViewItems.event,
 		));
 		this._register(actionViewItemService.register(
 			Menus.NewSessionConfig, 'sessions.defaultCopilot.modePicker',
@@ -211,13 +288,11 @@ class CopilotPickerActionViewItemContribution extends Disposable implements IWor
 					if (!session) {
 						return;
 					}
-					const provider = sessionsProvidersService.getProvider(session.providerId);
-					if (provider instanceof CopilotChatSessionsProvider) {
-						provider.getSession(session.sessionId)?.setMode(mode);
-					}
+					applyPickerModeToSession(session, mode, sessionsProvidersService);
 				}));
 				return new PickerActionViewItem(picker, disposableStore);
 			},
+			onDidRegisterViewItems.event,
 		));
 		// Permission picker registration is skipped on web so the
 		// web-only `CopilotPermissionPickerWebContribution` (registered
@@ -236,6 +311,7 @@ class CopilotPickerActionViewItemContribution extends Disposable implements IWor
 					const picker = scopedInstantiationService.createInstance(PermissionPicker, delegate);
 					return new PickerActionViewItem(picker, delegate);
 				},
+				onDidRegisterViewItems.event,
 			));
 		}
 		this._register(actionViewItemService.register(
@@ -245,7 +321,9 @@ class CopilotPickerActionViewItemContribution extends Disposable implements IWor
 				const picker = scopedInstantiationService.createInstance(ClaudePermissionModePicker, session);
 				return new PickerActionViewItem(picker);
 			},
+			onDidRegisterViewItems.event,
 		));
+		onDidRegisterViewItems.fire();
 	}
 }
 
@@ -279,7 +357,7 @@ class CopilotActiveSessionContribution extends Disposable implements IWorkbenchC
 	}
 }
 
-registerWorkbenchContribution2(CopilotPickerActionViewItemContribution.ID, CopilotPickerActionViewItemContribution, WorkbenchPhase.AfterRestored);
+registerWorkbenchContribution2(CopilotPickerActionViewItemContribution.ID, CopilotPickerActionViewItemContribution, WorkbenchPhase.BlockRestore);
 registerWorkbenchContribution2(CopilotActiveSessionContribution.ID, CopilotActiveSessionContribution, WorkbenchPhase.AfterRestored);
 
 registerAction2(class DeleteSessionAction extends Action2 {

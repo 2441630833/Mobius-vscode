@@ -215,7 +215,114 @@ export interface ContinueSkillsContext {
  * Without a mid-turn tool loop, Continue cannot call a `skill` tool later.
  * So we score each skill against the user message and eagerly load the
  * top matches as `<skill-context>` blocks.
+ *
+ * Prefer {@link buildContinueSkillsContextFast} on the Agent first-token path
+ * (warm RAM cache, no disk). This full loader is for warmup / cache miss.
  */
+export async function loadSkillWarmSnapshot(
+	promptsService: IPromptsService,
+	fileService: IFileService,
+	configurationService: IConfigurationService,
+	logService: ILogService,
+	token: CancellationToken,
+): Promise<{
+	readonly invocable: IAgentSkill[];
+	readonly catalog: string;
+	readonly bodies: Map<string, string>;
+}> {
+	if (configurationService.getValue<boolean>(PromptsConfig.USE_AGENT_SKILLS) === false) {
+		return { invocable: [], catalog: '', bodies: new Map() };
+	}
+	const skills = (await promptsService.findAgentSkills(token)) ?? [];
+	const invocable = skills.filter(skill => !!skill.description && !skill.disableModelInvocation);
+	const catalog = buildSkillsCatalog(invocable);
+	const bodies = new Map<string, string>();
+	for (const skill of invocable) {
+		if (token.isCancellationRequested) {
+			break;
+		}
+		try {
+			const content = (await fileService.readFile(skill.uri)).value.toString();
+			let body = sanitizeSkillBodyForAgentExecution(stripYamlFrontmatter(content).trim(), skill.name);
+			if (!body) {
+				continue;
+			}
+			if (body.length > AGENT_SKILL_BODY_CHAR_BUDGET) {
+				body = body.slice(0, AGENT_SKILL_BODY_CHAR_BUDGET) + '\n…[truncated for agent execution speed]';
+			}
+			bodies.set(skill.uri.toString(), body);
+		} catch (err) {
+			logService.warn('[Continue] Skill warmup failed to read', skill.uri.toString(), err);
+		}
+	}
+	return { invocable, catalog, bodies };
+}
+
+/**
+ * Sync skill routing from the warm cache. Returns undefined when the cache is cold
+ * so the caller can start the LLM without waiting on disk.
+ */
+export function buildContinueSkillsContextFast(
+	message: string,
+	embeddingIndex: ContinueSkillEmbeddingIndex,
+	feedbackStore: ContinueSkillFeedbackStore | undefined,
+	logService: ILogService,
+): ContinueSkillsContext | undefined {
+	if (!embeddingIndex.hasWarmCache()) {
+		return undefined;
+	}
+	if (hasWebSearchIntent(message)) {
+		return { systemText: '', attachmentTexts: [], routedSkillNames: [] };
+	}
+
+	const invocable = embeddingIndex.getCachedInvocable();
+	const systemText = embeddingIndex.getCachedCatalog();
+	const lexicalRanked = rankSkillsForMessage(message, invocable)
+		.map(hit => adjustScoreForAgentExecution(message, hit));
+	let hybridDetails = applyFeedbackBoosts(
+		embeddingIndex.fuseCached(message, lexicalRanked),
+		feedbackStore,
+	);
+	hybridDetails = applyIntentDomainAdjustments(message, hybridDetails);
+	hybridDetails = applyEmbeddingOnlyGating(message, hybridDetails);
+	hybridDetails.sort((a, b) => b.fusedScore - a.fusedScore || a.skill.name.localeCompare(b.skill.name));
+
+	const toLoad: SkillLoadCandidate[] = [];
+	for (const hit of hybridDetails) {
+		if (hit.fusedScore < AUTO_ROUTE_SCORE_THRESHOLD) {
+			break;
+		}
+		toLoad.push({ uri: hit.skill.uri, name: hit.skill.name, score: hit.fusedScore });
+	}
+	const ordered = selectCompatibleSkills(
+		toLoad.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)),
+		MAX_FULL_SKILLS,
+		message,
+	);
+
+	const attachmentTexts: string[] = [];
+	const routedSkillNames: string[] = [];
+	for (const item of ordered) {
+		const body = embeddingIndex.getCachedBody(item.uri.toString());
+		if (!body) {
+			continue;
+		}
+		const baseDir = URI.joinPath(item.uri, '..').fsPath;
+		attachmentTexts.push(
+			`<skill-context name="${escapeXml(item.name)}" score="${item.score}" mode="agent-execute">\nBase directory: ${baseDir}\n\n${body}\n</skill-context>`,
+		);
+		routedSkillNames.push(item.name);
+	}
+
+	const top = hybridDetails.slice(0, 5).map(r =>
+		`${r.skill.name}:f${r.fusedScore.toFixed(1)}(L${r.lexicalScore.toFixed(0)}+E${r.embedScore.toFixed(1)})`,
+	);
+	logService.info(
+		`[Continue] Skills auto-route [warm-cache]: ${formatRoutingQueryForLog(message)} loaded=[${routedSkillNames.join(', ')}] catalog=${invocable.length} top=${top.join(', ')}`,
+	);
+	return { systemText, attachmentTexts, routedSkillNames };
+}
+
 export async function buildContinueSkillsContext(
 	request: IChatAgentRequest,
 	promptsService: IPromptsService,
