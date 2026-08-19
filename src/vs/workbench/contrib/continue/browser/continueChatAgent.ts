@@ -63,13 +63,11 @@ import {
 	unsupportedCopilotToolRecovery,
 } from './continueCopilotToolsBridge.js';
 import { executeRunTerminalCommand } from './continueTerminalTool.js';
-import { executeGodotTool, gameDevSystemHint, hasGameDevIntent, isGameModeName, isGodotTool } from './continueGodotTools.js';
+import { executeGodotTool, createGodotAutoPreviewState, ensureGodotPreviewLaunched, gameDevSystemHint, GodotAutoPreviewState, hasGameDevIntent, isGameDevProjectUri, isGameModeName, isGodotTool, openGodotLiveEditorIfNeeded, openGodotLiveGameIfNeeded, trackGodotToolCall } from './continueGodotTools.js';
 import { acquireIndexingPause } from './continueIndexingPause.js';
-import { captureTerminalContext } from './continueTerminalContext.js';
 import { preprocessAgentRequestOcr, collectAgentRequestImageParts } from './continueOcrPreprocessor.js';
 import { BUNDLED_OLLAMA_OCR } from './continueModelConfig.js';
 import { RunInTerminalTool } from '../../terminalContrib/chatAgentTools/browser/tools/runInTerminalTool.js';
-import { ITerminalChatService, ITerminalService } from '../../terminal/browser/terminal.js';
 
 const CONTINUE_AGENT_IDS = {
 	ask: `${CONTINUE_EXTENSION_ID}.chat`,
@@ -180,6 +178,9 @@ const INVESTIGATE_CONTINUE_NUDGE =
 	`Investigation is incomplete. Continue NOW with tools: inspect the API/runtime data path, compare source vs served content, then fix or clearly report the root cause.
 Do not stop after a single terminal/read call. Forbidden: asking the user to continue.`;
 
+const TODO_LIST_FORCE_NUDGE =
+	`You must call manage_todo_list NOW before other tools. Split the user's request into 3–7 actionable items in their language, mark the first item in-progress, then continue the work. Do NOT narrate the plan only in chat text.`;
+
 function isWorkspaceSearchTool(toolName: string): boolean {
 	return toolName === 'grep_search'
 		|| toolName === 'file_search'
@@ -281,38 +282,11 @@ CRITICAL RULES:
 11. NEVER ask for confirmation before editing. Do NOT call vscode_askQuestions / ask_questions / vscode_reviewPlan. Forbidden: "请确认", "是否按以上", "是否一并", "要我继续吗", "should I proceed", "please confirm", "may I edit", "ready to apply?". When the change is clear enough, call edit tools in the SAME turn — propose-then-wait is failure. If scope is slightly ambiguous, pick the narrower sensible default and edit; do not ask.
 12. Keep working until the USER TASK is fully complete — including investigation/debug ("为什么/检查/排查"). Forbidden: stopping right after one terminal or read call, "请回复继续修改", "请回复任意消息", "由于本轮工具调用已用完", "我将立即对以上文件执行修改", "reply continue". There is NO tool-turn quota. After tools return — including tool ERRORS — either call the next tool or write the complete conclusion — never end silently because a tool failed.
 13. COMPILE GATE (mandatory after code edits): Before TASK_COMPLETE, call get_errors and fix every Error. If the package has compile/typecheck/build, run it via run_in_terminal and fix failures. The task is complete ONLY when Errors are gone and compile succeeds — then give a short done summary and end with a line containing exactly: TASK_COMPLETE
-14. TODO LIST: When using manage_todo_list, mark each item completed as soon as that step finishes. Before TASK_COMPLETE, write the full todo list with every item status=completed (or the IDE will auto-complete remaining items when you emit TASK_COMPLETE).
-15. TOOL CALL FORMAT (CRITICAL): Tools are provided via the API tools/function-calling channel. ALWAYS use that channel (tool_calls / tool_use). NEVER invent plain-text or XML-looking tool markup in your message content — it is not executed. To edit or run a command, emit a real native function call.
-16. ENCODING / CHINESE TEXT (CRITICAL): All workspace files are UTF-8. When editing, copy non-ASCII characters (especially Chinese) EXACTLY from read_file output — do not re-type, translate-through-pinyin, or "normalize" them. If you see mojibake like 鏉茬藁 / 閿俐 / 锟斤拷 instead of real Chinese, STOP and re-read the file with read_file before editing; never write mojibake back to disk.`;
-
-const PLAN_EXECUTE_SYSTEM = `You are in Plan mode. Help the user understand the work and produce a concrete implementation plan in markdown.
-
-Use read-only tools (list_dir, read_file, grep_search, semantic_search, file_search) when you need to inspect the codebase. Do NOT write, patch, or delete files. Do NOT run terminal commands.
-
-Always invoke tools through the API function-calling channel — never write seed:tool_call, XML, or other fake tool markup in message text (that is not executed).
-
-When the user wants changes applied, tell them to switch to Agent (or Game for Godot).`;
-
-const PLAN_MODE_READ_TOOLS = new Set([
-	'read_file',
-	'read_file_range',
-	'list_dir',
-	'ls',
-	'grep_search',
-	'file_search',
-	'file_glob_search',
-	'codebase',
-	'semantic_search',
-	'get_errors',
-	'get_problems',
-]);
-
-const PLAN_MODE_TOOL_TURN_LIMIT = 12;
-
-const PLAN_TEXTUAL_TOOL_NUDGE = `Your previous turn wrote tool calls as plain chat text (for example seed:tool_call or XML). That is INVALID — nothing ran.
-Use the API tools/function-calling channel with read-only tools only, then write the implementation plan in markdown.`;
-
-const PLAN_FINISH_NUDGE = `Stop exploring. Write the full implementation plan now: goal, affected files, numbered steps, and acceptance criteria. Do not modify any files.`;
+14. TERMINAL OUTPUT: Recent terminal scrollback is NOT prefetched into the prompt. When the user asks about a build failure, crash, or log, call run_in_terminal (re-run or inspect via shell) or get_errors — do not assume you already saw terminal output.
+15. TODO LIST (mandatory for multi-step work): Call manage_todo_list as your FIRST tool whenever the task needs 2+ steps (coding, debugging, Godot loop, plans, exploration). Break work into 3–7 concise items in the user's language, mark ONE in-progress before each step, mark completed immediately after each step. Skip todos only for one-line trivia with no follow-up work.
+16. Before TASK_COMPLETE, ensure every manage_todo_list item is completed (the IDE may auto-complete leftovers when you emit TASK_COMPLETE).
+17. TOOL CALL FORMAT (CRITICAL): Tools are provided via the API tools/function-calling channel. ALWAYS use that channel (tool_calls / tool_use). NEVER invent plain-text or XML-looking tool markup in your message content — it is not executed. To edit or run a command, emit a real native function call.
+18. ENCODING / CHINESE TEXT (CRITICAL): All workspace files are UTF-8. When editing, copy non-ASCII characters (especially Chinese) EXACTLY from read_file output — do not re-type, translate-through-pinyin, or "normalize" them. If you see mojibake like 鏉茬藁 / 閿俐 / 锟斤拷 instead of real Chinese, STOP and re-read the file with read_file before editing; never write mojibake back to disk.`;
 
 class ContinueChatAgent implements IChatAgentImplementation {
 	private readonly _skillEmbeddingIndex: ContinueSkillEmbeddingIndex;
@@ -334,8 +308,6 @@ class ContinueChatAgent implements IChatAgentImplementation {
 				private readonly _requestService: IRequestService,
 				private readonly _chatTodoListService: IChatTodoListService,
 		private readonly _textFileService: ITextFileService,
-		@ITerminalService private readonly _terminalService: ITerminalService,
-		@ITerminalChatService private readonly _terminalChatService: ITerminalChatService,
 		storageService: IStorageService,
 	) {
 				this._skillEmbeddingIndex = new ContinueSkillEmbeddingIndex(
@@ -395,10 +367,8 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		const isGameMode = request.agentId === CONTINUE_AGENT_IDS.game
 			|| isGameModeName(request.modeInstructions?.name)
 			|| hasGameDevIntent(request.message);
-		const isPlanMode = isPlanModeRequest(request);
-		const isAgentMode = (request.agentId === CONTINUE_AGENT_IDS.agent
-			|| request.agentId === CONTINUE_AGENT_IDS.game)
-			&& !isPlanMode;
+		const isAgentMode = request.agentId === CONTINUE_AGENT_IDS.agent
+			|| request.agentId === CONTINUE_AGENT_IDS.game;
 		const releaseIndexingPause = isAgentMode
 			? acquireIndexingPause(this._commandService, this._logService)
 			: () => { };
@@ -437,29 +407,6 @@ class ContinueChatAgent implements IChatAgentImplementation {
 				const cwd = request.workingDirectory
 			?? this._workspaceService.getWorkspace().folders[0]?.uri;
 
-		// Pre-task terminal snapshot: if the user has a live terminal with recent output
-		// that looks relevant to the prompt (bug/error keywords, same cwd, or a terminal
-		// the agent itself just started), inject the tail of its buffer so the model can
-		// see the error/log without being told to run a command. Returns undefined when
-		// there is nothing useful to show (no terminals, empty buffers, no relevance).
-		let terminalContextBlock: string | undefined;
-		if (isAgentMode) {
-			try {
-				const captured = captureTerminalContext(
-					this._terminalService,
-					this._terminalChatService,
-					this._logService,
-					request.message,
-					cwd,
-				);
-				terminalContextBlock = captured?.promptBlock;
-			} catch (err) {
-				this._logService.warn(
-					`[Continue][TerminalContext] capture failed: ${err instanceof Error ? err.message : String(err)}`,
-				);
-			}
-		}
-
 		const continueRules = isAgentMode
 			? await loadContinueAgentRules(this._commandService, request.message, this._logService)
 			: undefined;
@@ -469,7 +416,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			agentSystem += `\n\n<continue-rules>\n${continueRules}\n</continue-rules>`;
 		}
 		const modeBody = request.modeInstructions?.content?.trim();
-		if ((isAgentMode || isPlanMode) && modeBody) {
+		if (isAgentMode && modeBody) {
 			agentSystem += `\n\n<mode-instructions name="${request.modeInstructions?.name ?? ''}">\n${modeBody}\n</mode-instructions>`;
 		}
 		if (isGameMode) {
@@ -477,14 +424,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		}
 		const executeSystem = isAgentMode
 			? appendWorkingDirectoryHint(agentSystem, cwd)
-			: isPlanMode
-				? appendWorkingDirectoryHint(
-					modeBody
-						? `${PLAN_EXECUTE_SYSTEM}\n\n<mode-instructions name="${request.modeInstructions?.name ?? ''}">\n${modeBody}\n</mode-instructions>`
-						: PLAN_EXECUTE_SYSTEM,
-					cwd,
-				)
-				: undefined;
+			: undefined;
 
 				let ocrExtract: string | undefined;
 		let visionImageParts: Awaited<ReturnType<typeof collectAgentRequestImageParts>>['parts'] | undefined;
@@ -617,6 +557,16 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			}]);
 		}
 
+		const codeChangeIntent = hasCodeChangeIntent(request.message) || isExecuteNowMessage(request.message) || isGameMode;
+		const investigateIntent = hasInvestigateIntent(request.message);
+		const webSearchIntent = hasWebSearchIntent(request.message);
+		const todoListIntent = shouldUseTodoList(request.message, {
+			codeChangeIntent,
+			investigateIntent,
+			isGameMode,
+			webSearchIntent,
+		});
+
 				let messages = buildChatMessages(
 			history,
 			request.message,
@@ -626,13 +576,9 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			ocrExtract,
 			isAgentMode ? await this._recallMemories(request.message) : undefined,
 			visionImageParts,
-			terminalContextBlock,
+			todoListIntent,
 		);
 
-		if (isPlanMode) {
-			await this._runPlanMode(modelId, messages, progress, token, request, cwd);
-			return {};
-		}
 		if (!isAgentMode) {
 			await this._streamOnce(modelId, messages, progress, token);
 			return {};
@@ -645,13 +591,15 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			this._commandService,
 			this._logService,
 		);
-		const codeChangeIntent = hasCodeChangeIntent(request.message) || isExecuteNowMessage(request.message) || isGameMode;
-		const investigateIntent = hasInvestigateIntent(request.message);
 		/** Keep looping until the user task is done (edits OR investigation), not mere Q&A. */
 		const untilDoneIntent = (codeChangeIntent || investigateIntent);
-		const webSearchIntent = hasWebSearchIntent(request.message);
 		if (webSearchIntent) {
 			this._logService.info('[Continue] Web-search intent detected — forcing search_web tool');
+		}
+		const existingTodos = this._chatTodoListService.getTodos(request.sessionResource);
+		let needsInitialTodoList = todoListIntent && existingTodos.length === 0;
+		if (needsInitialTodoList) {
+			this._logService.info('[Continue] Todo-list intent detected — will force manage_todo_list on first turn');
 		}
 
 		let needsFinalAnswer = false;
@@ -675,8 +623,58 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		let compileFixNudges = 0;
 		let forceRequiredTools = false;
 		const editedUris = new Set<string>();
+		const godotAutoPreview = isGameMode ? createGodotAutoPreviewState() : undefined;
 		const taskRecorder = new TaskExecutionRecorder();
 		taskRecorder.start(request.message);
+		if (isGameMode && godotAutoPreview && cwd) {
+			const projectGodot = URI.joinPath(cwd, 'game-dev', 'project.godot');
+			void this._fileService.exists(projectGodot).then(async exists => {
+				if (!exists || token.isCancellationRequested) {
+					return;
+				}
+				godotAutoPreview.gameFilesEdited = true;
+				const live = await openGodotLiveEditorIfNeeded(
+					this._languageModelToolsService,
+					this._logService,
+					this._workspaceService,
+					{ sessionResource: request.sessionResource, workingDirectory: cwd, chatRequestId: request.requestId },
+					godotAutoPreview,
+					token,
+				);
+				if (live.opened) {
+					this._logService.info('[Continue][Godot] Live editor opened at Game-mode start');
+					progress([{
+						kind: 'markdownContent',
+						content: new MarkdownString(
+							localize(
+								'continue.godotLivePreviewStart',
+								"**Live preview** — Godot editor is open. Script/scene saves hot-reload while the agent edits; press **Stop** anytime to change direction.",
+							),
+						),
+					}]);
+				}
+				const game = await openGodotLiveGameIfNeeded(
+					this._languageModelToolsService,
+					this._logService,
+					this._workspaceService,
+					{ sessionResource: request.sessionResource, workingDirectory: cwd, chatRequestId: request.requestId },
+					godotAutoPreview,
+					token,
+				);
+				if (game.opened) {
+					this._logService.info('[Continue][Godot] Live game window opened at Game-mode start');
+					progress([{
+						kind: 'markdownContent',
+						content: new MarkdownString(
+							localize(
+								'continue.godotLiveGameStart',
+								"**Game running** — use **arrow keys** to play (no autopilot). Score starts at 0; watch stars spawn while the agent edits.",
+							),
+						),
+					}]);
+				}
+			}).catch(err => this._logService.warn('[Continue][Godot] Live preview at start failed', err));
+		}
 		// Coding / investigate / URL+web research: long runway only. Never apply the 16-turn
 		// Q&A soft cap when the prompt has web/URL intent (that aborted mid-update).
 		const maxTurns = (untilDoneIntent || webSearchIntent)
@@ -690,7 +688,11 @@ class ContinueChatAgent implements IChatAgentImplementation {
 				break;
 			}
 
-			const forceTool = turn === 0 && webSearchIntent ? 'search_web' : undefined;
+			const forceTool = turn === 0 && webSearchIntent
+				? 'search_web'
+				: turn === 0 && needsInitialTodoList
+					? 'manage_todo_list'
+					: undefined;
 			// Force native tool_calls when coding still needs writes, or after a textual-tool dump.
 			const requireNativeTools = !forceTool && (
 				forceRequiredTools
@@ -901,6 +903,21 @@ class ContinueChatAgent implements IChatAgentImplementation {
 								type: 'text',
 								value: 'Do not continue planning. Call create_file or write_file NOW — create the first file under the session working directory (e.g. README.md). Tools are required.',
 							}],
+						},
+					];
+					forceRequiredTools = true;
+					continue;
+				}
+				if (
+					needsInitialTodoList
+					&& this._chatTodoListService.getTodos(request.sessionResource).length === 0
+				) {
+					messages = [
+						...messages,
+						...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : []),
+						{
+							role: ChatMessageRole.User,
+							content: [{ type: 'text', value: TODO_LIST_FORCE_NUDGE }],
 						},
 					];
 					forceRequiredTools = true;
@@ -1140,7 +1157,11 @@ class ContinueChatAgent implements IChatAgentImplementation {
 					request.sessionResource,
 					request.requestId,
 					token,
+					godotAutoPreview,
 				);
+				if (isManageTodoListTool(call.name)) {
+					needsInitialTodoList = false;
+				}
 				this._trackToolOutcome(call.name, ok, toolStats);
 				taskRecorder.recordToolCall(call.name, call.parameters, ok);
 				if (editUri) {
@@ -1175,6 +1196,32 @@ class ContinueChatAgent implements IChatAgentImplementation {
 				}]);
 				if (editUri && editKind) {
 					editedUris.add(editUri.toString());
+					if (godotAutoPreview && isGameDevProjectUri(editUri.toString())) {
+						godotAutoPreview.gameFilesEdited = true;
+						if (ok && !godotAutoPreview.editorLaunched) {
+							void openGodotLiveEditorIfNeeded(
+								this._languageModelToolsService,
+								this._logService,
+								this._workspaceService,
+								{ sessionResource: request.sessionResource, workingDirectory: cwd, chatRequestId: request.requestId },
+								godotAutoPreview,
+								token,
+							).then(live => {
+								if (live.opened) {
+									this._logService.info('[Continue][Godot] Live editor opened after game-dev edit');
+									progress([{
+										kind: 'markdownContent',
+										content: new MarkdownString(
+											localize(
+												'continue.godotLivePreviewEdit',
+												"**Live preview** — Godot editor opened. Watch changes as the agent saves; press **Stop** anytime to redirect.",
+											),
+										),
+									}]);
+								}
+							}).catch(err => this._logService.warn('[Continue][Godot] Live preview after edit failed', err));
+						}
+					}
 					progress([{
 						kind: 'externalEdit',
 						uri: editUri,
@@ -1348,6 +1395,39 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			RunInTerminalTool.suppressBackgroundSteeringForSession(request.sessionResource);
 		}
 
+		if (
+			exitedOnTaskComplete
+			&& isGameMode
+			&& godotAutoPreview
+			&& !token.isCancellationRequested
+		) {
+			try {
+				const autoPreview = await ensureGodotPreviewLaunched(
+					this._languageModelToolsService,
+					this._logService,
+					this._workspaceService,
+					{ sessionResource: request.sessionResource, workingDirectory: cwd, chatRequestId: request.requestId },
+					godotAutoPreview,
+					token,
+				);
+				if (autoPreview.launched) {
+					this._logService.info('[Continue][Godot] Auto-launched Godot preview after Game-mode task completion');
+					progress([{
+						kind: 'markdownContent',
+						content: new MarkdownString(
+							localize(
+								'continue.godotAutoPreview',
+								"**Godot preview (automatic)** — opened because Game-mode work finished. You do not need to launch Godot manually.\n\n{0}",
+								autoPreview.text,
+							),
+						),
+					}]);
+				}
+			} catch (err) {
+				this._logService.warn('[Continue][Godot] Auto preview failed', err);
+			}
+		}
+
 		// Self-evolution: distill a reusable skill from complex successful tasks.
 		// Fire-and-forget — never blocks the agent turn. Generated SKILL.md files
 		// are auto-discovered by the hybrid router on the next session.
@@ -1477,13 +1557,17 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		messages: IChatMessage[],
 		progress: (parts: IChatProgress[]) => void,
 		token: CancellationToken,
+		opts?: { nudge?: string; retryNudge?: string; logLabel?: string },
 	): Promise<void> {
-		this._logService.info('[Continue] Forcing final answer after tools');
+		const nudge = opts?.nudge ?? FINAL_ANSWER_NUDGE;
+		const retryNudge = opts?.retryNudge ?? FINAL_ANSWER_RETRY_NUDGE;
+		const logLabel = opts?.logLabel ?? 'answer';
+		this._logService.info(`[Continue] Forcing final ${logLabel} after tools`);
 		let working = [
 			...messages,
 			{
 				role: ChatMessageRole.User,
-				content: [{ type: 'text' as const, value: FINAL_ANSWER_NUDGE }],
+				content: [{ type: 'text' as const, value: nudge }],
 			},
 		];
 
@@ -1500,12 +1584,12 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			assistantText = stripUnrecoverableToolMarkup(assistantText);
 
 			if (!assistantText.trim() && !token.isCancellationRequested) {
-				this._logService.warn('[Continue] Final answer empty — retrying with stronger nudge');
+				this._logService.warn(`[Continue] Final ${logLabel} empty — retrying with stronger nudge`);
 				working = [
 					...working,
 					{
 						role: ChatMessageRole.User,
-						content: [{ type: 'text' as const, value: FINAL_ANSWER_RETRY_NUDGE }],
+						content: [{ type: 'text' as const, value: retryNudge }],
 					},
 				];
 				({ assistantText } = await this._streamOnce(
@@ -1609,143 +1693,6 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			|| toolName === 'semantic_search'
 		) {
 			stats.exploreOnly = true;
-		}
-	}
-
-	private async _runPlanMode(
-		modelId: string,
-		messages: IChatMessage[],
-		progress: (parts: IChatProgress[]) => void,
-		token: CancellationToken,
-		request: IChatAgentRequest,
-		cwd: URI | undefined,
-	): Promise<void> {
-		await this._ensureCopilotToolImplementationsMounted(token);
-		const allTools = await loadAgentToolSuperset(
-			this._languageModelToolsService,
-			this._commandService,
-			this._logService,
-		);
-		const planTools = allTools.filter(tool => PLAN_MODE_READ_TOOLS.has(tool.function.name));
-		let forceRequiredTools = false;
-
-		for (let turn = 0; turn < PLAN_MODE_TOOL_TURN_LIMIT; turn++) {
-			if (token.isCancellationRequested) {
-				break;
-			}
-
-			const streamed = await this._streamOnce(
-				modelId,
-				messages,
-				progress,
-				token,
-				planTools,
-				undefined,
-				false,
-				forceRequiredTools,
-			);
-			forceRequiredTools = false;
-			const { assistantText, toolUses, recoveredTextualTools, truncatedTextualToolDump } = streamed;
-
-			if (recoveredTextualTools) {
-				forceRequiredTools = true;
-			}
-
-			if (!toolUses.length) {
-				if (looksLikeTextualToolDump(assistantText) || truncatedTextualToolDump) {
-					messages = [
-						...messages,
-						...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : []),
-						{ role: ChatMessageRole.User, content: [{ type: 'text', value: PLAN_TEXTUAL_TOOL_NUDGE }] },
-					];
-					forceRequiredTools = true;
-					continue;
-				}
-				if (turn < PLAN_MODE_TOOL_TURN_LIMIT - 1 && looksLikeIncompleteInvestigation(assistantText)) {
-					messages = [
-						...messages,
-						...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : []),
-						{ role: ChatMessageRole.User, content: [{ type: 'text', value: PLAN_FINISH_NUDGE }] },
-					];
-					continue;
-				}
-				break;
-			}
-
-			const assistantContent: IChatMessage['content'] = [];
-			if (assistantText.trim()) {
-				assistantContent.push({ type: 'text', value: assistantText });
-			}
-			for (const call of toolUses) {
-				assistantContent.push(call);
-			}
-			messages = [
-				...messages,
-				{ role: ChatMessageRole.Assistant, content: assistantContent },
-			];
-
-			for (const call of toolUses) {
-				if (token.isCancellationRequested) {
-					break;
-				}
-				const continueName = remapCopilotNameToContinueFallback(call.name);
-				if ((!continueName || !PLAN_MODE_READ_TOOLS.has(continueName)) && !PLAN_MODE_READ_TOOLS.has(call.name)) {
-					const blocked = `Plan mode blocked tool "${call.name}". Use read-only tools only, then write the plan.`;
-					messages = [
-						...messages,
-						{
-							role: ChatMessageRole.User,
-							content: [{
-								type: 'tool_result',
-								toolCallId: call.toolCallId,
-								value: [{ type: 'text', value: blocked }],
-								isError: true,
-							}],
-						},
-					];
-					continue;
-				}
-
-				progress([{
-					kind: 'externalToolInvocationUpdate',
-					toolCallId: call.toolCallId,
-					toolName: call.name,
-					isComplete: false,
-					invocationMessage: `${formatSupersetToolDisplayName(call.name)}…`,
-				}]);
-
-				const { ok, text } = await this._executeTool(
-					call,
-					cwd,
-					request.sessionResource,
-					request.requestId,
-					token,
-				);
-
-				progress([{
-					kind: 'externalToolInvocationUpdate',
-					toolCallId: call.toolCallId,
-					toolName: call.name,
-					isComplete: true,
-					pastTenseMessage: ok
-						? `${formatSupersetToolDisplayName(call.name)} done`
-						: `${formatSupersetToolDisplayName(call.name)} failed`,
-					errorMessage: ok ? undefined : text,
-				}]);
-
-				messages = [
-					...messages,
-					{
-						role: ChatMessageRole.User,
-						content: [{
-							type: 'tool_result',
-							toolCallId: call.toolCallId,
-							value: [{ type: 'text', value: text }],
-							isError: !ok,
-						}],
-					},
-				];
-			}
 		}
 	}
 
@@ -1959,6 +1906,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		sessionResource: URI,
 		chatRequestId: string,
 		token: CancellationToken,
+		godotAutoPreview?: GodotAutoPreviewState,
 	): Promise<{ ok: boolean; text: string; editUri?: URI; editKind?: 'create' | 'edit' }> {
 		try {
 			const params = (call.parameters ?? {}) as Record<string, unknown>;
@@ -1978,6 +1926,9 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			}
 
 			if (isGodotTool(effectiveName)) {
+				if (godotAutoPreview) {
+					trackGodotToolCall(godotAutoPreview, effectiveName, params);
+				}
 				return executeGodotTool(
 					this._languageModelToolsService,
 					this._logService,
@@ -1986,6 +1937,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 					effectiveName,
 					params,
 					token,
+					godotAutoPreview,
 				);
 			}
 
@@ -2954,6 +2906,37 @@ function hasInvestigateIntent(message: string): boolean {
 		.test(message);
 }
 
+function hasTodoPlanningShape(message: string): boolean {
+	return /方案|步骤|验收|规划|撰写|探索|定位|排查|实现|计划|plan|roadmap|step[- ]by[- ]step|investigate|explore|then|接着|然后|依次|todo/i.test(message)
+		|| /\b\d+[.)）、]\s*\S/.test(message)
+		|| /(?:^|\n)\s*[-*]\s+\S/m.test(message);
+}
+
+function shouldUseTodoList(
+	message: string,
+	opts: { codeChangeIntent: boolean; investigateIntent: boolean; isGameMode: boolean; webSearchIntent: boolean },
+): boolean {
+	const trimmed = message.trim();
+	if (!trimmed || /^(hi|hello|thanks|thank you|你好|谢谢)\b/i.test(trimmed)) {
+		return false;
+	}
+	if (opts.webSearchIntent && !opts.codeChangeIntent && !opts.investigateIntent && !opts.isGameMode) {
+		return false;
+	}
+	if (opts.codeChangeIntent || opts.investigateIntent || opts.isGameMode) {
+		return true;
+	}
+	if (hasTodoPlanningShape(message)) {
+		return true;
+	}
+	return trimmed.length >= 20;
+}
+
+function isManageTodoListTool(toolName: string): boolean {
+	const normalized = remapCopilotNameToContinueFallback(toolName) ?? toolName;
+	return normalized === 'manage_todo_list' || normalized === 'todo' || normalized === 'todos';
+}
+
 /** Assistant dumped tool calls as XML/prose instead of native function calling. */
 /** Remove model think-tag wrappers that must never appear in the chat transcript. */
 function stripThinkTags(text: string): string {
@@ -3476,7 +3459,7 @@ function buildChatMessages(
 	ocrExtract?: string,
 	memoriesBlock?: string,
 	visionImageParts?: IChatMessageImagePart[],
-	terminalContextBlock?: string,
+	todoListIntent = false,
 	): IChatMessage[] {
 	const messages: IChatMessage[] = [];
 
@@ -3525,14 +3508,16 @@ function buildChatMessages(
 			'<scaffold-override>\nThis is a CODE PROJECT SCAFFOLD request (TypeScript/repo files). Use create_file or write_file to create each listed path immediately. Do NOT run WPS/office document generation pipelines in this turn.\n</scaffold-override>',
 		);
 	}
+	if (todoListIntent) {
+		userParts.push(
+			'<todo-override>\nMulti-step task. Your FIRST tool call MUST be manage_todo_list: write 3–7 concise items in the user\'s language, mark the first item in-progress, then execute. Update the list after each step (one in-progress at a time). Do NOT skip the todo UI.\n</todo-override>',
+		);
+	}
 	if (ocrExtract) {
 		userParts.push(
 			'<ocr-context>\nThe following text was extracted locally from user-attached image(s) via OCR. Treat it as the image content for this request.\n</ocr-context>',
 		);
 		userParts.push(ocrExtract);
-	}
-	if (terminalContextBlock) {
-		userParts.push(terminalContextBlock);
 	}
 		userParts.push(currentMessage);
 	const userContent: IChatMessage['content'] = [{ type: 'text', value: userParts.join('\n\n') }];
@@ -3544,18 +3529,6 @@ function buildChatMessages(
 		content: userContent,
 	});
 	return messages;
-}
-
-function isNamedChatMode(name: string | undefined, expected: string): boolean {
-	return typeof name === 'string' && name.trim().toLowerCase() === expected.toLowerCase();
-}
-
-function isPlanModeRequest(request: IChatAgentRequest): boolean {
-	if (isNamedChatMode(request.modeInstructions?.name, 'plan')) {
-		return true;
-	}
-	const uriPath = request.modeInstructions?.uri?.path;
-	return typeof uriPath === 'string' && /[/\\]plan\.agent\.md$/i.test(uriPath);
 }
 
 function createContinueAgentData(
@@ -3606,8 +3579,6 @@ class ContinueChatAgentContribution extends Disposable implements IWorkbenchCont
 		@IRequestService requestService: IRequestService,
 			@IChatTodoListService chatTodoListService: IChatTodoListService,
 			@ITextFileService textFileService: ITextFileService,
-			@ITerminalService terminalService: ITerminalService,
-			@ITerminalChatService terminalChatService: ITerminalChatService,
 			@IStorageService storageService: IStorageService,
 		) {
 			super();
@@ -3626,8 +3597,6 @@ class ContinueChatAgentContribution extends Disposable implements IWorkbenchCont
 				requestService,
 				chatTodoListService,
 				textFileService,
-				terminalService,
-				terminalChatService,
 				storageService,
 			);
 		const registrations: Array<{
@@ -3636,8 +3605,6 @@ class ContinueChatAgentContribution extends Disposable implements IWorkbenchCont
 			mode: ChatModeKind;
 			opts?: { isDefault?: boolean; fullName?: string; description?: string };
 		}> = [
-			{ id: CONTINUE_AGENT_IDS.ask, name: 'Continue', mode: ChatModeKind.Ask },
-			{ id: CONTINUE_AGENT_IDS.edit, name: 'Continue', mode: ChatModeKind.Edit },
 			{ id: CONTINUE_AGENT_IDS.agent, name: 'Continue', mode: ChatModeKind.Agent },
 			{
 				id: CONTINUE_AGENT_IDS.game,
@@ -3648,7 +3615,7 @@ class ContinueChatAgentContribution extends Disposable implements IWorkbenchCont
 					fullName: 'Game',
 					description: localize(
 						'continue.gameAgentDescription',
-						"Godot game-dev: write game-dev/, import, test, then godot_play to run the mini-game",
+						"Godot live preview: auto-opens editor + game while editing game-dev/ (arrow keys, no autopilot)",
 					),
 				},
 			},

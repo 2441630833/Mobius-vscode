@@ -36,7 +36,7 @@ import { ChatInputPickerActionViewItem, IChatInputPickerOptions } from './chatIn
 import { IOpenerService } from '../../../../../../platform/opener/common/opener.js';
 import { IWorkbenchAssignmentService } from '../../../../../services/assignment/common/assignmentService.js';
 import { isContinuePhysicalAiIde } from '../../../../continue/browser/continueProduct.js';
-import { getMobiusChatModes } from '../../../../continue/browser/continueMobiusModeRouting.js';
+import { getMobiusChatModes, getMobiusModePickerDetailLine, getMobiusModePickerHoverContent } from '../../../../continue/browser/continueMobiusModeRouting.js';
 
 export interface IModePickerDelegate {
 	readonly currentMode: IObservable<IChatMode>;
@@ -78,10 +78,7 @@ export class ModePickerActionItem extends ChatInputPickerActionViewItem {
 		const forceOldAskMode = _productService.defaultChatAgent?.extensionId === 'Continue.continue';
 		const useMobiusModePicker = isContinuePhysicalAiIde() || forceOldAskMode;
 		const assignments = observableValue<{ showOldAskMode: boolean }>('modePickerAssignments', {
-			// VS Code hides builtin Ask behind an experiment. Mobius's default
-			// Continue participant has no Copilot "new Ask" agent, so keep Ask
-			// visible in the composer picker (Agent / Ask / custom Game, Plan).
-			showOldAskMode: forceOldAskMode,
+			showOldAskMode: false,
 		});
 
 		// Get custom agent target dynamically (may change when switching session types)
@@ -99,10 +96,18 @@ export class ModePickerActionItem extends ChatInputPickerActionViewItem {
 			const modes = delegate.currentChatModes.get();
 			const currentMode = delegate.currentMode.get();
 			return getMobiusChatModes(modes).map(mode => {
-				const action = mode.id === ChatMode.Agent.id || mode.id === ChatMode.Ask.id
+				const action = mode.id === ChatMode.Agent.id
 					? makeAction(mode, currentMode)
 					: makeActionFromCustomMode(mode, currentMode);
 				action.category = mobiusFlatCategory;
+				const hover = getMobiusModePickerHoverContent(mode);
+				if (hover) {
+					action.hover = { content: hover };
+				}
+				const detail = getMobiusModePickerDetailLine(mode);
+				if (detail) {
+					action.detail = detail;
+				}
 				return action;
 			});
 		};

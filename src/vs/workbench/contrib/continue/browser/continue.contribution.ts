@@ -123,7 +123,7 @@ if (isContinuePhysicalAiIde()) {
 			'mobius.autoModeRouting.enabled': {
 				type: 'boolean',
 				default: true,
-				description: 'When enabled, the Agents composer infers Agent / Ask / Plan / Game from each outgoing message and switches the mode picker before send. Use /agent, /ask, /plan, or /game at the start of a message to force a mode.',
+				description: 'When enabled, the Agents composer infers Agent or Game from each outgoing message and switches the mode picker before send. Use /agent or /game at the start of a message to force a mode (/ask and /plan map to Agent).',
 			},
 		},
 	});

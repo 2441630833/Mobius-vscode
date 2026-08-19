@@ -103,7 +103,7 @@ export const GODOT_TOOL_SCHEMAS: readonly ContinueAgentToolSchema[] = [
 		function: {
 			name: 'godot_preview',
 			description:
-				'Open a visible Godot window. Default runs the game. Set editor=true only if the user asked for the Godot editor, not to play the mini-game.',
+				'Open a visible Godot window (detached, non-blocking). Use editor=true for the Godot editor UI; default runs the game scene.',
 			parameters: {
 				type: 'object',
 				properties: {
@@ -126,13 +126,13 @@ export const GODOT_TOOL_SCHEMAS: readonly ContinueAgentToolSchema[] = [
 		function: {
 			name: 'godot_play',
 			description:
-				'Run the mini-game inside Godot (not the editor). Default: visible game window with autopilot so the agent plays Star Catcher. Set visible=false to verify YOU WIN headlessly.',
+				'Run the mini-game in a visible Godot window (not the editor). Default: arrow keys, no autopilot. Use visible=false for headless autopilot YOU WIN verification.',
 			parameters: {
 				type: 'object',
 				properties: {
 					project: { type: 'string', description: 'Project folder name (default: game-dev).' },
 					scene: { type: 'string', description: 'Optional scene path, e.g. res://main.tscn.' },
-					autoplay: { type: 'boolean', description: 'Agent collects stars (default true).' },
+					autoplay: { type: 'boolean', description: 'Visible: autopilot only when true. Headless: autopilot unless false.' },
 					visible: {
 						type: 'boolean',
 						description: 'Open a game window (default true). false = headless YOU WIN check.',
@@ -144,7 +144,18 @@ export const GODOT_TOOL_SCHEMAS: readonly ContinueAgentToolSchema[] = [
 	},
 ];
 
-const GAME_EXECUTE_HINT = `GAME DEV LOOP (Agents Game mode): write .gd/.tscn under game-dev/, then godot_import → godot_test → godot_run. To actually run the mini-game in Godot (not the editor), call godot_play. That opens a visible game window with autopilot so Star Catcher plays itself. godot_preview with editor=true is the Godot editor only — do not use it as a substitute for playing. godot_run is headless frames, not a playable window. If Godot is missing, run_terminal_command: npm run godot:setup -- -Install`;
+const GAME_EXECUTE_HINT = `GAME DEV LOOP (Agents Game mode) — LIVE PREVIEW while you edit:
+1. godot_detect — if missing, run_terminal_command: npm run godot:setup -- -Install
+2. Write .gd/.tscn under game-dev/ (or godot_project_init if game-dev/ is empty)
+3. Mobius keeps the Godot **editor** open during Game-mode work. Each save hot-reloads scripts/scenes so the user can watch while you edit. The user may Stop the agent anytime and ask for changes — do not wait until the end to open Godot.
+4. godot_import after batches of scene/asset changes (headless re-import; editor stays open and picks up changes)
+5. godot_test → fix until 0 failures
+6. godot_run — headless smoke; fix engine errors
+7. godot_play — visible game window, **arrow keys** (autoplay only when you pass autoplay=true). Use visible=false + autopilot for headless YOU WIN verification.
+
+Mobius auto-opens the Godot editor + a playable game window (no autopilot) during Game-mode work. At turn end it relaunches godot_play if you skipped it.
+
+godot_run is headless only. Visible godot_play is for manual play. godot_preview editor=true opens the editor UI.`;
 
 export function hasGameDevIntent(message: string): boolean {
 	return /game[\s-]?dev|godot|\bmini[\s-]?game\b|小游戏|做个游戏|game mode|star catcher/i.test(message);
@@ -209,7 +220,7 @@ function buildGodotCli(scriptPath: string, name: string, args: Record<string, un
 			if (args.visible === false) {
 				parts.push('--headless-play');
 			}
-			if (args.autoplay !== false) {
+			if (args.autoplay === true) {
 				parts.push('--autoplay');
 			}
 			if (typeof args.frames === 'number' && args.frames > 0) {
@@ -230,7 +241,47 @@ function buildGodotCli(scriptPath: string, name: string, args: Record<string, un
 	return parts.join(' ');
 }
 
-export async function executeGodotTool(
+export function isGameDevProjectUri(uri: string): boolean {
+	return /[/\\]game-dev[/\\]/i.test(uri);
+}
+
+export interface GodotAutoPreviewState {
+	editorLaunched: boolean;
+	playLaunched: boolean;
+	toolsUsed: boolean;
+	gameFilesEdited: boolean;
+}
+
+export function createGodotAutoPreviewState(): GodotAutoPreviewState {
+	return {
+		editorLaunched: false,
+		playLaunched: false,
+		toolsUsed: false,
+		gameFilesEdited: false,
+	};
+}
+
+export function trackGodotToolCall(
+	state: GodotAutoPreviewState,
+	toolName: string,
+	params?: Record<string, unknown>,
+): void {
+	if (!isGodotTool(toolName)) {
+		return;
+	}
+	state.toolsUsed = true;
+	if (toolName === 'godot_preview' && params?.editor === true) {
+		state.editorLaunched = true;
+	}
+	if (toolName === 'godot_play') {
+		state.playLaunched = true;
+	}
+	if (toolName === 'godot_preview' && params?.editor !== true) {
+		state.playLaunched = true;
+	}
+}
+
+async function runGodotToolCommand(
 	toolsService: ILanguageModelToolsService,
 	logService: ILogService,
 	workspaceService: IWorkspaceContextService,
@@ -255,4 +306,173 @@ export async function executeGodotTool(
 		true,
 		token,
 	);
+}
+
+/** Open the Godot editor once per agent turn — stays open while the agent keeps editing (hot reload). */
+export async function openGodotLiveEditorIfNeeded(
+	toolsService: ILanguageModelToolsService,
+	logService: ILogService,
+	workspaceService: IWorkspaceContextService,
+	context: TerminalCommandContext,
+	state: GodotAutoPreviewState,
+	token: CancellationToken,
+): Promise<{ opened: boolean; text: string }> {
+	if (state.editorLaunched || token.isCancellationRequested) {
+		return { opened: false, text: '' };
+	}
+	const editor = await runGodotToolCommand(
+		toolsService,
+		logService,
+		workspaceService,
+		context,
+		'godot_preview',
+		{ editor: true },
+		token,
+	);
+	if (editor.ok) {
+		state.editorLaunched = true;
+	}
+	return { opened: editor.ok, text: editor.text };
+}
+
+/** Open a visible game window (no autopilot) so the user can play while the agent edits. */
+export async function openGodotLiveGameIfNeeded(
+	toolsService: ILanguageModelToolsService,
+	logService: ILogService,
+	workspaceService: IWorkspaceContextService,
+	context: TerminalCommandContext,
+	state: GodotAutoPreviewState,
+	token: CancellationToken,
+): Promise<{ opened: boolean; text: string }> {
+	if (state.playLaunched || token.isCancellationRequested) {
+		return { opened: false, text: '' };
+	}
+	const play = await runGodotToolCommand(
+		toolsService,
+		logService,
+		workspaceService,
+		context,
+		'godot_play',
+		{ autoplay: false },
+		token,
+	);
+	if (play.ok) {
+		state.playLaunched = true;
+	}
+	return { opened: play.ok, text: play.text };
+}
+
+/** Launch Godot editor + playable window when the agent forgot — user should never open Godot manually. */
+export async function ensureGodotPreviewLaunched(
+	toolsService: ILanguageModelToolsService,
+	logService: ILogService,
+	workspaceService: IWorkspaceContextService,
+	context: TerminalCommandContext,
+	state: GodotAutoPreviewState,
+	token: CancellationToken,
+): Promise<{ launched: boolean; text: string }> {
+	if (!state.toolsUsed && !state.gameFilesEdited) {
+		return { launched: false, text: '' };
+	}
+	if (state.editorLaunched && state.playLaunched) {
+		return { launched: false, text: '' };
+	}
+
+	const chunks: string[] = [];
+	let launched = false;
+
+	if (!state.editorLaunched) {
+		const editor = await runGodotToolCommand(
+			toolsService,
+			logService,
+			workspaceService,
+			context,
+			'godot_preview',
+			{ editor: true },
+			token,
+		);
+		if (editor.ok) {
+			state.editorLaunched = true;
+			launched = true;
+		}
+		chunks.push(`**Godot editor (auto):** ${editor.ok ? 'opened' : 'failed'}\n${editor.text}`);
+	}
+
+	if (!state.playLaunched) {
+		const play = await runGodotToolCommand(
+			toolsService,
+			logService,
+			workspaceService,
+			context,
+			'godot_play',
+			{ autoplay: false },
+			token,
+		);
+		if (play.ok) {
+			state.playLaunched = true;
+			launched = true;
+		}
+		chunks.push(`**Game preview (auto):** ${play.ok ? 'launched (arrow keys — no autopilot)' : 'failed'}\n${play.text}`);
+	}
+
+	return { launched, text: chunks.join('\n\n') };
+}
+
+export async function executeGodotTool(
+	toolsService: ILanguageModelToolsService,
+	logService: ILogService,
+	workspaceService: IWorkspaceContextService,
+	context: TerminalCommandContext,
+	toolName: string,
+	args: Record<string, unknown>,
+	token: CancellationToken,
+	state?: GodotAutoPreviewState,
+): Promise<{ ok: boolean; text: string }> {
+	const result = await runGodotToolCommand(
+		toolsService,
+		logService,
+		workspaceService,
+		context,
+		toolName,
+		args,
+		token,
+	);
+
+	if (toolName === 'godot_preview' && args.editor === true && result.ok && state) {
+		state.editorLaunched = true;
+	}
+
+	if (!state || !result.ok || token.isCancellationRequested) {
+		return result;
+	}
+
+	const shouldOpenLiveEditor = toolName === 'godot_import'
+		|| toolName === 'godot_project_init'
+		|| toolName === 'godot_test';
+	if (shouldOpenLiveEditor) {
+		const live = await openGodotLiveEditorIfNeeded(
+			toolsService,
+			logService,
+			workspaceService,
+			context,
+			state,
+			token,
+		);
+		if (live.opened) {
+			result.text += `\n\n---\n[Mobius] Live preview: Godot editor is open — saves under game-dev/ hot-reload while the agent keeps working. Press Stop in chat anytime to redirect edits.\n${live.text}`;
+		}
+		const game = await openGodotLiveGameIfNeeded(
+			toolsService,
+			logService,
+			workspaceService,
+			context,
+			state,
+			token,
+		);
+		if (game.opened) {
+			result.text += `\n\n---\n[Mobius] Game window is running — use arrow keys to play (no autopilot). Score starts at 0.\n${game.text}`;
+		}
+	}
+
+	return result;
 }

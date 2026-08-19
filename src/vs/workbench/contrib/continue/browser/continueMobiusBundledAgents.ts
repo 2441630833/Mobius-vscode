@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Mobius — bundled Plan / Game custom agents for the Agents mode picker
+ *  Mobius — bundled Game custom agent for the Agents mode picker
  *--------------------------------------------------------------------------------------------*/
 
 import { CancellationToken } from '../../../../base/common/cancellation.js';
@@ -17,7 +17,7 @@ import { IWorkspaceContextService } from '../../../../platform/workspace/common/
 import { LocalSessionType } from '../../../../sessions/contrib/providers/localChatSessions/browser/localChatSessionsProvider.js';
 import { CONTINUE_EXTENSION_IDENTIFIER, isContinuePhysicalAiIde } from './continueProduct.js';
 
-const MOBIUS_BUNDLED_AGENT_NAMES = ['Plan', 'Game'] as const;
+const MOBIUS_BUNDLED_AGENT_NAMES = ['Game'] as const;
 
 const mobiusBundledExtension = {
 	identifier: CONTINUE_EXTENSION_IDENTIFIER,
