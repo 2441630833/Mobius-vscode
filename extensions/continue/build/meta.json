@@ -46639,7 +46639,7 @@
       "format": "esm"
     },
     "../../core/llm/defaultSystemMessages.ts": {
-      "bytes": 5938,
+      "bytes": 6019,
       "imports": [
         {
           "path": "E:\\MobiusCode\\Mobius\\continue\\extensions\\vscode\\scripts\\importMetaUrl.js",
@@ -102414,7 +102414,7 @@
       "format": "esm"
     },
     "../../core/llm/llms/TransformersJsEmbeddingsProvider.ts": {
-      "bytes": 10961,
+      "bytes": 11009,
       "imports": [
         {
           "path": "path",
@@ -155645,12 +155645,6 @@
       },
       "bytes": 215448
     },
-    "out/extension.js.map": {
-      "imports": [],
-      "exports": [],
-      "inputs": {},
-      "bytes": 85783517
-    },
     "out/extension.js": {
       "imports": [
         {
@@ -167730,7 +167724,7 @@
           "bytesInOutput": 4387
         },
         "../../core/llm/defaultSystemMessages.ts": {
-          "bytesInOutput": 5864
+          "bytesInOutput": 5945
         },
         "../../core/tools/definitions/editFile.ts": {
           "bytesInOutput": 2426
@@ -173949,7 +173943,7 @@
           "bytesInOutput": 1795
         },
         "../../core/llm/llms/TransformersJsEmbeddingsProvider.ts": {
-          "bytesInOutput": 10694
+          "bytesInOutput": 10744
         },
         "../../core/promptFiles/getPromptFiles.ts": {
           "bytesInOutput": 1928
@@ -180078,7 +180072,7 @@
           "bytesInOutput": 79
         }
       },
-      "bytes": 56060962
+      "bytes": 56061055
     }
   }
 }

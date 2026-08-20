@@ -210,7 +210,13 @@ type OpenAIContentPart =
 	| { type: 'image_url'; image_url: { url: string } };
 
 type OpenAIMessage =
-	| { role: 'system' | 'user' | 'assistant'; content: string | OpenAIContentPart[]; tool_calls?: OpenAIToolCall[] }
+	| {
+		role: 'system' | 'user' | 'assistant';
+		content: string | OpenAIContentPart[] | null;
+		tool_calls?: OpenAIToolCall[];
+		/** Required on DeepSeek V4 / reasoner assistant turns that include tool_calls. */
+		reasoning_content?: string;
+	}
 	| { role: 'tool'; tool_call_id: string; content: string };
 
 type OpenAIToolCall = {
@@ -228,17 +234,39 @@ function encodeDataUrl(mimeType: string, data: Uint8Array): string {
 	return `data:${mimeType};base64,${btoa(binary)}`;
 }
 
-function messagesToOpenAI(messages: IChatMessage[]): OpenAIMessage[] {
+/** DeepSeek V4+ requires reasoning_content echoed on assistant turns that used tools. */
+function deepSeekNeedsReasoningRoundTrip(entry: ContinueModelEntry): boolean {
+	const base = entry.apiBase.toLowerCase();
+	const model = entry.model.toLowerCase();
+	if (base.includes('deepseek.com')) {
+		return true;
+	}
+	return /deepseek[-/]?(v4|r1|reasoner)/i.test(model);
+}
+
+function isDeepSeekApi(entry: ContinueModelEntry): boolean {
+	return entry.apiBase.toLowerCase().includes('deepseek.com')
+		|| deepSeekNeedsReasoningRoundTrip(entry);
+}
+
+function messagesToOpenAI(messages: IChatMessage[], entry: ContinueModelEntry): OpenAIMessage[] {
+	const needsReasoningRoundTrip = deepSeekNeedsReasoningRoundTrip(entry);
 	const out: OpenAIMessage[] = [];
 	for (const message of messages) {
 		const textParts: string[] = [];
 		const toolCalls: OpenAIToolCall[] = [];
 		const toolResults: { toolCallId: string; content: string }[] = [];
 		const imageParts: OpenAIContentPart[] = [];
+		let reasoningContent = '';
 
 		for (const part of message.content) {
 			if (part.type === 'text') {
 				textParts.push(part.value);
+			} else if (part.type === 'thinking') {
+				const value = typeof part.value === 'string' ? part.value : part.value.join('');
+				if (value) {
+					reasoningContent += value;
+				}
 			} else if (part.type === 'image_url') {
 				const mime = part.value.mimeType;
 				const data = part.value.data.buffer;
@@ -283,24 +311,34 @@ function messagesToOpenAI(messages: IChatMessage[]): OpenAIMessage[] {
 			: textParts.join('\n');
 
 		if (toolCalls.length) {
-			out.push({
+			const assistantMsg: OpenAIMessage = {
 				role: 'assistant',
-				content: contentValue,
+				content: typeof contentValue === 'string'
+					? (contentValue || null)
+					: (Array.isArray(contentValue) && contentValue.length === 0 ? null : contentValue),
 				tool_calls: toolCalls,
-			});
+			};
+			if (needsReasoningRoundTrip) {
+				assistantMsg.reasoning_content = reasoningContent;
+			}
+			out.push(assistantMsg);
 			continue;
 		}
 
-		if (typeof contentValue === 'string' && !contentValue) {
+		if (typeof contentValue === 'string' && !contentValue && !reasoningContent) {
 			continue;
 		}
-		if (Array.isArray(contentValue) && contentValue.length === 0) {
+		if (Array.isArray(contentValue) && contentValue.length === 0 && !reasoningContent) {
 			continue;
 		}
-		out.push({
+		const plainMsg: OpenAIMessage = {
 			role: roleToOpenAI(message.role) as 'system' | 'user' | 'assistant',
 			content: contentValue,
-		});
+		};
+		if (needsReasoningRoundTrip && message.role === ChatMessageRole.Assistant && reasoningContent) {
+			plainMsg.reasoning_content = reasoningContent;
+		}
+		out.push(plainMsg);
 	}
 	return out;
 }
@@ -322,13 +360,17 @@ function buildOpenAiRequestBody(
 ): Record<string, unknown> {
 	const bodyObj: Record<string, unknown> = {
 		model: entry.model,
-		messages: messagesToOpenAI(messages),
+		messages: messagesToOpenAI(messages, entry),
 		stream: true,
 	};
 	const normalizedTools = normalizeOpenAiTools(tools);
 	if (normalizedTools?.length) {
 		bodyObj['tools'] = normalizedTools;
 		bodyObj['tool_choice'] = options['tool_choice'] ?? 'auto';
+		if (isDeepSeekApi(entry)) {
+			// DeepSeek interleaves parallel tool-call deltas; disable parallel calls.
+			bodyObj['parallel_tool_calls'] = false;
+		}
 	} else if (options['tool_choice'] === 'none') {
 		bodyObj['tool_choice'] = 'none';
 	}
@@ -536,7 +578,32 @@ function parseOpenAIStreamBuffer(
 		}
 		try {
 			const json = JSON.parse(payload);
-			const delta = json?.choices?.[0]?.delta;
+			const choice = json?.choices?.[0];
+			const delta = choice?.delta;
+			const message = choice?.message;
+
+			// Some providers emit complete tool_calls on the final message object, not in deltas.
+			if (message?.tool_calls && Array.isArray(message.tool_calls)) {
+				for (let i = 0; i < message.tool_calls.length; i++) {
+					const tc = message.tool_calls[i];
+					const index = typeof tc.index === 'number' ? tc.index : i;
+					let acc = toolAcc.get(index);
+					if (!acc) {
+						acc = { id: '', name: '', arguments: '' };
+						toolAcc.set(index, acc);
+					}
+					if (typeof tc.id === 'string' && tc.id) {
+						acc.id = tc.id;
+					}
+					if (typeof tc.function?.name === 'string' && tc.function.name) {
+						acc.name = tc.function.name;
+					}
+					if (typeof tc.function?.arguments === 'string') {
+						acc.arguments = tc.function.arguments;
+					}
+				}
+			}
+
 			if (!delta) {
 				continue;
 			}

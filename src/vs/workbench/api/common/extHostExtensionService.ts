@@ -299,7 +299,10 @@ export abstract class AbstractExtHostExtensionService extends Disposable impleme
 		return this._activator.activateByEvent(activationEvent, startup);
 	}
 
-	private _activateById(extensionId: ExtensionIdentifier, reason: ExtensionActivationReason): Promise<void> {
+	private async _activateById(extensionId: ExtensionIdentifier, reason: ExtensionActivationReason): Promise<void> {
+		// Git/Sessions can call activateByIdWithErrors via RPC while install() is still
+		// awaiting config/path index. Wait until RequireInterceptor + vscode factory are ready.
+		await this._almostReadyToRunExtensions.wait();
 		return this._activator.activateById(extensionId, reason);
 	}
 

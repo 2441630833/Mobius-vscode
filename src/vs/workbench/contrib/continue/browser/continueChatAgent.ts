@@ -43,7 +43,7 @@ import { SaveReason } from '../../../common/editor.js';
 import { ILanguageModelToolsService } from '../../chat/common/tools/languageModelToolsService.js';
 import { CONTINUE_EXTENSION_ID, isContinuePhysicalAiIde } from './continueProduct.js';
 import { CONTINUE_LM_VENDOR } from './continueLanguageModelProvider.js';
-import { buildContinueSkillsContextFast, extractSkillRoutingQuery, hasScaffoldProjectIntent, hasWebSearchIntent, loadSkillWarmSnapshot } from './continueSkillsContext.js';
+import { buildContinueSkillsContext, buildContinueSkillsContextFast, type ContinueSkillsContext, extractSkillRoutingQuery, hasScaffoldProjectIntent, hasWebSearchIntent, loadSkillWarmSnapshot } from './continueSkillsContext.js';
 import { ContinueSkillEmbeddingIndex } from './continueSkillEmbeddings.js';
 import { classifySkillRoutingOutcome, ContinueSkillFeedbackStore } from './continueSkillFeedback.js';
 import { AgentMemoryStore, ContinueSelfEvolving, TaskExecutionRecorder } from './continueSelfEvolving.js';
@@ -89,12 +89,22 @@ const EXPLORE_BEFORE_EDIT_NUDGE_TURN = 2;
 const EDIT_RESCUE_EXTRA_TURNS = 12;
 /** How many times to re-ask "is the task done?" before accepting a no-tool stop with writes. */
 const MAX_COMPLETION_VERIFY_NUDGES = 3;
+/** Lightweight one-shot edits — fewer completion loops before accepting done. */
+const LIGHTWEIGHT_COMPLETION_VERIFY_NUDGES = 1;
+/** Lightweight tasks — cap post-tool stall nudges. */
+const LIGHTWEIGHT_POST_TOOL_CONTINUE_NUDGES = 2;
+/** Tool-loop cap for lightweight edits (single-file / small scope). */
+const LIGHTWEIGHT_MAX_TURNS = 16;
+/** Tool-loop cap for README/markdown-only doc updates. */
+const DOC_EDIT_MAX_TURNS = 10;
 /** How many times to force compile/problem fixes before accepting done. */
 const MAX_COMPILE_FIX_NUDGES = 4;
 /** Wait for language services to refresh markers after edits. */
 const MARKER_SETTLE_MS = 900;
 /** Cap how many times we re-nudge after workspace search failures. */
 const MAX_SEARCH_FAILURE_NUDGES = 3;
+/** Cap narrated-tool loops (model talks about tools but never calls them). */
+const MAX_NARRATED_TOOL_NUDGES = 3;
 /** Cap how many times we re-nudge after dead-end Copilot tools (skill/view_image/…). */
 const MAX_DEAD_END_TOOL_NUDGES = 3;
 /** After tools ran, allow this many empty/no-tool nudge retries before accepting a stop. */
@@ -138,6 +148,9 @@ FORBIDDEN: asking the user to send another message so you can continue. Forbidde
 const TEXTUAL_TOOL_NUDGE = `Your previous turn wrote tool calls as plain chat text. That is INVALID and was ignored — nothing was executed.
 You MUST use the API native function-calling channel (the tools parameter / tool_calls). Emit a real tool_use now for the remaining edits.
 Do NOT write angle-bracket markup, fake XML, or markdown fences that look like tools.`;
+
+const NARRATED_TOOL_NUDGE = `Your previous turn ONLY NARRATED a tool call in chat prose (e.g. "executing now", "calling run_in_terminal", "GO NOW") without native function calling. NOTHING ran.
+Stop narrating. Emit exactly ONE real tool_use via the tools API (tool_calls). Zero prose before the tool call. Forbidden: "executing", "calling the tool", "here is the tool call", staccato ALL-CAPS filler.`;
 
 const FINISH_REMAINING_EDITS_NUDGE = `You stopped early and asked the user to reply (e.g. "请回复继续修改" / "工具调用已用完") instead of finishing.
 That is incorrect — tools are STILL available in this same request with no turn quota. Do NOT wait.
@@ -369,6 +382,9 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			|| hasGameDevIntent(request.message);
 		const isAgentMode = request.agentId === CONTINUE_AGENT_IDS.agent
 			|| request.agentId === CONTINUE_AGENT_IDS.game;
+		const docEditTask = isDocumentationEditTask(request.message);
+		const codeChangeIntent = hasCodeChangeIntent(request.message) || isExecuteNowMessage(request.message) || isGameMode;
+		const investigateIntent = docEditTask ? false : hasInvestigateIntent(request.message);
 		const releaseIndexingPause = isAgentMode
 			? acquireIndexingPause(this._commandService, this._logService)
 			: () => { };
@@ -377,19 +393,10 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		let skillAttachments: string[] = [];
 		let routedSkillNames: string[] = [];
 		if (isAgentMode) {
-			const fast = buildContinueSkillsContextFast(
-				extractSkillRoutingQuery(request),
-				this._skillEmbeddingIndex,
-				this._skillFeedbackStore,
-				this._logService,
-			);
-			if (fast) {
-				skillCatalog = fast.systemText || undefined;
-				skillAttachments = [...fast.attachmentTexts];
-				routedSkillNames = [...fast.routedSkillNames];
-			} else {
-				this._logService.info('[Continue] Skills cache cold — first token without waiting on skill disk');
-			}
+			const skillsContext = await this._resolveAgentSkillsContext(request, progress, token);
+			skillCatalog = skillsContext.systemText || undefined;
+			skillAttachments = [...skillsContext.attachmentTexts];
+			routedSkillNames = [...skillsContext.routedSkillNames];
 			if (routedSkillNames.length) {
 				progress([{
 					kind: 'markdownContent',
@@ -407,14 +414,12 @@ class ContinueChatAgent implements IChatAgentImplementation {
 				const cwd = request.workingDirectory
 			?? this._workspaceService.getWorkspace().folders[0]?.uri;
 
-		const continueRules = isAgentMode
-			? await loadContinueAgentRules(this._commandService, request.message, this._logService)
-			: undefined;
+		// Overlap Continue rules RPC with OCR / vision prep — rules are not needed until system prompt assembly.
+		const continueRulesPromise = isAgentMode
+			? loadContinueAgentRules(this._commandService, request.message, this._logService)
+			: Promise.resolve(undefined);
 
 		let agentSystem = AGENT_EXECUTE_SYSTEM;
-		if (continueRules) {
-			agentSystem += `\n\n<continue-rules>\n${continueRules}\n</continue-rules>`;
-		}
 		const modeBody = request.modeInstructions?.content?.trim();
 		if (isAgentMode && modeBody) {
 			agentSystem += `\n\n<mode-instructions name="${request.modeInstructions?.name ?? ''}">\n${modeBody}\n</mode-instructions>`;
@@ -422,9 +427,11 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		if (isGameMode) {
 			agentSystem += `\n\n<game-dev>\n${gameDevSystemHint()}\n</game-dev>`;
 		}
-		const executeSystem = isAgentMode
-			? appendWorkingDirectoryHint(agentSystem, cwd)
-			: undefined;
+		if (docEditTask && isAgentMode) {
+			agentSystem += `\n\n<doc-edit-fast-path>
+Documentation-only edit (README / markdown). Workflow: read_file on the named .md files only (skip repo-wide grep unless one targeted phrase search is essential) → replace_string_in_file on those files → TASK_COMPLETE. Do NOT use manage_todo_list, get_errors, compile, or run_in_terminal. Target ≤5 tool calls; do not audit unrelated files first.
+</doc-edit-fast-path>`;
+		}
 
 				let ocrExtract: string | undefined;
 		let visionImageParts: Awaited<ReturnType<typeof collectAgentRequestImageParts>>['parts'] | undefined;
@@ -557,26 +564,58 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			}]);
 		}
 
-		const codeChangeIntent = hasCodeChangeIntent(request.message) || isExecuteNowMessage(request.message) || isGameMode;
-		const investigateIntent = hasInvestigateIntent(request.message);
 		const webSearchIntent = hasWebSearchIntent(request.message);
-		const todoListIntent = shouldUseTodoList(request.message, {
+		const lightweightTask = isLightweightAgentTask(request.message, {
+			codeChangeIntent,
+			investigateIntent,
+			isGameMode,
+		}) || docEditTask;
+		const todoListIntent = !lightweightTask && shouldUseTodoList(request.message, {
 			codeChangeIntent,
 			investigateIntent,
 			isGameMode,
 			webSearchIntent,
 		});
+		const maxCompletionVerifyNudges = lightweightTask
+			? LIGHTWEIGHT_COMPLETION_VERIFY_NUDGES
+			: MAX_COMPLETION_VERIFY_NUDGES;
+		const maxPostToolContinueNudges = lightweightTask
+			? LIGHTWEIGHT_POST_TOOL_CONTINUE_NUDGES
+			: MAX_POST_TOOL_CONTINUE_NUDGES;
+		if (lightweightTask) {
+			this._logService.info(
+				docEditTask
+					? '[Continue] Doc-edit fast path — skipping todo, memory, compile gate; capped tool turns'
+					: '[Continue] Lightweight task — skipping todo list and cross-session memory recall',
+			);
+		}
+
+		const memoriesPromise = isAgentMode && !lightweightTask
+			? this._recallMemories(request.message)
+			: Promise.resolve(undefined);
+
+		const [continueRules, memories] = await Promise.all([
+			continueRulesPromise,
+			memoriesPromise,
+		]);
+		if (continueRules) {
+			agentSystem += `\n\n<continue-rules>\n${continueRules}\n</continue-rules>`;
+		}
+		const executeSystemWithRules = isAgentMode
+			? appendWorkingDirectoryHint(agentSystem, cwd)
+			: undefined;
 
 				let messages = buildChatMessages(
 			history,
 			request.message,
-			executeSystem,
+			executeSystemWithRules,
 			skillCatalog,
 			skillAttachments,
 			ocrExtract,
-			isAgentMode ? await this._recallMemories(request.message) : undefined,
+			memories,
 			visionImageParts,
 			todoListIntent,
+			docEditTask,
 		);
 
 		if (!isAgentMode) {
@@ -609,6 +648,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		let deadEndToolFailureCount = 0;
 		let prevDeadEndToolFailureCount = 0;
 		let deadEndToolNudges = 0;
+		let narratedToolNudges = 0;
 		let streamErrorRecoveries = 0;
 		let transientCancelRecoveries = 0;
 		let streamErrorTaskRescues = 0;
@@ -677,9 +717,13 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		}
 		// Coding / investigate / URL+web research: long runway only. Never apply the 16-turn
 		// Q&A soft cap when the prompt has web/URL intent (that aborted mid-update).
-		const maxTurns = (untilDoneIntent || webSearchIntent)
-			? RUNAWAY_TOOL_TURN_GUARD
-			: QA_TOOL_TURNS;
+		const maxTurns = docEditTask
+			? DOC_EDIT_MAX_TURNS
+			: lightweightTask
+				? LIGHTWEIGHT_MAX_TURNS
+				: (untilDoneIntent || webSearchIntent)
+					? RUNAWAY_TOOL_TURN_GUARD
+					: QA_TOOL_TURNS;
 		let turnBudget = maxTurns;
 		let editRescueGranted = false;
 
@@ -702,6 +746,8 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			let toolUses: IChatResponseToolUsePart[] = [];
 			let recoveredTextualTools = false;
 			let truncatedTextualToolDump = false;
+			let narratedToolSpam = false;
+			let assistantThinking = '';
 			try {
 				const streamed = await this._streamOnce(
 					modelId,
@@ -717,6 +763,8 @@ class ContinueChatAgent implements IChatAgentImplementation {
 				toolUses = streamed.toolUses;
 				recoveredTextualTools = streamed.recoveredTextualTools;
 				truncatedTextualToolDump = streamed.truncatedTextualToolDump;
+				narratedToolSpam = streamed.narratedToolSpam;
+				assistantThinking = streamed.thinkingText;
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
 				this._logService.warn('[Continue] Agent stream failed — recovering', msg);
@@ -924,21 +972,45 @@ class ContinueChatAgent implements IChatAgentImplementation {
 					continue;
 				}
 
-				// Model dumped XML/prose tool markup instead of native tool_use — nudge and force tool_calls.
-				if (looksLikeTextualToolDump(assistantText) || truncatedTextualToolDump) {
-					this._logService.warn('[Continue] Assistant emitted textual/XML tool markup — nudging native tool_use + tool_choice=required');
+				// Model dumped XML/prose tool markup, or narrated "executing now" without tool_calls.
+				if (looksLikeTextualToolDump(assistantText) || truncatedTextualToolDump || narratedToolSpam) {
+					if (narratedToolSpam && narratedToolNudges >= MAX_NARRATED_TOOL_NUDGES) {
+						this._logService.warn('[Continue] Narrated-tool loop exhausted — stopping tools and summarizing');
+						progress([{
+							kind: 'warning',
+							content: new MarkdownString(
+								localize(
+									'continue.narratedToolLoop',
+									"The model kept describing tool calls instead of executing them. Try a different chat model, or rephrase as a direct shell/edit request.",
+								),
+							),
+						}]);
+						needsFinalAnswer = true;
+						break;
+					}
+					if (narratedToolSpam) {
+						narratedToolNudges++;
+					}
+					this._logService.warn('[Continue] Assistant emitted textual/narrated tool markup — nudging native tool_use + tool_choice=required');
 					messages = [
 						...messages,
 						{
 							role: ChatMessageRole.Assistant,
 							content: [{
 								type: 'text' as const,
-								value: '[invalid] Previous turn wrote tool calls as plain text; ignored.',
+								value: narratedToolSpam
+									? '[invalid] Previous turn narrated a tool call in prose; nothing executed.'
+									: '[invalid] Previous turn wrote tool calls as plain text; ignored.',
 							}],
 						},
 						{
 							role: ChatMessageRole.User,
-							content: [{ type: 'text', value: TEXTUAL_TOOL_NUDGE }],
+							content: [{
+								type: 'text',
+								value: narratedToolSpam
+									? NARRATED_TOOL_NUDGE
+									: TEXTUAL_TOOL_NUDGE,
+							}],
 						},
 					];
 					forceRequiredTools = true;
@@ -959,11 +1031,11 @@ class ContinueChatAgent implements IChatAgentImplementation {
 					if (
 						incompleteAfterTools
 						&& !assertsTaskComplete(assistantText)
-						&& postToolContinueNudges < MAX_POST_TOOL_CONTINUE_NUDGES
+						&& postToolContinueNudges < maxPostToolContinueNudges
 					) {
 						postToolContinueNudges++;
 						this._logService.info(
-							`[Continue] Post-tool premature stop — continue nudge ${postToolContinueNudges}/${MAX_POST_TOOL_CONTINUE_NUDGES}`,
+							`[Continue] Post-tool premature stop — continue nudge ${postToolContinueNudges}/${maxPostToolContinueNudges}`,
 						);
 						messages = [
 							...messages,
@@ -1011,7 +1083,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 							|| looksLikeIncompleteInvestigation(assistantText)
 							|| !assistantText.trim();
 
-						if (stillMustEdit || completionVerifyNudges < MAX_COMPLETION_VERIFY_NUDGES) {
+						if (stillMustEdit || completionVerifyNudges < maxCompletionVerifyNudges) {
 							if (!stillMustEdit) {
 								completionVerifyNudges++;
 							}
@@ -1044,7 +1116,13 @@ class ContinueChatAgent implements IChatAgentImplementation {
 						);
 					}
 
-					if (codeChangeIntent && toolStats.writeSuccess > 0 && compileFixNudges < MAX_COMPILE_FIX_NUDGES) {
+					if (
+						codeChangeIntent
+						&& toolStats.writeSuccess > 0
+						&& compileFixNudges < MAX_COMPILE_FIX_NUDGES
+						&& !docEditTask
+						&& !editedUrisAreDocumentationOnly(editedUris)
+					) {
 						const compileNudge = await this._buildCompileGateNudge(
 							editedUris,
 							token,
@@ -1078,7 +1156,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 					|| looksLikeIncompleteHandoff(assistantText)
 					|| looksLikePromisedEditsWithoutTools(assistantText)
 					|| looksLikeIncompleteInvestigation(assistantText)
-					|| (lastTurnHadTools && !assistantText.trim() && postToolContinueNudges < MAX_POST_TOOL_CONTINUE_NUDGES)
+					|| (lastTurnHadTools && !assistantText.trim() && postToolContinueNudges < maxPostToolContinueNudges)
 					|| (turn < 2 && toolStats.writeSuccess === 0 && (
 						isExecuteNowMessage(request.message)
 						|| looksLikeChangeProposal(assistantText)
@@ -1116,6 +1194,9 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			lastTurnHadTools = true;
 			postToolContinueNudges = 0;
 			const assistantContent: IChatMessage['content'] = [];
+			if (assistantThinking.trim()) {
+				assistantContent.push({ type: 'thinking', value: assistantThinking });
+			}
 			if (assistantText.trim()) {
 				assistantContent.push({ type: 'text', value: assistantText });
 			}
@@ -1471,6 +1552,68 @@ class ContinueChatAgent implements IChatAgentImplementation {
 	}
 
 	/**
+	 * Hybrid skill router: prefer the warm RAM cache; if cold, await the in-flight warmup
+	 * (constructor or prior turn) before auto-routing so the user still sees loaded skills.
+	 */
+	private async _resolveAgentSkillsContext(
+		request: IChatAgentRequest,
+		progress: (parts: IChatProgress[]) => void,
+		token: CancellationToken,
+	): Promise<ContinueSkillsContext> {
+		const routingQuery = extractSkillRoutingQuery(request);
+		const tryFast = (): ContinueSkillsContext | undefined =>
+			buildContinueSkillsContextFast(
+				routingQuery,
+				this._skillEmbeddingIndex,
+				this._skillFeedbackStore,
+				this._logService,
+			);
+
+		let ctx = tryFast();
+		if (ctx) {
+			return ctx;
+		}
+
+		if (!this._skillEmbeddingIndex.hasWarmCache()) {
+			this._logService.info('[Continue] Skills cache cold — awaiting warm-cache before auto-route');
+			progress([{
+				kind: 'markdownContent',
+				content: new MarkdownString(
+					localize('continue.skillsWarming', "Loading skills catalog…"),
+				),
+			}]);
+		}
+
+		await this._skillEmbeddingIndex.warmup(() => loadSkillWarmSnapshot(
+			this._promptsService,
+			this._fileService,
+			this._configurationService,
+			this._logService,
+			token,
+		));
+
+		if (token.isCancellationRequested) {
+			return { systemText: '', attachmentTexts: [], routedSkillNames: [] };
+		}
+
+		ctx = tryFast();
+		if (ctx) {
+			return ctx;
+		}
+
+		return buildContinueSkillsContext(
+			request,
+			this._promptsService,
+			this._fileService,
+			this._configurationService,
+			this._logService,
+			token,
+			this._skillEmbeddingIndex,
+			this._skillFeedbackStore,
+		);
+	}
+
+	/**
 	 * Ensure GitHub Copilot language-model tool *implementations* are registered before
 	 * Continue builds its tool list. Package.json only contributes tool *data*; without
 	 * this step, invokeTool fails with "does not have an implementation registered".
@@ -1705,12 +1848,13 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		forceToolName?: string,
 		disableTools = false,
 		forceRequiredTools = false,
-	): Promise<{ assistantText: string; toolUses: IChatResponseToolUsePart[]; recoveredTextualTools: boolean; truncatedTextualToolDump: boolean }> {
+	): Promise<{ assistantText: string; toolUses: IChatResponseToolUsePart[]; recoveredTextualTools: boolean; truncatedTextualToolDump: boolean; narratedToolSpam: boolean; thinkingText: string }> {
 		const toolUses: IChatResponseToolUsePart[] = [];
 		let assistantText = '';
 		let thinkingText = '';
 		let recoveredTextualTools = false;
 		let truncatedTextualToolDump = false;
+		let narratedToolSpam = false;
 		let streamedUpTo = 0;
 		// Always hold tool XML dumps out of the chat UI — even when tools are disabled
 		// (final-answer pass). Models still emit <tool_call> / <parameter> markup there.
@@ -1762,6 +1906,11 @@ class ContinueChatAgent implements IChatAgentImplementation {
 					}
 					assistantText += cleaned;
 					if (holdTextualDumps) {
+						if (looksLikeNarratedToolExecution(assistantText)) {
+							// Model is spamming "EXECUTING NOW" prose instead of tool_calls — hide from chat.
+							streamedUpTo = assistantText.length;
+							continue;
+						}
 						const dumpAt = indexOfTextualToolDumpStart(assistantText);
 						if (dumpAt >= 0) {
 							// Stream only prose before the dump; keep markup out of the chat UI.
@@ -1837,7 +1986,14 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			streamedUpTo = Math.min(streamedUpTo, assistantText.length);
 		}
 
-		return { assistantText, toolUses, recoveredTextualTools, truncatedTextualToolDump };
+		if (toolUses.length === 0 && looksLikeNarratedToolExecution(assistantText)) {
+			this._logService.warn('[Continue] Assistant narrated tool execution in prose without tool_calls — stripping spam');
+			narratedToolSpam = true;
+			assistantText = '';
+			streamedUpTo = 0;
+		}
+
+		return { assistantText, toolUses, recoveredTextualTools, truncatedTextualToolDump, narratedToolSpam, thinkingText };
 	}
 
 	private async _buildCompileGateNudge(
@@ -2902,8 +3058,78 @@ function hasCodeChangeIntent(message: string): boolean {
 
 /** Debug / root-cause requests that must keep tool looping until a conclusion. */
 function hasInvestigateIntent(message: string): boolean {
+	const trimmed = message.trim();
+	// Short pure questions — answer in one pass; do not enter long investigate loops.
+	if (trimmed.length <= 80 && /^(what|why|how|where|which|谁|什么是|为什么|怎么|如何)\b/i.test(trimmed)
+		&& !/(修复|fix|改|update|implement)/i.test(trimmed)) {
+		return false;
+	}
 	return /(检查|排查|定位|查看|为何|为什么|怎么回事|不生效|没更新|没生效|又恢复|回滚|还原|对不上|不一致|debug|investigate|look into|root cause|check why|not updat|reverted|still shows?)/i
 		.test(message);
+}
+
+/**
+ * README / markdown-only updates — skip investigate loops, todos, and compile gate.
+ */
+function isDocumentationEditTask(message: string): boolean {
+	const trimmed = message.trim();
+	if (!trimmed) {
+		return false;
+	}
+	if (!/(readme|\.md\b|markdown|文档|changelog|说明|doc\/|docs\/)/i.test(trimmed)) {
+		return false;
+	}
+	if (/(fix|修复|bug|编译|compile|typescript|javascript|\.ts\b|\.tsx\b|\.py\b|单元测试|unit test|npm run)/i.test(trimmed)) {
+		return false;
+	}
+	return /(修改|更新|改|替换|同步|update|edit|revise|rewrite|embed|embedding|ollama|说明|描述|文档|不再|去掉|remove)/i.test(trimmed);
+}
+
+function editedUrisAreDocumentationOnly(editedUris: ReadonlySet<string>): boolean {
+	if (!editedUris.size) {
+		return false;
+	}
+	for (const uri of editedUris) {
+		const path = URI.parse(uri).fsPath.replace(/\\/g, '/').toLowerCase();
+		const base = path.split('/').pop() ?? path;
+		if (/\.(md|markdown|txt|rst|adoc)$/.test(base) || /^readme(\.|$)/i.test(base)) {
+			continue;
+		}
+		return false;
+	}
+	return true;
+}
+
+/**
+ * Small scoped requests (one-liner fix / short debug) — skip todo + memory churn and use tighter nudge caps.
+ */
+function isLightweightAgentTask(
+	message: string,
+	opts: { codeChangeIntent: boolean; investigateIntent: boolean; isGameMode: boolean },
+): boolean {
+	if (opts.isGameMode) {
+		return false;
+	}
+	const trimmed = message.trim();
+	if (isDocumentationEditTask(trimmed) && trimmed.length <= 500) {
+		return true;
+	}
+	if (!trimmed || trimmed.length > 200) {
+		return false;
+	}
+	if (hasTodoPlanningShape(message)) {
+		return false;
+	}
+	if (/(refactor|全部文件|所有文件|整个项目|multi[- ]file|across the repo|step[- ]by[- ]step plan)/i.test(trimmed)) {
+		return false;
+	}
+	if (opts.codeChangeIntent && trimmed.length <= 180) {
+		return true;
+	}
+	if (opts.investigateIntent && trimmed.length <= 120) {
+		return true;
+	}
+	return false;
 }
 
 function hasTodoPlanningShape(message: string): boolean {
@@ -2950,6 +3176,41 @@ function stripThinkTags(text: string): string {
 
 function looksLikeTextualToolDump(text: string): boolean {
 	return indexOfTextualToolDumpStart(text) >= 0;
+}
+
+/**
+ * Model narrates imminent tool execution in chat prose (often ALL-CAPS staccato) but emits no tool_calls.
+ * This is a generation / tool-calling alignment issue — not embeddings.
+ */
+function looksLikeNarratedToolExecution(text: string): boolean {
+	if (!text || text.trim().length < 60) {
+		return false;
+	}
+	const t = text.trim();
+	if (looksLikeTextualToolDump(t)) {
+		return false;
+	}
+	const narratedToolName =
+		/\b(run_in_terminal|run_terminal_command|grep_search|read_file|replace_string_in_file|write_file|taskkill|manage_todo_list)\b/i.test(t)
+		|| /\b(RUN_IN_TERMINAL|RUN_TERMINAL|TASKKILL|TOOL CALL|TOOL_CALL)\b/.test(t);
+	const narratedAction =
+		/\b(executing|calling the tool|invoke the tool|here is the tool call|just the tool call|no more words|this is the moment|right now|call it now|let me call)\b/i.test(t)
+		|| /\b(EXECUTING|CALLING THE TOOL|JUST THE TOOL|NO MORE WORDS|THIS IS THE MOMENT)\b/.test(t);
+	if (narratedToolName && narratedAction) {
+		return true;
+	}
+	// Staccato ALL-CAPS spam: "GO. NOW. THE. TOOL. IS. CALLED."
+	const staccatoCaps = t.match(/\b[A-Z]{2,}\./g);
+	if (staccatoCaps && staccatoCaps.length >= 10 && t.length > 300) {
+		return true;
+	}
+	if (t.length > 500 && /(?:GO\. NOW\.|EXECUTING\.|THE TOOL\.|CALL IT NOW\.|NO MORE WORDS\.)/i.test(t)) {
+		const hits = t.match(/(?:GO\. NOW\.|EXECUTING\.|THE TOOL\.|CALL IT NOW\.|NO MORE WORDS\.)/gi);
+		if (hits && hits.length >= 3) {
+			return true;
+		}
+	}
+	return false;
 }
 
 /**
@@ -3460,6 +3721,7 @@ function buildChatMessages(
 	memoriesBlock?: string,
 	visionImageParts?: IChatMessageImagePart[],
 	todoListIntent = false,
+	docEditTask = false,
 	): IChatMessage[] {
 	const messages: IChatMessage[] = [];
 
@@ -3511,6 +3773,11 @@ function buildChatMessages(
 	if (todoListIntent) {
 		userParts.push(
 			'<todo-override>\nMulti-step task. Your FIRST tool call MUST be manage_todo_list: write 3–7 concise items in the user\'s language, mark the first item in-progress, then execute. Update the list after each step (one in-progress at a time). Do NOT skip the todo UI.\n</todo-override>',
+		);
+	}
+	if (docEditTask) {
+		userParts.push(
+			'<doc-edit-override>\nREADME/markdown only. Read the named .md file(s), patch with replace_string_in_file, then TASK_COMPLETE. No manage_todo_list, get_errors, compile, or broad repo grep.\n</doc-edit-override>',
 		);
 	}
 	if (ocrExtract) {

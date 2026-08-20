@@ -52,8 +52,12 @@ export abstract class RequireInterceptor {
 
 	async install(): Promise<void> {
 
-		// Build the path index in parallel with config; install hooks only after both
-		// are ready so require('vscode') resolves the real extension (not nullExtensionDescription).
+		// Patch require/import before any async work so early extension loads cannot
+		// bypass the interceptor (activation is gated on _almostReadyToRunExtensions).
+		this._installInterceptor();
+
+		// Build the path index in parallel with config; register the vscode factory only
+		// after both are ready so require('vscode') resolves the real extension.
 		const extensionPathsPromise = this._extHostExtensionService.getExtensionPathIndex();
 
 		performance.mark('code/extHost/willWaitForConfig');
@@ -63,8 +67,6 @@ export abstract class RequireInterceptor {
 		const extensionPaths = await extensionPathsPromise;
 
 		this.register(new VSCodeNodeModuleFactory(this._apiFactory, extensionPaths, this._extensionRegistry, configProvider, this._logService));
-		this._installInterceptor();
-
 		this.register(this._instaService.createInstance(NodeModuleAliasingModuleFactory));
 		if (this._initData.remote.isRemote) {
 			this.register(this._instaService.createInstance(OpenNodeModuleFactory, extensionPaths, this._initData.environment.appUriScheme));
