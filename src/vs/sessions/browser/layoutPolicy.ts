@@ -32,6 +32,43 @@ export interface IPartSizeDefaults {
 const PHONE_MAX_WIDTH = 640;
 const TABLET_MAX_WIDTH = 1024;
 
+/** Desktop sidebar width as a fraction of the workbench width. */
+const DESKTOP_SIDEBAR_WIDTH_RATIO = 0.14;
+/** Desktop auxiliary bar width as a fraction of the workbench width. */
+const DESKTOP_AUXBAR_WIDTH_RATIO = 0.16;
+const DESKTOP_MIN_SIDEBAR_WIDTH = 220;
+const DESKTOP_MAX_SIDEBAR_WIDTH = 280;
+const DESKTOP_MIN_AUXBAR_WIDTH = 240;
+const DESKTOP_MAX_AUXBAR_WIDTH = 300;
+const DESKTOP_MIN_SESSIONS_WIDTH = 480;
+/** Hard cap on how much horizontal space saved sizes may take from each side column. */
+const DESKTOP_MAX_SAVED_SIDE_RATIO = 0.18;
+
+function clamp(value: number, min: number, max: number): number {
+	return Math.min(max, Math.max(min, value));
+}
+
+function computeDesktopPartSizes(width: number): IPartSizeDefaults {
+	const sideBarSize = clamp(
+		Math.round(width * DESKTOP_SIDEBAR_WIDTH_RATIO),
+		DESKTOP_MIN_SIDEBAR_WIDTH,
+		DESKTOP_MAX_SIDEBAR_WIDTH,
+	);
+	const auxiliaryBarSize = clamp(
+		Math.round(width * DESKTOP_AUXBAR_WIDTH_RATIO),
+		DESKTOP_MIN_AUXBAR_WIDTH,
+		DESKTOP_MAX_AUXBAR_WIDTH,
+	);
+	const sessionsWidth = Math.max(DESKTOP_MIN_SESSIONS_WIDTH, width - sideBarSize - auxiliaryBarSize);
+
+	return {
+		sideBarSize,
+		auxiliaryBarSize,
+		panelSize: 300,
+		sessionsWidth,
+	};
+}
+
 /**
  * Whether the current platform is a phone/tablet OS. The phone layout is
  * only applied on actual mobile devices so that resizing a desktop window
@@ -148,12 +185,33 @@ export class SessionsLayoutPolicy extends Disposable {
 			case 'tablet':
 			case 'desktop':
 				// Tablet currently falls back to desktop sizing.
-				return {
-					sideBarSize: 300,
-					auxiliaryBarSize: 340,
-					panelSize: 300,
-					sessionsWidth: width - 300,
-				};
+				return computeDesktopPartSizes(width);
 		}
+	}
+
+	/**
+	 * Prefer a saved part width when present, but clamp it so side columns
+	 * cannot crowd out the primary sessions/chat column on wide layouts.
+	 */
+	resolveSavedHorizontalPartWidth(
+		saved: number | undefined,
+		policyDefault: number,
+		totalWidth: number,
+		limits: { readonly min: number; readonly maxRatio: number },
+	): number {
+		const maxWidth = Math.round(totalWidth * limits.maxRatio);
+		const value = saved ?? policyDefault;
+		return clamp(value, limits.min, maxWidth);
+	}
+
+	getDesktopSideColumnLimits(): { readonly sidebar: { readonly min: number; readonly maxRatio: number }; readonly auxiliaryBar: { readonly min: number; readonly maxRatio: number } } {
+		return {
+			sidebar: { min: DESKTOP_MIN_SIDEBAR_WIDTH, maxRatio: DESKTOP_MAX_SAVED_SIDE_RATIO },
+			auxiliaryBar: { min: DESKTOP_MIN_AUXBAR_WIDTH, maxRatio: DESKTOP_MAX_SAVED_SIDE_RATIO },
+		};
+	}
+
+	getDesktopMinSessionsWidth(totalWidth: number): number {
+		return Math.max(DESKTOP_MIN_SESSIONS_WIDTH, Math.round(totalWidth * 0.55));
 	}
 }

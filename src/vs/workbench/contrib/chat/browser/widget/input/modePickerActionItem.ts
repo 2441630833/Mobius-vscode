@@ -36,7 +36,7 @@ import { ChatInputPickerActionViewItem, IChatInputPickerOptions } from './chatIn
 import { IOpenerService } from '../../../../../../platform/opener/common/opener.js';
 import { IWorkbenchAssignmentService } from '../../../../../services/assignment/common/assignmentService.js';
 import { isContinuePhysicalAiIde } from '../../../../continue/browser/continueProduct.js';
-import { getMobiusChatModes, getMobiusModePickerDetailLine, getMobiusModePickerHoverContent } from '../../../../continue/browser/continueMobiusModeRouting.js';
+import { getMobiusChatModeIcon, getMobiusChatModes, getMobiusModePickerDetailLine, getMobiusModePickerHoverContent } from '../../../../continue/browser/continueMobiusModeRouting.js';
 
 export interface IModePickerDelegate {
 	readonly currentMode: IObservable<IChatMode>;
@@ -152,7 +152,9 @@ export class ModePickerActionItem extends ChatInputPickerActionViewItem {
 				...action,
 				id: getOpenChatActionIdForMode(mode),
 				label: mode.label.get(),
-				icon: isDisabledViaPolicy ? ThemeIcon.fromId(Codicon.lock.id) : mode.icon.get(),
+				icon: isDisabledViaPolicy
+					? ThemeIcon.fromId(Codicon.lock.id)
+					: (useMobiusModePicker ? getMobiusChatModeIcon(mode) : mode.icon.get()),
 				class: isDisabledViaPolicy ? 'disabled-by-policy' : undefined,
 				enabled: !isDisabledViaPolicy,
 				checked: !isDisabledViaPolicy && currentMode.id === mode.id,
@@ -181,7 +183,9 @@ export class ModePickerActionItem extends ChatInputPickerActionViewItem {
 				...makeAction(mode, currentMode),
 				tooltip: '',
 				hover: { content: mode.description.get() ?? chatAgentService.getDefaultAgent(ChatAgentLocation.Chat, mode.kind)?.description ?? action.tooltip },
-				icon: mode.icon.get() ?? (isModeConsideredBuiltIn(mode, this._productService) ? builtinDefaultIcon(mode) : undefined),
+				icon: useMobiusModePicker
+					? getMobiusChatModeIcon(mode)
+					: (mode.icon.get() ?? (isModeConsideredBuiltIn(mode, this._productService) ? builtinDefaultIcon(mode) : undefined)),
 				category: agentModeDisabledViaPolicy ? policyDisabledCategory : customCategory
 			};
 		};
@@ -319,8 +323,10 @@ export class ModePickerActionItem extends ChatInputPickerActionViewItem {
 		const state = currentMode.label.get();
 		let icon = currentMode.icon.get();
 
-		// Every built-in mode should have an icon. // TODO: this should be provided by the mode itself
-		if (!icon && isModeConsideredBuiltIn(currentMode, this._productService)) {
+		if (isContinuePhysicalAiIde()) {
+			icon = getMobiusChatModeIcon(currentMode);
+		} else if (!icon && isModeConsideredBuiltIn(currentMode, this._productService)) {
+			// Every built-in mode should have an icon. // TODO: this should be provided by the mode itself
 			icon = builtinDefaultIcon(currentMode);
 		}
 

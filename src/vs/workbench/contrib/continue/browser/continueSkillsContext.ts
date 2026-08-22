@@ -21,6 +21,8 @@ import {
 import { getChatSessionType } from '../../chat/common/model/chatUri.js';
 import { ContinueSkillEmbeddingIndex } from './continueSkillEmbeddings.js';
 import { ContinueSkillFeedbackStore } from './continueSkillFeedback.js';
+import { CCGS_ROOT_FOLDER, isGameModeExplicitlySelected } from './continueGameStudioWorkflow.js';
+import { GF3A_ROOT_FOLDER } from './continueGameFactory3AWorkflow.js';
 
 /** Max full SKILL.md bodies injected per turn (compatible set, not conflicting). */
 const MAX_FULL_SKILLS = 3;
@@ -405,6 +407,7 @@ export async function buildContinueSkillsContext(
 	}
 
 	hybridDetails = applyIntentDomainAdjustments(routingQuery, hybridDetails);
+	hybridDetails = applyGameStudioSkillBoost(request, hybridDetails);
 	hybridDetails = applyEmbeddingOnlyGating(routingQuery, hybridDetails);
 	hybridDetails.sort((a, b) => b.fusedScore - a.fusedScore || a.skill.name.localeCompare(b.skill.name));
 	for (const hit of hybridDetails) {
@@ -632,6 +635,28 @@ export function formatRoutingQueryForLog(query: string): string {
 	const preview = oneLine.length > 120 ? `${oneLine.slice(0, 120)}…` : oneLine;
 	const utf8b64 = encodeBase64(VSBuffer.fromString(preview));
 	return `queryLen=${query.length} queryUtf8B64=${utf8b64}`;
+}
+
+/**
+ * When Agents Game mode is selected, prefer CCGS and GameFactory-3A skills over generic Mobius skills.
+ */
+function applyGameStudioSkillBoost<T extends { skill: IAgentSkill; fusedScore: number }>(
+	request: IChatAgentRequest,
+	details: readonly T[],
+): T[] {
+	if (!isGameModeExplicitlySelected(request)) {
+		return [...details];
+	}
+	return details.map(d => {
+		const path = d.skill.uri.path.replace(/\\/g, '/');
+		if (path.includes(`/${CCGS_ROOT_FOLDER}/`) || path.includes('/.claude/skills/')) {
+			return { ...d, fusedScore: d.fusedScore + 40 };
+		}
+		if (path.includes(`/${GF3A_ROOT_FOLDER}/`)) {
+			return { ...d, fusedScore: d.fusedScore + 35 };
+		}
+		return d;
+	});
 }
 
 /**

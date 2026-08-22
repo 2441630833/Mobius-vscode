@@ -5,8 +5,9 @@
 
 
 import { timeout } from '../../../../base/common/async.js';
+import { Codicon } from '../../../../base/common/codicons.js';
 import { Disposable, toDisposable } from '../../../../base/common/lifecycle.js';
-import { localize2 } from '../../../../nls.js';
+import { localize2, localize } from '../../../../nls.js';
 import { IWorkbenchContribution, WorkbenchPhase, registerWorkbenchContribution2 } from '../../../common/contributions.js';
 import { IExtensionService } from '../../../services/extensions/common/extensions.js';
 import { ExtensionIdentifier } from '../../../../platform/extensions/common/extensions.js';
@@ -44,9 +45,13 @@ import { registerContinueLanguageModelReloader, triggerContinueLanguageModelRelo
 import { CONTINUE_EXTENSION_ID, CONTINUE_EXTENSION_IDENTIFIER, isContinuePhysicalAiIde } from './continueProduct.js';
 import { registerContinueChatAgentContribution } from './continueChatAgent.js';
 import { registerContinueMobiusBundledAgentsContribution } from './continueMobiusBundledAgents.js';
+import { registerContinueGameFactory3AWorkflowContribution } from './continueGameFactory3AWorkflow.js';
+import { registerContinueGameStudioWorkflowContribution } from './continueGameStudioWorkflow.js';
 import './mobiusCommitAction.js';
 import { IWorkspaceTrustEnablementService, IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
+import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
 import './media/continueChat.css';
+import './media/continueMobiusModeIcons.css';
 
 /**
  * Register GitHub MCP settings as real (included) keys so legacy startups that
@@ -56,6 +61,9 @@ import './media/continueChat.css';
  * unregistered — these keys are inert placeholders (always default off).
  */
 if (isContinuePhysicalAiIde()) {
+	registerIcon('mobius-mode-agent', Codicon.circleSmall, localize('mobiusModeIcon.agent', "Mobius Agent mode icon"));
+	registerIcon('mobius-mode-game', Codicon.game, localize('mobiusModeIcon.game', "Mobius Game mode icon"));
+
 	Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
 		id: 'mobiusGithubMcpStub',
 		title: 'Mobius (GitHub MCP disabled)',
@@ -131,6 +139,8 @@ if (isContinuePhysicalAiIde()) {
 
 registerContinueChatAgentContribution();
 registerContinueMobiusBundledAgentsContribution();
+registerContinueGameStudioWorkflowContribution();
+registerContinueGameFactory3AWorkflowContribution();
 
 /**
  * Mobius is a local dev environment — auto-trust opened folders so

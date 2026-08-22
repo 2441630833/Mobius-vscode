@@ -16,6 +16,7 @@ import { IMarkerService, MarkerSeverity } from '../../../../platform/markers/com
 import { IRequestService } from '../../../../platform/request/common/request.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IStorageService } from '../../../../platform/storage/common/storage.js';
+import { IWorkbenchEnvironmentService } from '../../../services/environment/common/environmentService.js';
 import { localize } from '../../../../nls.js';
 import { IWorkbenchContribution, WorkbenchPhase, registerWorkbenchContribution2 } from '../../../common/contributions.js';
 import { IExtensionService } from '../../../services/extensions/common/extensions.js';
@@ -63,7 +64,20 @@ import {
 	unsupportedCopilotToolRecovery,
 } from './continueCopilotToolsBridge.js';
 import { executeRunTerminalCommand } from './continueTerminalTool.js';
-import { executeGodotTool, createGodotAutoPreviewState, ensureGodotPreviewLaunched, gameDevSystemHint, GodotAutoPreviewState, hasGameDevIntent, isGameDevProjectUri, isGameModeName, isGodotTool, openGodotLiveEditorIfNeeded, openGodotLiveGameIfNeeded, trackGodotToolCall } from './continueGodotTools.js';
+import { executeGodotTool, bootstrapGameModeGodotLivePreview, createGodotAutoPreviewState, createGodotToolHost, ensureGodotPreviewLaunched, gameDevSystemHint, GodotAutoPreviewState, hasGameDevIntent, isGameDevProjectUri, isGodotTool, openGodotLiveEditorIfNeeded, trackGodotToolCall } from './continueGodotTools.js';
+import {
+	ccgsRelativePath,
+	gameStudioWorkflowSystemHint,
+	isGameModeExplicitlySelected,
+	loadGameStudioBootstrapContext,
+	resolveCcgsRootUri,
+} from './continueGameStudioWorkflow.js';
+import {
+	gameFactory3AWorkflowSystemHint,
+	gf3aRelativePath,
+	loadGameFactory3ABootstrapContext,
+	resolveGameFactory3ARootUri,
+} from './continueGameFactory3AWorkflow.js';
 import { acquireIndexingPause } from './continueIndexingPause.js';
 import { preprocessAgentRequestOcr, collectAgentRequestImageParts } from './continueOcrPreprocessor.js';
 import { BUNDLED_OLLAMA_OCR } from './continueModelConfig.js';
@@ -321,6 +335,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 				private readonly _requestService: IRequestService,
 				private readonly _chatTodoListService: IChatTodoListService,
 		private readonly _textFileService: ITextFileService,
+		private readonly _environmentService: IWorkbenchEnvironmentService,
 		storageService: IStorageService,
 	) {
 				this._skillEmbeddingIndex = new ContinueSkillEmbeddingIndex(
@@ -377,9 +392,8 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			`[Continue] Agent using model '${modelId}' (requested: ${request.userSelectedModelId ?? 'none'})`,
 		);
 
-		const isGameMode = request.agentId === CONTINUE_AGENT_IDS.game
-			|| isGameModeName(request.modeInstructions?.name)
-			|| hasGameDevIntent(request.message);
+		const isGameModeSelected = isGameModeExplicitlySelected(request);
+		const isGameMode = isGameModeSelected || hasGameDevIntent(request.message);
 		const isAgentMode = request.agentId === CONTINUE_AGENT_IDS.agent
 			|| request.agentId === CONTINUE_AGENT_IDS.game;
 		const docEditTask = isDocumentationEditTask(request.message);
@@ -389,6 +403,9 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			? acquireIndexingPause(this._commandService, this._logService)
 			: () => { };
 		try {
+		const cwd = request.workingDirectory
+			?? this._workspaceService.getWorkspace().folders[0]?.uri;
+
 		let skillCatalog: string | undefined;
 		let skillAttachments: string[] = [];
 		let routedSkillNames: string[] = [];
@@ -397,6 +414,22 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			skillCatalog = skillsContext.systemText || undefined;
 			skillAttachments = [...skillsContext.attachmentTexts];
 			routedSkillNames = [...skillsContext.routedSkillNames];
+			if (isGameModeSelected) {
+				const ccgsRoot = resolveCcgsRootUri(cwd, this._workspaceService);
+				const gf3aRoot = resolveGameFactory3ARootUri(cwd, this._workspaceService);
+				const [ccgsBootstrap, gf3aBootstrap] = await Promise.all([
+					loadGameStudioBootstrapContext(ccgsRoot, this._fileService, token),
+					loadGameFactory3ABootstrapContext(gf3aRoot, this._fileService, token),
+				]);
+				const seen = new Set(routedSkillNames);
+				for (const name of [...gf3aBootstrap.routedSkillNames, ...ccgsBootstrap.routedSkillNames]) {
+					if (!seen.has(name)) {
+						seen.add(name);
+						routedSkillNames.unshift(name);
+					}
+				}
+				skillAttachments = [...gf3aBootstrap.attachmentTexts, ...ccgsBootstrap.attachmentTexts, ...skillAttachments];
+			}
 			if (routedSkillNames.length) {
 				progress([{
 					kind: 'markdownContent',
@@ -411,9 +444,6 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			}
 		}
 
-				const cwd = request.workingDirectory
-			?? this._workspaceService.getWorkspace().folders[0]?.uri;
-
 		// Overlap Continue rules RPC with OCR / vision prep — rules are not needed until system prompt assembly.
 		const continueRulesPromise = isAgentMode
 			? loadContinueAgentRules(this._commandService, request.message, this._logService)
@@ -424,7 +454,13 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		if (isAgentMode && modeBody) {
 			agentSystem += `\n\n<mode-instructions name="${request.modeInstructions?.name ?? ''}">\n${modeBody}\n</mode-instructions>`;
 		}
-		if (isGameMode) {
+		if (isGameModeSelected) {
+			const ccgsRel = ccgsRelativePath(resolveCcgsRootUri(cwd, this._workspaceService), this._workspaceService);
+			const gf3aRel = gf3aRelativePath(resolveGameFactory3ARootUri(cwd, this._workspaceService), this._workspaceService);
+			agentSystem += `\n\n<game-studio-workflow>\n${gameStudioWorkflowSystemHint(ccgsRel)}\n</game-studio-workflow>`;
+			agentSystem += `\n\n<game-factory-3a>\n${gameFactory3AWorkflowSystemHint(gf3aRel)}\n</game-factory-3a>`;
+			agentSystem += `\n\n<game-dev>\n${gameDevSystemHint()}\n</game-dev>`;
+		} else if (isGameMode) {
 			agentSystem += `\n\n<game-dev>\n${gameDevSystemHint()}\n</game-dev>`;
 		}
 		if (docEditTask && isAgentMode) {
@@ -667,21 +703,28 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		const taskRecorder = new TaskExecutionRecorder();
 		taskRecorder.start(request.message);
 		if (isGameMode && godotAutoPreview && cwd) {
-			const projectGodot = URI.joinPath(cwd, 'game-dev', 'project.godot');
-			void this._fileService.exists(projectGodot).then(async exists => {
-				if (!exists || token.isCancellationRequested) {
+			const godotHost = createGodotToolHost(
+				this._fileService,
+				this._workspaceService,
+				this._getAppRoot(),
+			);
+			const terminalContext = {
+				sessionResource: request.sessionResource,
+				workingDirectory: cwd,
+				chatRequestId: request.requestId,
+			};
+			void bootstrapGameModeGodotLivePreview(
+				godotHost,
+				this._languageModelToolsService,
+				this._logService,
+				terminalContext,
+				godotAutoPreview,
+				token,
+			).then(result => {
+				if (token.isCancellationRequested) {
 					return;
 				}
-				godotAutoPreview.gameFilesEdited = true;
-				const live = await openGodotLiveEditorIfNeeded(
-					this._languageModelToolsService,
-					this._logService,
-					this._workspaceService,
-					{ sessionResource: request.sessionResource, workingDirectory: cwd, chatRequestId: request.requestId },
-					godotAutoPreview,
-					token,
-				);
-				if (live.opened) {
+				if (result.editorOpened) {
 					this._logService.info('[Continue][Godot] Live editor opened at Game-mode start');
 					progress([{
 						kind: 'markdownContent',
@@ -693,15 +736,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 						),
 					}]);
 				}
-				const game = await openGodotLiveGameIfNeeded(
-					this._languageModelToolsService,
-					this._logService,
-					this._workspaceService,
-					{ sessionResource: request.sessionResource, workingDirectory: cwd, chatRequestId: request.requestId },
-					godotAutoPreview,
-					token,
-				);
-				if (game.opened) {
+				if (result.gameOpened) {
 					this._logService.info('[Continue][Godot] Live game window opened at Game-mode start');
 					progress([{
 						kind: 'markdownContent',
@@ -711,6 +746,13 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 								"**Game running** — use **arrow keys** to play (no autopilot). Score starts at 0; watch stars spawn while the agent edits.",
 							),
 						),
+					}]);
+				}
+				if (!result.ok && result.text) {
+					this._logService.warn('[Continue][Godot] Game-mode bootstrap failed', result.text);
+					progress([{
+						kind: 'markdownContent',
+						content: new MarkdownString(result.text),
 					}]);
 				}
 			}).catch(err => this._logService.warn('[Continue][Godot] Live preview at start failed', err));
@@ -1281,9 +1323,9 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 						godotAutoPreview.gameFilesEdited = true;
 						if (ok && !godotAutoPreview.editorLaunched) {
 							void openGodotLiveEditorIfNeeded(
+								this._godotToolHost(),
 								this._languageModelToolsService,
 								this._logService,
-								this._workspaceService,
 								{ sessionResource: request.sessionResource, workingDirectory: cwd, chatRequestId: request.requestId },
 								godotAutoPreview,
 								token,
@@ -1484,9 +1526,9 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		) {
 			try {
 				const autoPreview = await ensureGodotPreviewLaunched(
+					this._godotToolHost(),
 					this._languageModelToolsService,
 					this._logService,
-					this._workspaceService,
 					{ sessionResource: request.sessionResource, workingDirectory: cwd, chatRequestId: request.requestId },
 					godotAutoPreview,
 					token,
@@ -2056,6 +2098,19 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		return `Error markers: ${relevant.length}\n${lines.join('\n')}`;
 	}
 
+	private _getAppRoot(): string | undefined {
+		const appRoot = (this._environmentService as IWorkbenchEnvironmentService & { appRoot?: string }).appRoot;
+		return typeof appRoot === 'string' ? appRoot : undefined;
+	}
+
+	private _godotToolHost() {
+		return createGodotToolHost(
+			this._fileService,
+			this._workspaceService,
+			this._getAppRoot(),
+		);
+	}
+
 	private async _executeTool(
 		call: IChatResponseToolUsePart,
 		cwd: URI | undefined,
@@ -2086,9 +2141,9 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					trackGodotToolCall(godotAutoPreview, effectiveName, params);
 				}
 				return executeGodotTool(
+					this._godotToolHost(),
 					this._languageModelToolsService,
 					this._logService,
-					this._workspaceService,
 					{ sessionResource, workingDirectory: cwd, chatRequestId },
 					effectiveName,
 					params,
@@ -3846,6 +3901,7 @@ class ContinueChatAgentContribution extends Disposable implements IWorkbenchCont
 		@IRequestService requestService: IRequestService,
 			@IChatTodoListService chatTodoListService: IChatTodoListService,
 			@ITextFileService textFileService: ITextFileService,
+			@IWorkbenchEnvironmentService environmentService: IWorkbenchEnvironmentService,
 			@IStorageService storageService: IStorageService,
 		) {
 			super();
@@ -3864,6 +3920,7 @@ class ContinueChatAgentContribution extends Disposable implements IWorkbenchCont
 				requestService,
 				chatTodoListService,
 				textFileService,
+				environmentService,
 				storageService,
 			);
 		const registrations: Array<{
@@ -3882,7 +3939,7 @@ class ContinueChatAgentContribution extends Disposable implements IWorkbenchCont
 					fullName: 'Game',
 					description: localize(
 						'continue.gameAgentDescription',
-						"Godot live preview: auto-opens editor + game while editing game-dev/ (arrow keys, no autopilot)",
+						"Claude Code Game Studios workflow + Godot live preview in game-dev/",
 					),
 				},
 			},

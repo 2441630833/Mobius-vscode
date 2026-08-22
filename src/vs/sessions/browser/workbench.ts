@@ -319,7 +319,7 @@ export class Workbench extends Disposable implements IAgentWorkbenchLayoutServic
 	//#endregion
 
 	private static readonly _PART_VISIBILITY_KEY = 'workbench.sessions.partVisibility';
-	private static readonly _PART_SIZES_KEY = 'workbench.sessions.partSizes';
+	private static readonly _PART_SIZES_KEY = 'workbench.sessions.partSizes.v2';
 
 	//#region Services
 
@@ -1233,28 +1233,57 @@ export class Workbench extends Disposable implements IAgentWorkbenchLayoutServic
 
 		// Default sizes from layout policy
 		const sizes = this.layoutPolicy.getPartSizes(width, height);
+		const sideColumnLimits = this.layoutPolicy.getDesktopSideColumnLimits();
 		// For hidden parts, still provide a reasonable cached size for when they're shown later.
-		// Saved sizes from a previous session take precedence over policy defaults.
-		const sideBarSize = this._savedPartSizes.sidebar
-			?? (this.partVisibility.sidebar ? sizes.sideBarSize : Math.max(sizes.sideBarSize, 250));
-		const auxiliaryBarSize = this._savedPartSizes.auxiliaryBar
-			?? (this.partVisibility.auxiliaryBar ? sizes.auxiliaryBarSize : Math.max(sizes.auxiliaryBarSize, 300));
+		// Saved sizes from a previous session take precedence over policy defaults, but are
+		// clamped so the chat column remains the primary surface on wide layouts.
+		let sideBarSize = this.layoutPolicy.resolveSavedHorizontalPartWidth(
+			this._savedPartSizes.sidebar,
+			sizes.sideBarSize,
+			width,
+			sideColumnLimits.sidebar,
+		);
+		let auxiliaryBarSize = this.layoutPolicy.resolveSavedHorizontalPartWidth(
+			this._savedPartSizes.auxiliaryBar,
+			sizes.auxiliaryBarSize,
+			width,
+			sideColumnLimits.auxiliaryBar,
+		);
 		const panelSize = this._savedPartSizes.panel
 			?? (this.partVisibility.panel ? sizes.panelSize : Math.max(sizes.panelSize, 250));
 		const editorSize = this._savedPartSizes.editor ?? 600;
 		const titleBarHeight = this.titleBarPartView?.minimumHeight ?? 30;
+		const minSessionsWidth = this.layoutPolicy.getDesktopMinSessionsWidth(width);
+		const effectiveEditorWidth = this.partVisibility.editor ? editorSize : 0;
+
+		// If persisted sizes leave too little room for chat, shrink side columns first.
+		if (this.partVisibility.sessions) {
+			let deficit = minSessionsWidth - (width - (this.partVisibility.sidebar ? sideBarSize : 0) - (this.partVisibility.auxiliaryBar ? auxiliaryBarSize : 0) - effectiveEditorWidth);
+			if (deficit > 0 && this.partVisibility.auxiliaryBar) {
+				const reducible = auxiliaryBarSize - sideColumnLimits.auxiliaryBar.min;
+				const fromAux = Math.min(deficit, Math.max(0, reducible));
+				auxiliaryBarSize -= fromAux;
+				deficit -= fromAux;
+			}
+			if (deficit > 0 && this.partVisibility.sidebar) {
+				const reducible = sideBarSize - sideColumnLimits.sidebar.min;
+				sideBarSize -= Math.min(deficit, Math.max(0, reducible));
+			}
+		}
 
 		// Calculate right section width — when sidebar is hidden it takes no space
 		const effectiveSideBarWidth = this.partVisibility.sidebar ? sideBarSize : 0;
 		const rightSectionWidth = Math.max(0, width - effectiveSideBarWidth);
 		const effectiveAuxBarWidth = this.partVisibility.auxiliaryBar ? auxiliaryBarSize : 0;
-		const effectiveEditorWidth = this.partVisibility.editor ? editorSize : 0;
 		// Prefer the saved chat bar width so the user's preferred chat bar size
 		// is preserved across reloads. Fall back to the remainder of the right
 		// section, which the grid distributes proportionally when the saved
 		// sizes don't fit the current container.
-		const sessionsWidth = this._savedPartSizes.sessions
+		let sessionsWidth = this._savedPartSizes.sessions
 			?? Math.max(0, rightSectionWidth - effectiveAuxBarWidth - effectiveEditorWidth);
+		if (this.partVisibility.sessions) {
+			sessionsWidth = Math.max(minSessionsWidth, sessionsWidth, rightSectionWidth - effectiveAuxBarWidth - effectiveEditorWidth);
+		}
 
 		const contentHeight = Math.max(0, height - titleBarHeight);
 		const topRightHeight = Math.max(0, contentHeight - panelSize);

@@ -25,7 +25,7 @@ import { reportNewChatPickerClosed } from '../../../chat/browser/newChatPickerTe
 import { CopilotCLISessionType } from '../../agentHost/browser/baseAgentHostSessionsProvider.js';
 import { LocalSessionType } from '../../localChatSessions/browser/localChatSessionsProvider.js';
 import { isContinuePhysicalAiIde } from '../../../../../workbench/contrib/continue/browser/continueProduct.js';
-import { getMobiusChatModes, getMobiusModePickerDetailLine, getMobiusModePickerHoverContent, normalizeMobiusChatMode } from '../../../../../workbench/contrib/continue/browser/continueMobiusModeRouting.js';
+import { getMobiusChatModeIcon, getMobiusChatModes, getMobiusModePickerDetailLine, getMobiusModePickerHoverContent, normalizeMobiusChatMode } from '../../../../../workbench/contrib/continue/browser/continueMobiusModeRouting.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 
@@ -407,7 +407,6 @@ export class ModePicker extends Disposable {
 	}
 
 	private _buildMobiusItems(modes: IChatMode[]): IActionListItem<ModePickerItem>[] {
-		const selectedModeId = this._modePickerModel.selectedMode.id;
 		return modes.map(mode => {
 			const hover = getMobiusModePickerHoverContent(mode);
 			return {
@@ -415,7 +414,7 @@ export class ModePicker extends Disposable {
 				label: mode.label.get(),
 				detail: getMobiusModePickerDetailLine(mode),
 				hover: hover ? { content: hover } : undefined,
-				group: { title: '', icon: selectedModeId === mode.id ? Codicon.check : Codicon.blank },
+				group: { title: '', icon: getMobiusChatModeIcon(mode) },
 				item: { kind: 'mode', mode },
 			};
 		});
@@ -435,9 +434,13 @@ export class ModePicker extends Disposable {
 		dom.clearNode(this._triggerElement);
 
 		const selectedMode = this._modePickerModel.selectedMode;
-		const icon = selectedMode.icon.get();
-		if (icon) {
-			dom.append(this._triggerElement, renderIcon(icon));
+		if (isContinuePhysicalAiIde()) {
+			dom.append(this._triggerElement, renderIcon(getMobiusChatModeIcon(selectedMode)));
+		} else {
+			const icon = selectedMode.icon.get();
+			if (icon) {
+				dom.append(this._triggerElement, renderIcon(icon));
+			}
 		}
 
 		const labelSpan = dom.append(this._triggerElement, dom.$('span.sessions-chat-dropdown-label'));

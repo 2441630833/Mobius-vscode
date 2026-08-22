@@ -4,11 +4,24 @@
 
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { URI } from '../../../../base/common/uri.js';
+import { IFileService } from '../../../../platform/files/common/files.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { ILanguageModelToolsService } from '../../chat/common/tools/languageModelToolsService.js';
 import type { ContinueAgentToolSchema } from './continueAgentToolsBridge.js';
 import { executeRunTerminalCommand, TerminalCommandContext } from './continueTerminalTool.js';
+
+export interface GodotToolHost {
+	readonly fileService: IFileService;
+	readonly workspaceService: IWorkspaceContextService;
+	readonly appRoot?: string;
+}
+
+interface GodotResolvedPaths {
+	readonly mobiusRoot: URI;
+	readonly godotProject: URI;
+	readonly script: URI;
+}
 
 const GODOT_TOOL_NAMES = new Set([
 	'godot_detect',
@@ -144,18 +157,14 @@ export const GODOT_TOOL_SCHEMAS: readonly ContinueAgentToolSchema[] = [
 	},
 ];
 
-const GAME_EXECUTE_HINT = `GAME DEV LOOP (Agents Game mode) — LIVE PREVIEW while you edit:
+const GAME_EXECUTE_HINT = `GAME DEV (Game mode — user never names this; Game mode selection triggers it automatically):
 1. godot_detect — if missing, run_terminal_command: npm run godot:setup -- -Install
-2. Write .gd/.tscn under game-dev/ (or godot_project_init if game-dev/ is empty)
-3. Mobius keeps the Godot **editor** open during Game-mode work. Each save hot-reloads scripts/scenes so the user can watch while you edit. The user may Stop the agent anytime and ask for changes — do not wait until the end to open Godot.
-4. godot_import after batches of scene/asset changes (headless re-import; editor stays open and picks up changes)
-5. godot_test → fix until 0 failures
-6. godot_run — headless smoke; fix engine errors
-7. godot_play — visible game window, **arrow keys** (autoplay only when you pass autoplay=true). Use visible=false + autopilot for headless YOU WIN verification.
+2. Write .gd/.tscn under game-dev/ (Star Catcher demo lives here; godot_project_init if empty)
+3. Keep Godot **editor** open; saves hot-reload while the user watches. They may Stop anytime.
+4. godot_import after scene batches → godot_test (0 failures) → godot_run smoke → godot_play visible (arrow keys)
+5. Do not tell the user tool names — say "I'll build it and open the game for you to try."
 
-Mobius auto-opens the Godot editor + a playable game window (no autopilot) during Game-mode work. At turn end it relaunches godot_play if you skipped it.
-
-godot_run is headless only. Visible godot_play is for manual play. godot_preview editor=true opens the editor UI.`;
+Mobius auto-opens Godot editor + game window at Game-mode start (before the first edit). Done = tests pass + user can play, not "I edited the files."`;
 
 export function hasGameDevIntent(message: string): boolean {
 	return /game[\s-]?dev|godot|\bmini[\s-]?game\b|小游戏|做个游戏|game mode|star catcher/i.test(message);
@@ -173,8 +182,78 @@ function quotePs(value: string): string {
 	return `'${value.replace(/'/g, "''")}'`;
 }
 
-function buildGodotCli(scriptPath: string, name: string, args: Record<string, unknown>): string {
-	const parts = [`node ${quotePs(scriptPath)}`];
+function buildGodotEnvPrefix(mobiusRoot: URI, godotProject: URI): string {
+	return `$env:MOBIUS_ROOT=${quotePs(mobiusRoot.fsPath)}; $env:GODOT_PROJECT=${quotePs(godotProject.fsPath)}; `;
+}
+
+async function resolveGodotProjectDir(
+	fileService: IFileService,
+	workspaceFolder: URI,
+	mobiusRoot: URI,
+): Promise<URI> {
+	if (await fileService.exists(URI.joinPath(workspaceFolder, 'project.godot'))) {
+		return workspaceFolder;
+	}
+	const nested = URI.joinPath(workspaceFolder, 'game-dev');
+	if (await fileService.exists(URI.joinPath(nested, 'project.godot'))) {
+		return nested;
+	}
+	if (await fileService.exists(nested)) {
+		return nested;
+	}
+	return URI.joinPath(mobiusRoot, 'game-dev');
+}
+
+async function resolveGodotPaths(
+	host: GodotToolHost,
+	workingDirectory: URI | undefined,
+): Promise<GodotResolvedPaths | undefined> {
+	const folder = workingDirectory ?? host.workspaceService.getWorkspace().folders[0]?.uri;
+	if (!folder) {
+		return undefined;
+	}
+
+	const mobiusRootCandidates: URI[] = [];
+	let cur = folder;
+	for (let depth = 0; depth < 10; depth++) {
+		mobiusRootCandidates.push(cur);
+		const parent = URI.joinPath(cur, '..');
+		if (parent.fsPath === cur.fsPath) {
+			break;
+		}
+		cur = parent;
+	}
+	if (host.appRoot) {
+		const appRootUri = URI.file(host.appRoot);
+		for (let depth = 0; depth < 6; depth++) {
+			let candidate = appRootUri;
+			for (let i = 0; i < depth; i++) {
+				candidate = URI.joinPath(candidate, '..');
+			}
+			mobiusRootCandidates.push(candidate);
+		}
+	}
+
+	for (const root of mobiusRootCandidates) {
+		const script = URI.joinPath(root, 'scripts', 'godot-mcp-server.js');
+		if (await host.fileService.exists(script)) {
+			const godotProject = await resolveGodotProjectDir(host.fileService, folder, root);
+			return { mobiusRoot: root, godotProject, script };
+		}
+	}
+	return undefined;
+}
+
+export function createGodotToolHost(
+	fileService: IFileService,
+	workspaceService: IWorkspaceContextService,
+	appRoot?: string,
+): GodotToolHost {
+	return { fileService, workspaceService, appRoot };
+}
+
+function buildGodotCli(scriptPath: string, name: string, args: Record<string, unknown>, envPrefix = ''): string {
+	const parts = [`${envPrefix}node ${quotePs(scriptPath)}`];
 	switch (name) {
 		case 'godot_detect':
 			parts.push('--detect');
@@ -282,22 +361,24 @@ export function trackGodotToolCall(
 }
 
 async function runGodotToolCommand(
+	host: GodotToolHost,
 	toolsService: ILanguageModelToolsService,
 	logService: ILogService,
-	workspaceService: IWorkspaceContextService,
 	context: TerminalCommandContext,
 	toolName: string,
 	args: Record<string, unknown>,
 	token: CancellationToken,
 ): Promise<{ ok: boolean; text: string }> {
-	const folder = workspaceService.getWorkspace().folders[0]?.uri
-		?? context.workingDirectory;
-	if (!folder) {
-		return { ok: false, text: 'No workspace folder is open — cannot locate scripts/godot-mcp-server.js' };
+	const paths = await resolveGodotPaths(host, context.workingDirectory);
+	if (!paths) {
+		return {
+			ok: false,
+			text: 'Cannot locate scripts/godot-mcp-server.js — open the Mobius install folder as a workspace root, or open a folder that contains game-dev/.',
+		};
 	}
-	const script = URI.joinPath(folder, 'scripts', 'godot-mcp-server.js');
-	const command = buildGodotCli(script.fsPath, toolName, args);
-	logService.info(`[Continue][Godot] ${toolName} → ${command}`);
+	const envPrefix = buildGodotEnvPrefix(paths.mobiusRoot, paths.godotProject);
+	const command = buildGodotCli(paths.script.fsPath, toolName, args, envPrefix);
+	logService.info(`[Continue][Godot] ${toolName} → MOBIUS_ROOT=${paths.mobiusRoot.fsPath} GODOT_PROJECT=${paths.godotProject.fsPath}`);
 	return executeRunTerminalCommand(
 		toolsService,
 		logService,
@@ -310,9 +391,9 @@ async function runGodotToolCommand(
 
 /** Open the Godot editor once per agent turn — stays open while the agent keeps editing (hot reload). */
 export async function openGodotLiveEditorIfNeeded(
+	host: GodotToolHost,
 	toolsService: ILanguageModelToolsService,
 	logService: ILogService,
-	workspaceService: IWorkspaceContextService,
 	context: TerminalCommandContext,
 	state: GodotAutoPreviewState,
 	token: CancellationToken,
@@ -321,9 +402,9 @@ export async function openGodotLiveEditorIfNeeded(
 		return { opened: false, text: '' };
 	}
 	const editor = await runGodotToolCommand(
+		host,
 		toolsService,
 		logService,
-		workspaceService,
 		context,
 		'godot_preview',
 		{ editor: true },
@@ -337,9 +418,9 @@ export async function openGodotLiveEditorIfNeeded(
 
 /** Open a visible game window (no autopilot) so the user can play while the agent edits. */
 export async function openGodotLiveGameIfNeeded(
+	host: GodotToolHost,
 	toolsService: ILanguageModelToolsService,
 	logService: ILogService,
-	workspaceService: IWorkspaceContextService,
 	context: TerminalCommandContext,
 	state: GodotAutoPreviewState,
 	token: CancellationToken,
@@ -348,9 +429,9 @@ export async function openGodotLiveGameIfNeeded(
 		return { opened: false, text: '' };
 	}
 	const play = await runGodotToolCommand(
+		host,
 		toolsService,
 		logService,
-		workspaceService,
 		context,
 		'godot_play',
 		{ autoplay: false },
@@ -364,9 +445,9 @@ export async function openGodotLiveGameIfNeeded(
 
 /** Launch Godot editor + playable window when the agent forgot — user should never open Godot manually. */
 export async function ensureGodotPreviewLaunched(
+	host: GodotToolHost,
 	toolsService: ILanguageModelToolsService,
 	logService: ILogService,
-	workspaceService: IWorkspaceContextService,
 	context: TerminalCommandContext,
 	state: GodotAutoPreviewState,
 	token: CancellationToken,
@@ -383,9 +464,9 @@ export async function ensureGodotPreviewLaunched(
 
 	if (!state.editorLaunched) {
 		const editor = await runGodotToolCommand(
+			host,
 			toolsService,
 			logService,
-			workspaceService,
 			context,
 			'godot_preview',
 			{ editor: true },
@@ -400,9 +481,9 @@ export async function ensureGodotPreviewLaunched(
 
 	if (!state.playLaunched) {
 		const play = await runGodotToolCommand(
+			host,
 			toolsService,
 			logService,
-			workspaceService,
 			context,
 			'godot_play',
 			{ autoplay: false },
@@ -418,10 +499,70 @@ export async function ensureGodotPreviewLaunched(
 	return { launched, text: chunks.join('\n\n') };
 }
 
-export async function executeGodotTool(
+/** Game mode start: detect Godot, scaffold game-dev if needed, open editor + game immediately. */
+export async function bootstrapGameModeGodotLivePreview(
+	host: GodotToolHost,
 	toolsService: ILanguageModelToolsService,
 	logService: ILogService,
-	workspaceService: IWorkspaceContextService,
+	context: TerminalCommandContext,
+	state: GodotAutoPreviewState,
+	token: CancellationToken,
+): Promise<{ ok: boolean; editorOpened: boolean; gameOpened: boolean; text: string }> {
+	if (token.isCancellationRequested) {
+		return { ok: false, editorOpened: false, gameOpened: false, text: '' };
+	}
+
+	const paths = await resolveGodotPaths(host, context.workingDirectory);
+	if (!paths) {
+		return {
+			ok: false,
+			editorOpened: false,
+			gameOpened: false,
+			text: 'Cannot locate Mobius Godot tooling (scripts/godot-mcp-server.js). Open a folder under the Mobius install or a parent that contains game-dev/.',
+		};
+	}
+
+	state.toolsUsed = true;
+	state.gameFilesEdited = true;
+
+	const chunks: string[] = [];
+	const detect = await runGodotToolCommand(host, toolsService, logService, context, 'godot_detect', {}, token);
+	chunks.push(detect.text);
+	if (!detect.ok) {
+		return { ok: false, editorOpened: false, gameOpened: false, text: chunks.join('\n\n') };
+	}
+
+	const hasProject = await host.fileService.exists(URI.joinPath(paths.godotProject, 'project.godot'));
+	if (!hasProject) {
+		const init = await runGodotToolCommand(host, toolsService, logService, context, 'godot_project_init', {}, token);
+		chunks.push(init.text);
+		if (!init.ok) {
+			return { ok: false, editorOpened: false, gameOpened: false, text: chunks.join('\n\n') };
+		}
+	}
+
+	const editor = await openGodotLiveEditorIfNeeded(host, toolsService, logService, context, state, token);
+	if (editor.text) {
+		chunks.push(editor.text);
+	}
+
+	const game = await openGodotLiveGameIfNeeded(host, toolsService, logService, context, state, token);
+	if (game.text) {
+		chunks.push(game.text);
+	}
+
+	return {
+		ok: detect.ok && (editor.opened || game.opened),
+		editorOpened: editor.opened,
+		gameOpened: game.opened,
+		text: chunks.join('\n\n'),
+	};
+}
+
+export async function executeGodotTool(
+	host: GodotToolHost,
+	toolsService: ILanguageModelToolsService,
+	logService: ILogService,
 	context: TerminalCommandContext,
 	toolName: string,
 	args: Record<string, unknown>,
@@ -429,9 +570,9 @@ export async function executeGodotTool(
 	state?: GodotAutoPreviewState,
 ): Promise<{ ok: boolean; text: string }> {
 	const result = await runGodotToolCommand(
+		host,
 		toolsService,
 		logService,
-		workspaceService,
 		context,
 		toolName,
 		args,
@@ -451,9 +592,9 @@ export async function executeGodotTool(
 		|| toolName === 'godot_test';
 	if (shouldOpenLiveEditor) {
 		const live = await openGodotLiveEditorIfNeeded(
+			host,
 			toolsService,
 			logService,
-			workspaceService,
 			context,
 			state,
 			token,
@@ -462,9 +603,9 @@ export async function executeGodotTool(
 			result.text += `\n\n---\n[Mobius] Live preview: Godot editor is open — saves under game-dev/ hot-reload while the agent keeps working. Press Stop in chat anytime to redirect edits.\n${live.text}`;
 		}
 		const game = await openGodotLiveGameIfNeeded(
+			host,
 			toolsService,
 			logService,
-			workspaceService,
 			context,
 			state,
 			token,

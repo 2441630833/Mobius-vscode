@@ -9,6 +9,8 @@ import { URI } from '../../../../base/common/uri.js';
 import { ChatMode, IChatMode, IChatModeService, IChatModes } from '../../chat/common/chatModes.js';
 import { hasGameDevIntent } from './continueGodotTools.js';
 
+export { getMobiusChatModeIcon } from './continueMobiusModeIcons.js';
+
 export const MOBIUS_AUTO_MODE_ROUTING_KEY = 'mobius.autoModeRouting.enabled';
 
 /** Fixed Agent / Game list for Mobius mode pickers. */
@@ -26,7 +28,7 @@ export function getMobiusModePickerHoverContent(mode: IChatMode): MarkdownString
 		return new MarkdownString(
 			localize(
 				'mobius.modeHover.game',
-				"**Game** — Godot game development with **live preview**.\n\n- Auto-opens Godot **editor** + **game window** while the agent edits `game-dev/`\n- Watch hot-reload; play with **arrow keys** (no autopilot)\n- Runs `godot_import` → `godot_test` → `godot_play`\n- Press **Stop** anytime to change direction\n\n_Use **Agent** for general coding (no auto Godot)._",
+				"**Game** — build and play games with live preview.\n\n- Describe features in plain language (\"add a shield power-up\", \"make enemies faster\")\n- Agent asks simple design choices when needed, then implements and opens the game\n- Design help and quality checks run automatically — you don't name any of it\n\n_Use **Agent** for non-game coding (README, scripts, refactors)._",
 			),
 			{ isTrusted: true },
 		);
@@ -47,7 +49,7 @@ export function getMobiusModePickerHoverContent(mode: IChatMode): MarkdownString
 /** Short second line under the mode name in the picker list. */
 export function getMobiusModePickerDetailLine(mode: IChatMode): string | undefined {
 	if (mode.name.get() === 'Game') {
-		return localize('mobius.modeDetail.game', "Godot live preview · game-dev/");
+		return localize('mobius.modeDetail.game', "Make games · live preview");
 	}
 	if (mode.id === ChatMode.Agent.id) {
 		return localize('mobius.modeDetail.agent', "General coding · no auto Godot");

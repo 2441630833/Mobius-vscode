@@ -1,0 +1,31 @@
+/* Mobius mode picker — Ant Design Outlined SVG masks (Agent / Game).
+ * Overrides registered product icons so we do not rely on codicon.ttf glyphs. */
+
+.monaco-workbench .codicon.codicon-mobius-mode-agent::before,
+.monaco-workbench .codicon.codicon-mobius-mode-game::before {
+	content: '' !important;
+	font-family: inherit !important;
+	display: inline-block;
+	width: 1em;
+	height: 1em;
+	vertical-align: -0.125em;
+	background-color: currentColor;
+	-webkit-mask-repeat: no-repeat;
+	-webkit-mask-position: center;
+	-webkit-mask-size: contain;
+	mask-repeat: no-repeat;
+	mask-position: center;
+	mask-size: contain;
+}
+
+/* RobotOutlined — Agent */
+.monaco-workbench .codicon.codicon-mobius-mode-agent::before {
+	-webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024'%3E%3Cpath fill='black' d='M300 328a60 60 0 1 0 120 0 60 60 0 1 0-120 0Z'/%3E%3Cpath fill='black' d='M852 64H172c-17.7 0-32 14.3-32 32v660c0 17.7 14.3 32 32 32h680c17.7 0 32-14.3 32-32V96c0-17.7-14.3-32-32-32ZM204 128h616v596H204V128Z'/%3E%3Cpath fill='black' d='M604 328a60 60 0 1 0 120 0 60 60 0 1 0-120 0Z'/%3E%3Cpath fill='black' d='M852 708H172v52h680v-52Z'/%3E%3C/svg%3E");
+	mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024'%3E%3Cpath fill='black' d='M300 328a60 60 0 1 0 120 0 60 60 0 1 0-120 0Z'/%3E%3Cpath fill='black' d='M852 64H172c-17.7 0-32 14.3-32 32v660c0 17.7 14.3 32 32 32h680c17.7 0 32-14.3 32-32V96c0-17.7-14.3-32-32-32ZM204 128h616v596H204V128Z'/%3E%3Cpath fill='black' d='M604 328a60 60 0 1 0 120 0 60 60 0 1 0-120 0Z'/%3E%3Cpath fill='black' d='M852 708H172v52h680v-52Z'/%3E%3C/svg%3E");
+}
+
+/* Gamepad — Game (Material-style controller, not play) */
+.monaco-workbench .codicon.codicon-mobius-mode-game::before {
+	-webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M21.58 16.09l-1.09-7.66C20.21 6.46 18.52 5 16.53 5H7.47C5.48 5 3.79 6.46 3.51 8.43l-1.09 7.66C2.2 17.63 3.39 19 4.94 19c.68 0 1.32-.27 1.8-.75L9 16h6l2.25 2.25c.48.48 1.13.75 1.8.75 1.56 0 2.75-1.37 2.53-2.91zM11 11H9v2H8v-2H6v-1h2V8h1v2h2v1zm4-1h1v1h-1v1h-1v-1h-1V9h1V8h1v1z'/%3E%3C/svg%3E");
+	mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M21.58 16.09l-1.09-7.66C20.21 6.46 18.52 5 16.53 5H7.47C5.48 5 3.79 6.46 3.51 8.43l-1.09 7.66C2.2 17.63 3.39 19 4.94 19c.68 0 1.32-.27 1.8-.75L9 16h6l2.25 2.25c.48.48 1.13.75 1.8.75 1.56 0 2.75-1.37 2.53-2.91zM11 11H9v2H8v-2H6v-1h2V8h1v2h2v1zm4-1h1v1h-1v1h-1v-1h-1V9h1V8h1v1z'/%3E%3C/svg%3E");
+}
