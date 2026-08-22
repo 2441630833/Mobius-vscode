@@ -13,7 +13,6 @@ import { IConfigurationService } from '../../../../platform/configuration/common
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IMarkerService, MarkerSeverity } from '../../../../platform/markers/common/markers.js';
-import { IRequestService } from '../../../../platform/request/common/request.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IStorageService } from '../../../../platform/storage/common/storage.js';
 import { IWorkbenchEnvironmentService } from '../../../services/environment/common/environmentService.js';
@@ -80,7 +79,7 @@ import {
 } from './continueGameFactory3AWorkflow.js';
 import { acquireIndexingPause } from './continueIndexingPause.js';
 import { preprocessAgentRequestOcr, collectAgentRequestImageParts } from './continueOcrPreprocessor.js';
-import { BUNDLED_OLLAMA_OCR } from './continueModelConfig.js';
+import { BUNDLED_ONNX_OCR } from './continueModelConfig.js';
 import { RunInTerminalTool } from '../../terminalContrib/chatAgentTools/browser/tools/runInTerminalTool.js';
 
 const CONTINUE_AGENT_IDS = {
@@ -332,8 +331,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		private readonly _commandService: ICommandService,
 		private readonly _extensionService: IExtensionService,
 		private readonly _markerService: IMarkerService,
-				private readonly _requestService: IRequestService,
-				private readonly _chatTodoListService: IChatTodoListService,
+		private readonly _chatTodoListService: IChatTodoListService,
 		private readonly _textFileService: ITextFileService,
 		private readonly _environmentService: IWorkbenchEnvironmentService,
 		storageService: IStorageService,
@@ -520,7 +518,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 							localize(
 								'continue.ocrRunning',
 								"Running local OCR (`{0}`) on {1} image(s)…",
-								BUNDLED_OLLAMA_OCR.model,
+								BUNDLED_ONNX_OCR.model,
 								maybeImages.length,
 							),
 						),
@@ -528,7 +526,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 
 					const ocr = await preprocessAgentRequestOcr(
 						request,
-						this._requestService,
+						this._commandService,
 						this._fileService,
 						this._logService,
 						token,
@@ -551,7 +549,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 									localize(
 										'continue.ocrDone',
 										"Local OCR (`{0}`): extracted text from {1}/{2} image(s).",
-										BUNDLED_OLLAMA_OCR.model,
+										BUNDLED_ONNX_OCR.model,
 										ocr.successCount,
 										ocr.imageCount,
 									),
@@ -564,7 +562,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 									localize(
 										'continue.ocrErrorDetail',
 										"Local OCR (`{0}`) failed: {1}",
-										BUNDLED_OLLAMA_OCR.model,
+										BUNDLED_ONNX_OCR.model,
 										ocr.lastError.slice(0, 240),
 									),
 								),
@@ -576,7 +574,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 									localize(
 										'continue.ocrEmpty',
 										"Local OCR (`{0}`): no text found in {1} image(s).",
-										BUNDLED_OLLAMA_OCR.model,
+										BUNDLED_ONNX_OCR.model,
 										ocr.imageCount,
 									),
 								),
@@ -594,7 +592,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					localize(
 						'continue.ocrFailed',
 						"Local OCR failed ({0}). Continuing without image text.",
-						BUNDLED_OLLAMA_OCR.model,
+						BUNDLED_ONNX_OCR.model,
 					),
 				),
 			}]);
@@ -3898,8 +3896,7 @@ class ContinueChatAgentContribution extends Disposable implements IWorkbenchCont
 		@ICommandService commandService: ICommandService,
 		@IExtensionService extensionService: IExtensionService,
 		@IMarkerService markerService: IMarkerService,
-		@IRequestService requestService: IRequestService,
-			@IChatTodoListService chatTodoListService: IChatTodoListService,
+		@IChatTodoListService chatTodoListService: IChatTodoListService,
 			@ITextFileService textFileService: ITextFileService,
 			@IWorkbenchEnvironmentService environmentService: IWorkbenchEnvironmentService,
 			@IStorageService storageService: IStorageService,
@@ -3917,7 +3914,6 @@ class ContinueChatAgentContribution extends Disposable implements IWorkbenchCont
 				commandService,
 				extensionService,
 				markerService,
-				requestService,
 				chatTodoListService,
 				textFileService,
 				environmentService,

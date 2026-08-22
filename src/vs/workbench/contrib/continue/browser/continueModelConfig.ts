@@ -23,15 +23,19 @@ export interface EnvModelProfile {
 	readonly model: string;
 }
 
-/** Sync with config/ollama.port — used by OCR only (embeddings are in-process). */
+/** Sync with config/ollama.port — legacy local Qwen chat detection only. */
 export const BUNDLED_OLLAMA_PORT = 25137;
 
-/** Bundled local OCR (image → text) before cloud/agent turns. Sync with scripts/ollama-common.ps1. */
-export const BUNDLED_OLLAMA_OCR = {
-	name: 'GLM-OCR (Local)',
-	model: 'glm-ocr',
-	apiBase: `http://127.0.0.1:${BUNDLED_OLLAMA_PORT}`,
+/** Bundled local OCR (image → text) before cloud/agent turns. Sync with scripts/ensure-glm-ocr-onnx.ps1. */
+export const BUNDLED_ONNX_OCR = {
+	name: 'GLM-OCR (Local ONNX)',
+	model: 'onnx-community/GLM-OCR-ONNX',
 } as const;
+
+/** @deprecated Use {@link BUNDLED_ONNX_OCR}. */
+export const BUNDLED_OLLAMA_OCR = BUNDLED_ONNX_OCR;
+
+export const CONTINUE_RUN_GLM_OCR = 'continue.runGlmOcr';
 
 const OPENAI_COMPATIBLE = new Set([
 	'openai', 'openrouter', 'groq', 'deepseek', 'mistral', 'together', 'lmstudio', 'siliconflow',
@@ -82,7 +86,7 @@ export function isLocalOllamaChatModel(entry: {
 	readonly model?: string;
 	readonly apiBase?: string;
 }): boolean {
-	if (entry.model === 'nomic-embed-text' || entry.model === 'glm-ocr') {
+	if (entry.model === 'nomic-embed-text' || entry.model === 'glm-ocr' || entry.model === BUNDLED_ONNX_OCR.model) {
 		return false;
 	}
 	if (entry.name && /\(Local\)$/i.test(entry.name) && /^Qwen/i.test(entry.name)) {

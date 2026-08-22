@@ -1,14 +1,14 @@
 /*---------------------------------------------------------------------------------------------
- *  Mobius — local Ollama OCR preprocess before cloud/agent chat
+ *  Mobius — local GLM-OCR ONNX preprocess before cloud/agent chat
  *--------------------------------------------------------------------------------------------*/
 
-import { decodeBase64, encodeBase64, streamToBuffer, VSBuffer } from '../../../../base/common/buffer.js';
+import { decodeBase64, encodeBase64, VSBuffer } from '../../../../base/common/buffer.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { getMediaMime } from '../../../../base/common/mime.js';
 import { URI } from '../../../../base/common/uri.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
-import { IRequestService } from '../../../../platform/request/common/request.js';
 import {
 	ChatImageMimeType,
 	IChatMessageImagePart,
@@ -22,15 +22,14 @@ import {
 import { coerceImageBuffer } from '../../chat/common/chatImageExtraction.js';
 import { CHAT_ATTACHABLE_IMAGE_MIME_TYPES } from '../../chat/common/model/chatModel.js';
 import { IChatAgentRequest } from '../../chat/common/participants/chatAgents.js';
-import { BUNDLED_OLLAMA_OCR, BUNDLED_OLLAMA_PORT } from './continueModelConfig.js';
+import { BUNDLED_ONNX_OCR, CONTINUE_RUN_GLM_OCR } from './continueModelConfig.js';
 
-const OCR_API_BASE = `http://127.0.0.1:${BUNDLED_OLLAMA_PORT}`;
-/** CPU-only hosts often need >60s for cold load + vision encode; keep generous. */
+/** CPU-only hosts often need >60s for cold ONNX load + vision encode. */
 const OCR_REQUEST_TIMEOUT_MS = 180_000;
 const OCR_MAX_IMAGES = 4;
 const OCR_MAX_CHARS_PER_IMAGE = 12_000;
-/** Cap generation — glm-ocr on CPU otherwise burns the whole timeout emitting empty fences. */
-const OCR_NUM_PREDICT = 512;
+/** Cap generation — GLM-OCR on CPU otherwise burns the whole timeout emitting empty fences. */
+const OCR_MAX_NEW_TOKENS = 512;
 
 const IMAGE_EXT_RE = new RegExp(
 	`\\.(${Object.keys(CHAT_ATTACHABLE_IMAGE_MIME_TYPES).join('|')}|bmp)$`,
@@ -54,17 +53,23 @@ export interface ContinueOcrResult {
 	readonly successCount: number;
 	/** True when request had image-like attachments but bytes could not be read. */
 	readonly unresolvedAttachments: number;
-	/** Last per-image OCR failure message (e.g. model lacks vision). */
+	/** Last per-image OCR failure message (e.g. model missing). */
 	readonly lastError?: string;
 }
 
+interface GlmOcrCommandResult {
+	ok?: boolean;
+	text?: string;
+	error?: string;
+}
+
 /**
- * Extract attached images from an agent request and run local Ollama OCR.
+ * Extract attached images from an agent request and run local GLM-OCR ONNX.
  * Returns a text block to inject into the user message for the cloud/agent model.
  */
 export async function preprocessAgentRequestOcr(
 	request: IChatAgentRequest,
-	requestService: IRequestService,
+	commandService: ICommandService,
 	fileService: IFileService,
 	logService: ILogService,
 	token: CancellationToken,
@@ -91,7 +96,7 @@ export async function preprocessAgentRequestOcr(
 		}
 		const image = limited[i];
 		try {
-			const text = await runLocalOcr(image, requestService, token);
+			const text = await runLocalOcr(image, commandService, token);
 			const trimmed = text?.trim();
 			if (!trimmed || trimmed === '(no text found)') {
 				logService.info(`[Continue][OCR] No text from image ${i + 1}/${limited.length}: ${image.name}`);
@@ -112,7 +117,7 @@ export async function preprocessAgentRequestOcr(
 		return { extractBlock: undefined, imageCount: limited.length, successCount: 0, unresolvedAttachments: unresolved, lastError };
 	}
 
-		const extractBlock = `<ocr-extract model="${BUNDLED_OLLAMA_OCR.model}">\n${parts.join('\n\n')}\n</ocr-extract>`;
+	const extractBlock = `<ocr-extract model="${BUNDLED_ONNX_OCR.model}">\n${parts.join('\n\n')}\n</ocr-extract>`;
 	return { extractBlock, imageCount: limited.length, successCount, unresolvedAttachments: unresolved, lastError };
 }
 
@@ -271,63 +276,39 @@ async function resolveImageBytes(
 
 async function runLocalOcr(
 	image: ContinueOcrImageInput,
-	requestService: IRequestService,
+	commandService: ICommandService,
 	token: CancellationToken,
 ): Promise<string | undefined> {
-	const body = JSON.stringify({
-		model: BUNDLED_OLLAMA_OCR.model,
-		messages: [{
-			role: 'user',
-			content: OCR_PROMPT,
-			images: [image.base64],
-		}],
-		stream: false,
-		keep_alive: '30m',
-		options: {
-			num_predict: OCR_NUM_PREDICT,
-			temperature: 0,
-		},
-		stop: ['```\n```', '\n```\n```\n```'],
+	const timeoutPromise = new Promise<never>((_, reject) => {
+		const handle = setTimeout(() => {
+			reject(new Error(`GLM-OCR timed out after ${OCR_REQUEST_TIMEOUT_MS}ms`));
+		}, OCR_REQUEST_TIMEOUT_MS);
+		token.onCancellationRequested(() => {
+			clearTimeout(handle);
+			reject(new Error('GLM-OCR canceled'));
+		});
 	});
 
-	const context = await requestService.request({
-		type: 'POST',
-		url: `${OCR_API_BASE}/api/chat`,
-		callSite: 'ContinueOcrPreprocessor.ocr',
-		headers: {
-			'Content-Type': 'application/json',
+	const invokePromise = commandService.executeCommand<GlmOcrCommandResult>(
+		CONTINUE_RUN_GLM_OCR,
+		{
+			base64: image.base64,
+			mimeType: image.mimeType,
+			prompt: OCR_PROMPT,
+			maxNewTokens: OCR_MAX_NEW_TOKENS,
 		},
-		data: body,
-		timeout: OCR_REQUEST_TIMEOUT_MS,
-	}, token);
+	);
 
-	const raw = (await streamToBuffer(context.stream)).toString();
-	if (context.res.statusCode && context.res.statusCode >= 400) {
-		throw new Error(`Ollama OCR HTTP ${context.res.statusCode}: ${raw.slice(0, 400)}`);
+	const result = await Promise.race([invokePromise, timeoutPromise]);
+	if (!result?.ok || typeof result.text !== 'string') {
+		throw new Error(result?.error ?? 'GLM-OCR returned no text');
 	}
-
-	try {
-		const json = JSON.parse(raw);
-		if (typeof json?.error === 'string' && json.error) {
-			throw new Error(json.error);
-		}
-		const content = json?.message?.content;
-		if (typeof content === 'string') {
-			return sanitizeOcrContent(content);
-		}
-	} catch (err) {
-		if (err instanceof SyntaxError) {
-			throw new Error(`Ollama OCR returned non-JSON: ${raw.slice(0, 200)}`);
-		}
-		throw err;
-	}
-	return undefined;
+	return sanitizeOcrContent(result.text);
 }
 
-/** Drop runaway empty fences / repetition that glm-ocr sometimes emits on CPU. */
+/** Drop runaway empty fences / repetition that GLM-OCR sometimes emits on CPU. */
 function sanitizeOcrContent(content: string): string | undefined {
 	let text = content.replace(/(?:```(?:\w*)?\s*\n?){2,}/g, '\n').trim();
-	// Collapse long runs of bare fence lines.
 	text = text.replace(/(?:^```\s*\n?){2,}/gm, '```\n').trim();
 	const lines = text.split(/\r?\n/);
 	const kept: string[] = [];

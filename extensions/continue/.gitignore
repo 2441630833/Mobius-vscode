@@ -28,3 +28,6 @@ e2e/test-continue-yaml/*
 !e2e/test-continue-yaml/config.yaml
 config-yaml-schema.json
 src/.buildTimestamp.ts
+
+# Downloaded at setup via npm run ensure:glm-ocr (~650 MB)
+models/onnx-community/

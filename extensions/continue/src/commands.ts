@@ -9,7 +9,7 @@ import { walkDirAsync } from "core/indexing/walkDir";
 import { isModelInstaller } from "core/llm";
 import { NextEditLoggingService } from "core/nextEdit/NextEditLoggingService";
 import { startLocalLemonade } from "core/util/lemonadeHelper";
-import { startLocalOllama } from "core/util/ollamaHelper";
+import { runGlmOcrViaWorker } from "core/llm/llms/TransformersJsGlmOcrClient";
 import {
   getConfigJsonPath,
   getConfigYamlPath,
@@ -728,15 +728,37 @@ const getCommandsMap: (
       sidebar.webviewProtocol?.request("navigateTo", { path, toggle });
       focusGUI();
     },
+    /** Agents window: run bundled GLM-OCR ONNX on one image attachment. */
+    "continue.runGlmOcr": async (request?: {
+      base64?: string;
+      mimeType?: string;
+      prompt?: string;
+      maxNewTokens?: number;
+    }) => {
+      if (!request?.base64) {
+        return { ok: false, error: "Missing image base64" };
+      }
+      try {
+        const text = await runGlmOcrViaWorker({
+          base64: request.base64,
+          mimeType: request.mimeType ?? "image/png",
+          prompt: request.prompt,
+          maxNewTokens: request.maxNewTokens,
+        });
+        return { ok: true, text };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+
+    /** @deprecated Bundled OCR is ONNX-only; kept for older error-handler links. */
     "continue.startLocalOllama": () => {
-      void startLocalOllama({
-        appRoot: vscode.env.appRoot,
-      }).catch((err) => {
-        console.warn("[Continue] Start bundled Ollama failed:", err);
-        void vscode.window.showErrorMessage(
-          `Unable to start local Ollama: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      });
+      void vscode.window.showInformationMessage(
+        "Mobius OCR runs in-process via GLM-OCR ONNX. Bundled Ollama is no longer used.",
+      );
     },
     "continue.startLocalLemonade": () => {
       startLocalLemonade(ide);

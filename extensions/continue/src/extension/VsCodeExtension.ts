@@ -39,7 +39,6 @@ import {
   ensureBundledLocalModels,
   syncModelEnvFromFiles,
 } from "../util/physicalAiModelEnv";
-import { startLocalOllama } from "core/util/ollamaHelper";
 
 import { ConfigYamlDocumentLinkProvider } from "./ConfigYamlDocumentLinkProvider";
 import { VsCodeMessenger } from "./VsCodeMessenger";
@@ -288,14 +287,7 @@ export class VsCodeExtension {
     resolveConfigHandler?.(this.configHandler);
 
     // Sync workspace .env -> Continue config and align chat/edit/apply/autocomplete selection.
-    // Start bundled Ollama first so Local model requests are not racing a cold serve.
     void (async () => {
-      try {
-        await startLocalOllama({ appRoot: vscode.env.appRoot });
-      } catch (err) {
-        console.warn("[Continue] Bundled Ollama autostart failed:", err);
-      }
-
       const dirs = await this.ide.getWorkspaceDirs();
       const workspaceRoot = dirs.length ? vscode.Uri.parse(dirs[0]).fsPath : "";
       if (workspaceRoot) {

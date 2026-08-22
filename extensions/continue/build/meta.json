@@ -46639,7 +46639,7 @@
       "format": "esm"
     },
     "../../core/llm/defaultSystemMessages.ts": {
-      "bytes": 6019,
+      "bytes": 4956,
       "imports": [
         {
           "path": "E:\\MobiusCode\\Mobius\\continue\\extensions\\vscode\\scripts\\importMetaUrl.js",
@@ -150382,6 +150382,37 @@
       ],
       "format": "esm"
     },
+    "../../core/llm/llms/TransformersJsGlmOcrClient.ts": {
+      "bytes": 5330,
+      "imports": [
+        {
+          "path": "path",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "worker_threads",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "E:\\MobiusCode\\Mobius\\continue\\extensions\\vscode\\scripts\\importMetaUrl.js",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "fs",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "fs",
+          "kind": "require-call",
+          "external": true
+        }
+      ],
+      "format": "esm"
+    },
     "node_modules/yaml/dist/nodes/identity.js": {
       "bytes": 1794,
       "imports": [
@@ -152717,7 +152748,7 @@
       "format": "esm"
     },
     "src/util/physicalAiModelEnv.ts": {
-      "bytes": 60358,
+      "bytes": 60404,
       "imports": [
         {
           "path": "fs",
@@ -152774,7 +152805,7 @@
       "format": "esm"
     },
     "src/commands.ts": {
-      "bytes": 37173,
+      "bytes": 37884,
       "imports": [
         {
           "path": "node:fs",
@@ -152822,9 +152853,9 @@
           "original": "core/util/lemonadeHelper"
         },
         {
-          "path": "../../core/util/ollamaHelper.ts",
+          "path": "../../core/llm/llms/TransformersJsGlmOcrClient.ts",
           "kind": "import-statement",
-          "original": "core/util/ollamaHelper"
+          "original": "core/llm/llms/TransformersJsGlmOcrClient"
         },
         {
           "path": "../../core/util/paths.ts",
@@ -155214,7 +155245,7 @@
       "format": "esm"
     },
     "src/extension/VsCodeExtension.ts": {
-      "bytes": 24293,
+      "bytes": 23957,
       "imports": [
         {
           "path": "fs",
@@ -155350,11 +155381,6 @@
           "path": "src/util/physicalAiModelEnv.ts",
           "kind": "import-statement",
           "original": "../util/physicalAiModelEnv"
-        },
-        {
-          "path": "../../core/util/ollamaHelper.ts",
-          "kind": "import-statement",
-          "original": "core/util/ollamaHelper"
         },
         {
           "path": "src/extension/ConfigYamlDocumentLinkProvider.ts",
@@ -155644,6 +155670,12 @@
         }
       },
       "bytes": 215448
+    },
+    "out/extension.js.map": {
+      "imports": [],
+      "exports": [],
+      "inputs": {},
+      "bytes": 85789107
     },
     "out/extension.js": {
       "imports": [
@@ -157767,11 +157799,6 @@
         },
         {
           "path": "node:fs",
-          "kind": "require-call",
-          "external": true
-        },
-        {
-          "path": "node:os",
           "kind": "require-call",
           "external": true
         },
@@ -161975,6 +162002,26 @@
           "external": true
         },
         {
+          "path": "fs",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "fs",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "path",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "worker_threads",
+          "kind": "require-call",
+          "external": true
+        },
+        {
           "path": "node:os",
           "kind": "require-call",
           "external": true
@@ -163377,7 +163424,7 @@
           "bytesInOutput": 574
         },
         "../../packages/fetch/node_modules/web-streams-polyfill/dist/ponyfill.es2018.js": {
-          "bytesInOutput": 189533
+          "bytesInOutput": 189527
         },
         "../../packages/fetch/node_modules/fetch-blob/streams.cjs": {
           "bytesInOutput": 1441
@@ -163833,7 +163880,7 @@
           "bytesInOutput": 585
         },
         "../../packages/openai-adapters/node_modules/web-streams-polyfill/dist/ponyfill.es2018.js": {
-          "bytesInOutput": 189544
+          "bytesInOutput": 189538
         },
         "../../packages/openai-adapters/node_modules/fetch-blob/streams.cjs": {
           "bytesInOutput": 1453
@@ -166797,7 +166844,7 @@
           "bytesInOutput": 1432
         },
         "../../core/util/ollamaHelper.ts": {
-          "bytesInOutput": 9398
+          "bytesInOutput": 4275
         },
         "../../core/util/withExponentialBackoff.ts": {
           "bytesInOutput": 1325
@@ -167712,7 +167759,7 @@
           "bytesInOutput": 1604
         },
         "../../core/util/pathResolver.ts": {
-          "bytesInOutput": 3352
+          "bytesInOutput": 3350
         },
         "../../core/tools/policies/fileAccess.ts": {
           "bytesInOutput": 349
@@ -167724,7 +167771,7 @@
           "bytesInOutput": 4387
         },
         "../../core/llm/defaultSystemMessages.ts": {
-          "bytesInOutput": 5945
+          "bytesInOutput": 4890
         },
         "../../core/tools/definitions/editFile.ts": {
           "bytesInOutput": 2426
@@ -171393,7 +171440,7 @@
           "bytesInOutput": 1563
         },
         "../../core/tools/implementations/runTerminalCommand.ts": {
-          "bytesInOutput": 16623
+          "bytesInOutput": 16620
         },
         "../../core/util/bingSearch.ts": {
           "bytesInOutput": 2365
@@ -173580,7 +173627,7 @@
           "bytesInOutput": 1308
         },
         "../../core/node_modules/web-streams-polyfill/dist/ponyfill.es2018.js": {
-          "bytesInOutput": 189524
+          "bytesInOutput": 189518
         },
         "../../core/node_modules/fetch-blob/streams.cjs": {
           "bytesInOutput": 1433
@@ -179577,7 +179624,7 @@
           "bytesInOutput": 3189
         },
         "src/util/util.ts": {
-          "bytesInOutput": 2134
+          "bytesInOutput": 2130
         },
         "src/util/workspaceConfig.ts": {
           "bytesInOutput": 363
@@ -179587,6 +179634,9 @@
         },
         "src/autocomplete/completionProvider.ts": {
           "bytesInOutput": 17428
+        },
+        "../../core/llm/llms/TransformersJsGlmOcrClient.ts": {
+          "bytesInOutput": 5241
         },
         "node_modules/yaml/dist/nodes/identity.js": {
           "bytesInOutput": 2040
@@ -179847,7 +179897,7 @@
           "bytesInOutput": 9252
         },
         "src/commands.ts": {
-          "bytesInOutput": 32126
+          "bytesInOutput": 32766
         },
         "src/ContinueConsoleWebviewViewProvider.ts": {
           "bytesInOutput": 6131
@@ -180048,7 +180098,7 @@
           "bytesInOutput": 3167
         },
         "src/extension/VsCodeExtension.ts": {
-          "bytesInOutput": 20343
+          "bytesInOutput": 20113
         },
         "src/activation/api.ts": {
           "bytesInOutput": 401
@@ -180072,7 +180122,7 @@
           "bytesInOutput": 79
         }
       },
-      "bytes": 56061055
+      "bytes": 56060593
     }
   }
 }

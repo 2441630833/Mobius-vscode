@@ -78,16 +78,17 @@ export const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
   },
 };
 
-/** Bundled local OCR model used by Agents-window preprocess (not a user chat picker).
- *  glm-ocr supports Ollama vision; MedAIBase/PaddleOCR-VL:0.9b is Text-only (no mmproj).
- */
-export const BUNDLED_OLLAMA_OCR = {
-  name: "GLM-OCR (Local)",
-  provider: "ollama",
-  model: "glm-ocr",
-  apiBase: BUNDLED_OLLAMA_API_BASE,
-  apiKey: "ollama",
+/** Bundled local OCR model used by Agents-window preprocess (not a user chat picker). */
+export const BUNDLED_ONNX_OCR = {
+  name: "GLM-OCR (Local ONNX)",
+  provider: "transformers.js",
+  model: "onnx-community/GLM-OCR-ONNX",
+  apiBase: "",
+  apiKey: "",
 } as const;
+
+/** @deprecated Use {@link BUNDLED_ONNX_OCR}. */
+export const BUNDLED_OLLAMA_OCR = BUNDLED_ONNX_OCR;
 
 export function isOllamaProvider(provider: string): boolean {
   return provider.toLowerCase() === "ollama";
@@ -1346,7 +1347,7 @@ function removeRetiredLocalChatBlocks(yaml: string): string {
   return updated.replace(/\n{3,}/g, "\n\n");
 }
 
-/** In-process MiniLM — Cursor-style local embeddings; bundled Ollama is OCR-only. */
+/** In-process MiniLM — Cursor-style local embeddings; OCR uses bundled GLM-OCR ONNX. */
 export const LOCAL_EMBED = {
   name: "local-embed",
   provider: "transformers.js",
@@ -1378,7 +1379,7 @@ function repairEmbedRoleModelBlock(yaml: string): string {
 
 /**
  * Strip retired local chat models (Qwen*) from config.yaml.
- * Bundled Ollama is OCR only — embeddings run in-process via transformers.js.
+ * Bundled GLM-OCR ONNX handles Agents image preprocess — embeddings run in-process via transformers.js.
  */
 export function removeLocalChatModels(yaml: string): string {
   return removeRetiredLocalChatBlocks(yaml);
