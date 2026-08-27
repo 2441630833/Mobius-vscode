@@ -294,6 +294,10 @@ class ActionItemRenderer<T> implements IListRenderer<IActionListItem<T>, IAction
 		data.previousClassName = element.className;
 
 		data.text.textContent = stripNewlines(element.label);
+		data.container.classList.toggle('has-detail', !!element.detail);
+		// KeybindingLabel is created for layout but labels are rendered in
+		// `.description`; hide the empty widget so it cannot steal flex space.
+		data.keybinding.element.style.display = 'none';
 
 		// Render optional badge
 		if (element.badge) {
@@ -345,7 +349,7 @@ class ActionItemRenderer<T> implements IListRenderer<IActionListItem<T>, IAction
 		// Render optional detail (shown as second line below the label)
 		if (element.detail) {
 			data.detail.textContent = stripNewlines(element.detail);
-			data.detail.style.display = '';
+			data.detail.style.display = 'block';
 		} else {
 			data.detail.textContent = '';
 			data.detail.style.display = 'none';

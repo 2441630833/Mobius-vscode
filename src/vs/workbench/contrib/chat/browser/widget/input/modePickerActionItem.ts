@@ -160,6 +160,9 @@ export class ModePickerActionItem extends ChatInputPickerActionViewItem {
 				checked: !isDisabledViaPolicy && currentMode.id === mode.id,
 				tooltip: '',
 				hover: { content: tooltip },
+				detail: useMobiusModePicker
+					? (getMobiusModePickerDetailLine(mode) ?? mode.description.get())
+					: undefined,
 				toolbarActions,
 				run: async () => {
 					if (isDisabledViaPolicy) {
@@ -278,7 +281,11 @@ export class ModePickerActionItem extends ChatInputPickerActionViewItem {
 			actionBarActionProvider: {
 				getActions: () => useMobiusModePicker ? [] : this.getModePickerActionBarActions()
 			},
-			showItemKeybindings: true,
+			// Mobius Agent/Game/Chip rows all use a second-line `detail`. Showing
+			// Agent's Ctrl+Shift+I in `.description` sits on the same flex line and
+			// clips that subtitle (Game/Chip have no keybinding, so they wrap).
+			showItemKeybindings: !useMobiusModePicker,
+			listOptions: useMobiusModePicker ? { minWidth: 260, detailItemHeight: 48 } : undefined,
 			reporter: { id: 'ChatModePicker', name: 'ChatModePicker', includeOptions: true },
 		};
 

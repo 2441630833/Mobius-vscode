@@ -174,7 +174,10 @@
 
 .action-widget .monaco-list-row.action .detail {
 	order: 99;
+	flex: 1 0 100%;
 	width: 100%;
+	max-width: 100%;
+	box-sizing: border-box;
 	padding-left: 18px;
 	font-size: 11px;
 	line-height: 14px;
@@ -270,17 +273,29 @@
 	flex-shrink: 0;
 }
 
-/* Items with detail — show detail as subtext below the title */
-.action-widget .monaco-list .monaco-list-row.action {
-	&:has(.detail:not([style*="display: none"])) {
-		flex-wrap: wrap;
-		align-content: center;
-		padding-right: 6px;
+/* Items with detail — show detail as subtext below the title (and any keybinding). */
+.action-widget .monaco-list .monaco-list-row.action.has-detail {
+	flex-wrap: wrap;
+	align-content: flex-start;
+	align-items: center;
+	padding-right: 6px;
+	white-space: normal;
+	overflow: visible;
+	row-gap: 2px;
+}
 
-		.title {
-			line-height: 14px;
-		}
-	}
+.action-widget .monaco-list .monaco-list-row.action.has-detail .title {
+	flex: 1 1 0;
+	min-width: 0;
+	line-height: 14px;
+}
+
+.action-widget .monaco-list .monaco-list-row.action.has-detail .description {
+	flex: 0 0 auto;
+}
+
+.action-widget .monaco-list .monaco-list-row.action.has-detail .monaco-keybinding:not(:has(.monaco-keybinding-key)) {
+	display: none;
 }
 
 /* Inline description mode — description rendered right after the label */

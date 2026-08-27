@@ -217,11 +217,22 @@ export abstract class AbstractNativeEnvironmentService implements INativeEnviron
 	}
 
 	get skipBuiltinExtensions(): readonly string[] {
-		const value = env['VSCODE_SKIP_BUILTIN_EXTENSIONS'];
-		if (!value) {
-			return [];
+		const ids = new Set<string>();
+		const fromProduct = this.productService.skipBuiltinExtensions;
+		if (Array.isArray(fromProduct)) {
+			for (const id of fromProduct) {
+				if (id) {
+					ids.add(id);
+				}
+			}
 		}
-		return value.split(',').map(id => id.trim()).filter(id => id);
+		const value = env['VSCODE_SKIP_BUILTIN_EXTENSIONS'];
+		if (value) {
+			for (const id of value.split(',').map(item => item.trim()).filter(item => item)) {
+				ids.add(id);
+			}
+		}
+		return [...ids];
 	}
 
 	@memoize

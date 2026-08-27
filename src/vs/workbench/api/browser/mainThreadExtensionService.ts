@@ -101,6 +101,10 @@ export class MainThreadExtensionService implements MainThreadExtensionServiceSha
 
 		const isDev = !this._environmentService.isBuilt || this._environmentService.isExtensionDevelopment;
 		if (isDev) {
+			if (ExtensionIdentifier.equals(extensionId, 'vscode.github-authentication')) {
+				console.error(error.message);
+				return;
+			}
 			this._notificationService.error(error);
 			return;
 		}

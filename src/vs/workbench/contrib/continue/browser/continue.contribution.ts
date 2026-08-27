@@ -63,6 +63,7 @@ import './media/continueMobiusModeIcons.css';
 if (isContinuePhysicalAiIde()) {
 	registerIcon('mobius-mode-agent', Codicon.circleSmall, localize('mobiusModeIcon.agent', "Mobius Agent mode icon"));
 	registerIcon('mobius-mode-game', Codicon.game, localize('mobiusModeIcon.game', "Mobius Game mode icon"));
+	registerIcon('mobius-mode-chip', Codicon.chip, localize('mobiusModeIcon.chip', "Mobius Chip mode icon"));
 
 	Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
 		id: 'mobiusGithubMcpStub',
@@ -131,10 +132,31 @@ if (isContinuePhysicalAiIde()) {
 			'mobius.autoModeRouting.enabled': {
 				type: 'boolean',
 				default: true,
-				description: 'When enabled, the Agents composer infers Agent or Game from each outgoing message and switches the mode picker before send. Use /agent or /game at the start of a message to force a mode (/ask and /plan map to Agent).',
+				description: 'When enabled, the Agents composer infers Agent, Game, or Chip from each outgoing message and switches the mode picker before send. Use /agent, /game, or /chip at the start of a message to force a mode (/ask and /plan map to Agent).',
 			},
 		},
 	});
+
+	Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerDefaultConfigurations([{
+		overrides: {
+			'git.detectSubmodules': false,
+			'git.autofetch': false,
+			'git.terminalAuthentication': false,
+			'github.gitAuthentication': false,
+			'terminal.integrated.env.windows': {
+				GIT_TERMINAL_PROMPT: '0',
+				GCM_INTERACTIVE: 'never',
+			},
+			'terminal.integrated.env.linux': {
+				GIT_TERMINAL_PROMPT: '0',
+				GCM_INTERACTIVE: 'never',
+			},
+			'terminal.integrated.env.osx': {
+				GIT_TERMINAL_PROMPT: '0',
+				GCM_INTERACTIVE: 'never',
+			},
+		},
+	}]);
 }
 
 registerContinueChatAgentContribution();
@@ -168,13 +190,15 @@ class PhysicalAiWorkspaceTrustContribution implements IWorkbenchContribution {
 const GITHUB_COPILOT_EXTENSION_IDS = [
 	new ExtensionIdentifier('GitHub.copilot'),
 	new ExtensionIdentifier('GitHub.copilot-chat'),
+	new ExtensionIdentifier('vscode.github-authentication'),
 ];
 
 /**
  * Mobius uses Continue for chat, auth chrome, and Agents tooling.
  * Disable both GitHub.copilot (inline completions) and GitHub.copilot-chat
  * (chat provider) so they do not clash with Continue. Agents use Continue's
- * built-in tool implementations.
+ * built-in tool implementations. GitHub authentication is skipped: Mobius
+ * does not use GitHub login and the extension is not compiled in source-run.
  */
 class ContinueCopilotDisableContribution extends Disposable implements IWorkbenchContribution {
 	static readonly ID = 'workbench.contributions.continueCopilotDisable';

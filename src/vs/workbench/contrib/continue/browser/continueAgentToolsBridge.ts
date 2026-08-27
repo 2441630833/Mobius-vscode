@@ -7,6 +7,7 @@ import { URI } from '../../../../base/common/uri.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { GODOT_TOOL_SCHEMAS } from './continueGodotTools.js';
+import { FPGA_TOOL_SCHEMAS } from './continueFpgaTools.js';
 
 export const CONTINUE_GET_AGENT_CHAT_TOOLS = 'continue.getAgentChatTools';
 export const CONTINUE_CALL_BUILTIN_TOOL = 'continue.callBuiltInTool';
@@ -398,6 +399,7 @@ export async function loadContinueAgentTools(
 		CORE_SEARCH_TOOL_SCHEMAS,
 		LOCAL_AGENT_TOOL_SCHEMAS,
 		GODOT_TOOL_SCHEMAS,
+		FPGA_TOOL_SCHEMAS,
 		extensionTools ?? [],
 	);
 

@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Mobius — infer Agent / Game from the user's prompt
+ *  Mobius — infer Agent / Game / Chip from the user's prompt
  *--------------------------------------------------------------------------------------------*/
 
 import { coalesce } from '../../../../base/common/arrays.js';
@@ -7,17 +7,20 @@ import { MarkdownString } from '../../../../base/common/htmlContent.js';
 import { localize } from '../../../../nls.js';
 import { URI } from '../../../../base/common/uri.js';
 import { ChatMode, IChatMode, IChatModeService, IChatModes } from '../../chat/common/chatModes.js';
+import { hasChipDesignIntent } from './continueChipDesign.js';
 import { hasGameDevIntent } from './continueGodotTools.js';
+import { isMobiusAgentMode, isMobiusChipMode, isMobiusGameMode } from './continueMobiusModeIcons.js';
 
 export { getMobiusChatModeIcon } from './continueMobiusModeIcons.js';
 
 export const MOBIUS_AUTO_MODE_ROUTING_KEY = 'mobius.autoModeRouting.enabled';
 
-/** Fixed Agent / Game list for Mobius mode pickers. */
+/** Fixed Agent / Game / Chip list for Mobius mode pickers. */
 export function getMobiusChatModes(modes: IChatModes): IChatMode[] {
 	return coalesce([
 		ChatMode.Agent,
 		modes.findModeByName('Game'),
+		modes.findModeByName('Chip'),
 	]);
 }
 
@@ -33,11 +36,20 @@ export function getMobiusModePickerHoverContent(mode: IChatMode): MarkdownString
 			{ isTrusted: true },
 		);
 	}
-	if (mode.id === ChatMode.Agent.id || name.toLowerCase() === 'agent') {
+	if (name === 'Chip') {
+		return new MarkdownString(
+			localize(
+				'mobius.modeHover.chip',
+				"**Chip** — FPGA physical token sampler under `chip-design/`.\n\n- Edit RTL, lint/simulate, synthesize with Yosys + openXC7 (no Docker), flash Arty A7, sample tokens over UART\n- Thermal-noise TRNG + stochastic softmax — not a software PRNG\n- Does **not** auto-open Godot. Missing board is normal: stay on lint/sim\n\n_Use **Agent** for general coding; **Game** for Godot._",
+			),
+			{ isTrusted: true },
+		);
+	}
+	if (isMobiusAgentMode(mode)) {
 		return new MarkdownString(
 			localize(
 				'mobius.modeHover.agent',
-				"**Agent** — general software development.\n\n- Edit files, terminal, search, todos, multi-step tasks\n- Does **not** auto-open Godot\n\n_Use **Game** for `game-dev/` with live Godot preview._",
+				"**Agent** — general software development.\n\n- Edit files, terminal, search, todos, multi-step tasks\n- Does **not** auto-open Godot\n\n_Use **Game** for `game-dev/` with live Godot preview. Use **Chip** for FPGA sampling._",
 			),
 			{ isTrusted: true },
 		);
@@ -48,13 +60,17 @@ export function getMobiusModePickerHoverContent(mode: IChatMode): MarkdownString
 
 /** Short second line under the mode name in the picker list. */
 export function getMobiusModePickerDetailLine(mode: IChatMode): string | undefined {
-	if (mode.name.get() === 'Game') {
+	if (isMobiusGameMode(mode)) {
 		return localize('mobius.modeDetail.game', "Make games · live preview");
 	}
-	if (mode.id === ChatMode.Agent.id) {
+	if (isMobiusChipMode(mode)) {
+		return localize('mobius.modeDetail.chip', "FPGA sampler · no auto Godot");
+	}
+	if (isMobiusAgentMode(mode)) {
 		return localize('mobius.modeDetail.agent', "General coding · no auto Godot");
 	}
-	return undefined;
+	const description = mode.description.get()?.trim();
+	return description || undefined;
 }
 
 const MOBIUS_LEGACY_MODE_NAMES = new Set(['ask', 'plan', 'edit']);
@@ -70,7 +86,7 @@ export function normalizeMobiusChatMode(mode: IChatMode | undefined): IChatMode 
 	return mode;
 }
 
-export type MobiusRoutableMode = 'agent' | 'game';
+export type MobiusRoutableMode = 'agent' | 'game' | 'chip';
 
 export interface IMobiusModeInference {
 	readonly mode: MobiusRoutableMode;
@@ -85,6 +101,7 @@ export interface IMobiusModeAutoSwitch {
 
 const MOBIUS_MODE_SWITCH_REASON_LABELS: Record<string, string> = {
 	'game-dev-keywords': localize('mobius.modeSwitchReason.game', "game development task"),
+	'chip-design-keywords': localize('mobius.modeSwitchReason.chip', "chip design task"),
 	'implementation-keywords': localize('mobius.modeSwitchReason.agent', "implementation task"),
 	'slash-override': localize('mobius.modeSwitchReason.slash', "slash command"),
 };
@@ -105,8 +122,8 @@ export function formatMobiusModeAutoSwitchMessage(switchInfo: IMobiusModeAutoSwi
 /** Copy-paste prompts to manually verify each mode (picker label + behavior). */
 export const MOBIUS_MODE_TEST_PROMPTS: Readonly<Record<MobiusRoutableMode, { zh: string; en: string; expect: string }>> = {
 	agent: {
-		zh: '在 README.md 末尾加一行说明 Mobius 支持 Agent 和 Game 两种模式，直接改文件并保存。',
-		en: 'Add one sentence to README.md documenting Mobius Agent and Game modes, then save the file.',
+		zh: '在 README.md 末尾加一行说明 Mobius 支持 Agent、Game 和 Chip 三种模式，直接改文件并保存。',
+		en: 'Add one sentence to README.md documenting Mobius Agent, Game, and Chip modes, then save the file.',
 		expect: 'Uses write/edit tools; may change the workspace.',
 	},
 	game: {
@@ -114,9 +131,14 @@ export const MOBIUS_MODE_TEST_PROMPTS: Readonly<Record<MobiusRoutableMode, { zh:
 		en: 'In game-dev/, add a spinning bonus star to Star Catcher, then run godot_test and godot_play.',
 		expect: 'Godot loop: write under game-dev/, import, test, play.',
 	},
+	chip: {
+		zh: '在 chip-design/ 里检查 FPGA 采样器工具链，先 fpga_detect，再 lint/simulate RTL。不要打开 Godot。',
+		en: 'In chip-design/, detect the FPGA sampler toolchain, then lint and simulate the RTL. Do not open Godot.',
+		expect: 'FPGA loop: detect, lint, simulate; no Godot.',
+	},
 };
 
-const SLASH_OVERRIDE = /^\/(agent|game|ask|plan)\b(?:\s|$)/i;
+const SLASH_OVERRIDE = /^\/(agent|game|chip|ask|plan)\b(?:\s|$)/i;
 
 const AGENT_SIGNAL = /\b(implement|fix|add|create|refactor|patch|commit|update|change|modify|write|build|scaffold|migrate|rename|delete|remove|run tests|apply)\b|实现|修复|添加|修改|重构|直接改|帮我改|创建文件|写代码/i;
 
@@ -129,10 +151,17 @@ export function inferMobiusModeFromPrompt(message: string): IMobiusModeInference
 	const slash = text.match(SLASH_OVERRIDE);
 	if (slash) {
 		const raw = slash[1]!.toLowerCase();
-		return {
-			mode: raw === 'game' ? 'game' : 'agent',
-			reason: 'slash-override',
-		};
+		if (raw === 'game') {
+			return { mode: 'game', reason: 'slash-override' };
+		}
+		if (raw === 'chip') {
+			return { mode: 'chip', reason: 'slash-override' };
+		}
+		return { mode: 'agent', reason: 'slash-override' };
+	}
+
+	if (hasChipDesignIntent(text)) {
+		return { mode: 'chip', reason: 'chip-design-keywords' };
 	}
 
 	if (hasGameDevIntent(text)) {
@@ -158,7 +187,7 @@ export async function resolveMobiusChatMode(
 	const modes = chatModeService.createModes(sessionResource);
 	try {
 		await modes.waitForPendingUpdates();
-		return modes.findModeByName('Game');
+		return mode === 'chip' ? modes.findModeByName('Chip') : modes.findModeByName('Game');
 	} finally {
 		modes.dispose();
 	}

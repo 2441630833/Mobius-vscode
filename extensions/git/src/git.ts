@@ -691,7 +691,10 @@ export class Git {
 			LANGUAGE: 'en',
 			LC_ALL: 'en_US.UTF-8',
 			LANG: 'en_US.UTF-8',
-			GIT_PAGER: 'cat'
+			GIT_PAGER: 'cat',
+			// Unattended git must not pop Git Credential Manager / terminal prompts.
+			GIT_TERMINAL_PROMPT: '0',
+			GCM_INTERACTIVE: 'never',
 		});
 
 		const cwd = this.getCwd(options);

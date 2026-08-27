@@ -3348,7 +3348,7 @@
             "usesOnlineServices"
           ],
           "agentsWindow": {
-            "default": true
+            "default": false
           }
         },
         "git.autofetchPeriod": {

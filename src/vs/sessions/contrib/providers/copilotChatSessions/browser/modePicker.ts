@@ -359,6 +359,7 @@ export class ModePicker extends Disposable {
 				getAriaLabel: (item) => item.label ?? '',
 				getWidgetAriaLabel: () => localize('modePicker.ariaLabel', "Mode Picker"),
 			},
+			{ minWidth: 260, detailItemHeight: 48 },
 		);
 	}
 
@@ -412,7 +413,7 @@ export class ModePicker extends Disposable {
 			return {
 				kind: ActionListItemKind.Action,
 				label: mode.label.get(),
-				detail: getMobiusModePickerDetailLine(mode),
+				detail: getMobiusModePickerDetailLine(mode) ?? mode.description.get(),
 				hover: hover ? { content: hover } : undefined,
 				group: { title: '', icon: getMobiusChatModeIcon(mode) },
 				item: { kind: 'mode', mode },

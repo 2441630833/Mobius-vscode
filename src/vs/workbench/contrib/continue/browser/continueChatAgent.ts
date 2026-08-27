@@ -64,6 +64,8 @@ import {
 } from './continueCopilotToolsBridge.js';
 import { executeRunTerminalCommand } from './continueTerminalTool.js';
 import { executeGodotTool, bootstrapGameModeGodotLivePreview, createGodotAutoPreviewState, createGodotToolHost, ensureGodotPreviewLaunched, gameDevSystemHint, GodotAutoPreviewState, hasGameDevIntent, isGameDevProjectUri, isGodotTool, openGodotLiveEditorIfNeeded, trackGodotToolCall } from './continueGodotTools.js';
+import { bootstrapChipModeDetect, createFpgaToolHost, executeFpgaTool, isFpgaTool } from './continueFpgaTools.js';
+import { chipDesignSystemHint, isChipModeExplicitlySelected } from './continueChipDesign.js';
 import {
 	ccgsRelativePath,
 	gameStudioWorkflowSystemHint,
@@ -87,6 +89,7 @@ const CONTINUE_AGENT_IDS = {
 	edit: `${CONTINUE_EXTENSION_ID}.edits`,
 	agent: `${CONTINUE_EXTENSION_ID}.agent`,
 	game: `${CONTINUE_EXTENSION_ID}.game`,
+	chip: `${CONTINUE_EXTENSION_ID}.chip`,
 } as const;
 
 /**
@@ -390,12 +393,15 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			`[Continue] Agent using model '${modelId}' (requested: ${request.userSelectedModelId ?? 'none'})`,
 		);
 
+		const isChipModeSelected = isChipModeExplicitlySelected(request);
 		const isGameModeSelected = isGameModeExplicitlySelected(request);
-		const isGameMode = isGameModeSelected || hasGameDevIntent(request.message);
+		const isGameMode = !isChipModeSelected && (isGameModeSelected || hasGameDevIntent(request.message));
 		const isAgentMode = request.agentId === CONTINUE_AGENT_IDS.agent
-			|| request.agentId === CONTINUE_AGENT_IDS.game;
+			|| request.agentId === CONTINUE_AGENT_IDS.game
+			|| request.agentId === CONTINUE_AGENT_IDS.chip
+			|| isChipModeSelected;
 		const docEditTask = isDocumentationEditTask(request.message);
-		const codeChangeIntent = hasCodeChangeIntent(request.message) || isExecuteNowMessage(request.message) || isGameMode;
+		const codeChangeIntent = hasCodeChangeIntent(request.message) || isExecuteNowMessage(request.message) || isGameMode || isChipModeSelected;
 		const investigateIntent = docEditTask ? false : hasInvestigateIntent(request.message);
 		const releaseIndexingPause = isAgentMode
 			? acquireIndexingPause(this._commandService, this._logService)
@@ -452,7 +458,29 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		if (isAgentMode && modeBody) {
 			agentSystem += `\n\n<mode-instructions name="${request.modeInstructions?.name ?? ''}">\n${modeBody}\n</mode-instructions>`;
 		}
-		if (isGameModeSelected) {
+		if (isChipModeSelected) {
+			agentSystem += `\n\n<chip-design>\n${chipDesignSystemHint()}\n</chip-design>`;
+			if (cwd) {
+				const detect = await bootstrapChipModeDetect(
+					createFpgaToolHost(this._fileService, this._workspaceService, this._getAppRoot()),
+					this._languageModelToolsService,
+					this._logService,
+					{ sessionResource: request.sessionResource, workingDirectory: cwd, chatRequestId: request.requestId },
+					token,
+				);
+				progress([{
+					kind: 'markdownContent',
+					content: new MarkdownString(
+						localize(
+							'continue.fpgaDetectStart',
+							"**fpga_detect** (Chip mode, automatic)\n\n```\n{0}\n```",
+							detect.text.slice(0, 8000),
+						),
+					),
+				}]);
+				agentSystem += `\n\n<fpga-detect ok="${detect.ok}">\n${detect.text}\n</fpga-detect>`;
+			}
+		} else if (isGameModeSelected) {
 			const ccgsRel = ccgsRelativePath(resolveCcgsRootUri(cwd, this._workspaceService), this._workspaceService);
 			const gf3aRel = gf3aRelativePath(resolveGameFactory3ARootUri(cwd, this._workspaceService), this._workspaceService);
 			agentSystem += `\n\n<game-studio-workflow>\n${gameStudioWorkflowSystemHint(ccgsRel)}\n</game-studio-workflow>`;
@@ -603,11 +631,13 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			codeChangeIntent,
 			investigateIntent,
 			isGameMode,
+			isChipMode: isChipModeSelected,
 		}) || docEditTask;
 		const todoListIntent = !lightweightTask && shouldUseTodoList(request.message, {
 			codeChangeIntent,
 			investigateIntent,
 			isGameMode,
+			isChipMode: isChipModeSelected,
 			webSearchIntent,
 		});
 		const maxCompletionVerifyNudges = lightweightTask
@@ -2134,6 +2164,22 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				return this._readFileLocal(params, cwd);
 			}
 
+			if (isFpgaTool(effectiveName)) {
+				return executeFpgaTool(
+					createFpgaToolHost(
+						this._fileService,
+						this._workspaceService,
+						this._getAppRoot(),
+					),
+					this._languageModelToolsService,
+					this._logService,
+					{ sessionResource, workingDirectory: cwd, chatRequestId },
+					effectiveName,
+					params,
+					token,
+				);
+			}
+
 			if (isGodotTool(effectiveName)) {
 				if (godotAutoPreview) {
 					trackGodotToolCall(godotAutoPreview, effectiveName, params);
@@ -3158,9 +3204,9 @@ function editedUrisAreDocumentationOnly(editedUris: ReadonlySet<string>): boolea
  */
 function isLightweightAgentTask(
 	message: string,
-	opts: { codeChangeIntent: boolean; investigateIntent: boolean; isGameMode: boolean },
+	opts: { codeChangeIntent: boolean; investigateIntent: boolean; isGameMode: boolean; isChipMode: boolean },
 ): boolean {
-	if (opts.isGameMode) {
+	if (opts.isGameMode || opts.isChipMode) {
 		return false;
 	}
 	const trimmed = message.trim();
@@ -3193,16 +3239,16 @@ function hasTodoPlanningShape(message: string): boolean {
 
 function shouldUseTodoList(
 	message: string,
-	opts: { codeChangeIntent: boolean; investigateIntent: boolean; isGameMode: boolean; webSearchIntent: boolean },
+	opts: { codeChangeIntent: boolean; investigateIntent: boolean; isGameMode: boolean; isChipMode: boolean; webSearchIntent: boolean },
 ): boolean {
 	const trimmed = message.trim();
 	if (!trimmed || /^(hi|hello|thanks|thank you|你好|谢谢)\b/i.test(trimmed)) {
 		return false;
 	}
-	if (opts.webSearchIntent && !opts.codeChangeIntent && !opts.investigateIntent && !opts.isGameMode) {
+	if (opts.webSearchIntent && !opts.codeChangeIntent && !opts.investigateIntent && !opts.isGameMode && !opts.isChipMode) {
 		return false;
 	}
-	if (opts.codeChangeIntent || opts.investigateIntent || opts.isGameMode) {
+	if (opts.codeChangeIntent || opts.investigateIntent || opts.isGameMode || opts.isChipMode) {
 		return true;
 	}
 	if (hasTodoPlanningShape(message)) {
@@ -3936,6 +3982,19 @@ class ContinueChatAgentContribution extends Disposable implements IWorkbenchCont
 					description: localize(
 						'continue.gameAgentDescription',
 						"Claude Code Game Studios workflow + Godot live preview in game-dev/",
+					),
+				},
+			},
+			{
+				id: CONTINUE_AGENT_IDS.chip,
+				name: 'Chip',
+				mode: ChatModeKind.Agent,
+				opts: {
+					isDefault: false,
+					fullName: 'Chip',
+					description: localize(
+						'continue.chipAgentDescription',
+						"FPGA physical token sampler in chip-design/ — RTL, Yosys/openXC7, UART. No Godot.",
 					),
 				},
 			},

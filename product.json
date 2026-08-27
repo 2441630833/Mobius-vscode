@@ -222,7 +222,10 @@
 		}
 	],
 	"builtInExtensionsEnabledWithAutoUpdates": [],
-		"sessionsWindowAllowedExtensions": [
+	"skipBuiltinExtensions": [
+		"vscode.github-authentication"
+	],
+	"sessionsWindowAllowedExtensions": [
 		"Continue.continue"
 	],
 	"voiceWsUrl": "wss://falcon-caas.mai.microsoft.com/voice-code/api/v1/realtime/voice"
