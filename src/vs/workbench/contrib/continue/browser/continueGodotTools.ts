@@ -204,27 +204,15 @@ async function resolveGodotProjectDir(
 	return URI.joinPath(mobiusRoot, 'game-dev');
 }
 
-async function resolveGodotPaths(
+export function collectGodotMobiusRootCandidates(
 	host: GodotToolHost,
 	workingDirectory: URI | undefined,
-): Promise<GodotResolvedPaths | undefined> {
-	const folder = workingDirectory ?? host.workspaceService.getWorkspace().folders[0]?.uri;
-	if (!folder) {
-		return undefined;
-	}
-
+): URI[] {
 	const mobiusRootCandidates: URI[] = [];
-	let cur = folder;
-	for (let depth = 0; depth < 10; depth++) {
-		mobiusRootCandidates.push(cur);
-		const parent = URI.joinPath(cur, '..');
-		if (parent.fsPath === cur.fsPath) {
-			break;
-		}
-		cur = parent;
-	}
 	if (host.appRoot) {
 		const appRootUri = URI.file(host.appRoot);
+		// Packaged payload (resources/mobius-godot), sibling of resources/app.
+		mobiusRootCandidates.push(URI.joinPath(appRootUri, '..', 'mobius-godot'));
 		for (let depth = 0; depth < 6; depth++) {
 			let candidate = appRootUri;
 			for (let i = 0; i < depth; i++) {
@@ -233,11 +221,37 @@ async function resolveGodotPaths(
 			mobiusRootCandidates.push(candidate);
 		}
 	}
+	const folder = workingDirectory ?? host.workspaceService.getWorkspace().folders[0]?.uri;
+	if (folder) {
+		let cur = folder;
+		for (let depth = 0; depth < 10; depth++) {
+			mobiusRootCandidates.push(cur);
+			const parent = URI.joinPath(cur, '..');
+			if (parent.fsPath === cur.fsPath) {
+				break;
+			}
+			cur = parent;
+		}
+	}
+	return mobiusRootCandidates;
+}
+
+async function resolveGodotPaths(
+	host: GodotToolHost,
+	workingDirectory: URI | undefined,
+): Promise<GodotResolvedPaths | undefined> {
+	const folder = workingDirectory ?? host.workspaceService.getWorkspace().folders[0]?.uri;
+	if (!folder && !host.appRoot) {
+		return undefined;
+	}
+
+	const mobiusRootCandidates = collectGodotMobiusRootCandidates(host, workingDirectory);
 
 	for (const root of mobiusRootCandidates) {
 		const script = URI.joinPath(root, 'scripts', 'godot-mcp-server.js');
 		if (await host.fileService.exists(script)) {
-			const godotProject = await resolveGodotProjectDir(host.fileService, folder, root);
+			const projectFolder = folder ?? root;
+			const godotProject = await resolveGodotProjectDir(host.fileService, projectFolder, root);
 			return { mobiusRoot: root, godotProject, script };
 		}
 	}
@@ -373,7 +387,7 @@ async function runGodotToolCommand(
 	if (!paths) {
 		return {
 			ok: false,
-			text: 'Cannot locate scripts/godot-mcp-server.js — open the Mobius install folder as a workspace root, or open a folder that contains game-dev/.',
+			text: 'Cannot locate scripts/godot-mcp-server.js — reinstall Mobius (Game mode payload missing) or open the Mobius repo / resources/mobius-godot as workspace.',
 		};
 	}
 	const envPrefix = buildGodotEnvPrefix(paths.mobiusRoot, paths.godotProject);
@@ -518,7 +532,7 @@ export async function bootstrapGameModeGodotLivePreview(
 			ok: false,
 			editorOpened: false,
 			gameOpened: false,
-			text: 'Cannot locate Mobius Godot tooling (scripts/godot-mcp-server.js). Open a folder under the Mobius install or a parent that contains game-dev/.',
+			text: 'Cannot locate Mobius Godot tooling (scripts/godot-mcp-server.js). Reinstall Mobius or run scripts/patch-ide-godot.ps1 — the Game mode payload was not packaged.',
 		};
 	}
 

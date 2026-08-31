@@ -52,7 +52,10 @@ PrivilegesRequired=lowest
 #else
 DefaultDirName={pf}\{#DirName}
 #endif
-DiskSpanning=yes
+; Single Setup.exe. Inno 6.4 allows nearly 4 GB without spanning; the current
+; GLM-OCR + MiniLM payload is ~1.4 GB. Re-enable DiskSpanning if compressed
+; output would exceed ~4.2 GB (ISCC then requires slices).
+DiskSpanning=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl,{#RepoDir}\build\win32\i18n\messages.en.isl" {#LocalizedLanguageFile}
@@ -108,10 +111,12 @@ Source: "bin\{#TunnelApplicationName}.exe"; DestDir: "{code:GetDestDir}\bin"; De
 Source: "bin\{#ApplicationName}.cmd"; DestDir: "{code:GetDestDir}\bin"; DestName: "{code:GetBinDirApplicationCmdFilename}"; Flags: ignoreversion
 Source: "bin\{#ApplicationName}"; DestDir: "{code:GetDestDir}\bin"; DestName: "{code:GetBinDirApplicationFilename}"; Flags: ignoreversion
 Source: "{#ProductJsonPath}"; DestDir: "{code:GetDestDir}\{#VersionedResourcesFolder}\resources\app"; Flags: ignoreversion
-; Store Ollama as-is (nocompression). Still included in the installer; packaging is much faster when models don't change.
-; Bundled Ollama is required for Local chat / codebase indexing. Do not use
-; skipifsourcedoesntexist — missing staged tree must fail the installer build.
+; Optional leftover Ollama tree. Chat OCR/embeddings are GLM-OCR ONNX + MiniLM;
+; gulp only defines IncludeOllama when VSCode-win32-*/resources/ollama has files.
+; A wildcard Source with zero matches aborts ISCC even with skipifsourcedoesntexist.
+#ifdef IncludeOllama
 Source: "resources\ollama\*"; DestDir: "{code:GetDestDir}\resources\ollama"; Flags: ignoreversion recursesubdirs createallsubdirs nocompression solidbreak
+#endif
 #ifdef AppxPackageName
 Source: "appx\{#AppxPackage}"; DestDir: "{code:GetDestDir}\{#VersionedResourcesFolder}\appx"; BeforeInstall: RemoveAppxPackage; Flags: ignoreversion; Check: ShouldUseWindows11ContextMenu
 Source: "appx\{#AppxPackageDll}"; DestDir: "{code:GetDestDir}\{#VersionedResourcesFolder}\appx"; AfterInstall: AddAppxPackage; Flags: ignoreversion; Check: ShouldUseWindows11ContextMenu

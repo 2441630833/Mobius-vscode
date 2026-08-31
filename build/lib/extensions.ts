@@ -183,6 +183,15 @@ function fromLocalNormal(extensionPath: string): Stream {
 
 	vsce.listFiles({ cwd: listCwd, packageManager })
 		.then(fileNames => {
+			if (isContinue) {
+				// GLM-OCR worker requires these as esbuild externals; .vscodeignore drops node_modules/**.
+				const glmOcrRuntime = ['@huggingface/transformers', '@img'];
+				const extra = glmOcrRuntime.flatMap(dependency =>
+					glob.sync(path.join(extensionPath, 'node_modules', dependency, '**'), { nodir: true, dot: true })
+						.map(filePath => path.relative(extensionPath, filePath).replace(/\\/g, '/'))
+				);
+				fileNames = Array.from(new Set([...fileNames, ...extra]));
+			}
 			const files = fileNames
 				.map(fileName => path.join(extensionPath, fileName))
 				.map(filePath => new File({

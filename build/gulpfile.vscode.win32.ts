@@ -42,6 +42,17 @@ function resolveCommit(): string {
 	throw new Error(`Unable to resolve git commit for Inno Setup (set BUILD_SOURCEVERSION). repo=${repoPath}`);
 }
 
+function hasStagedOllamaTree(ollamaDir: string): boolean {
+	try {
+		if (!fs.existsSync(ollamaDir) || !fs.statSync(ollamaDir).isDirectory()) {
+			return false;
+		}
+		return fs.readdirSync(ollamaDir).length > 0;
+	} catch {
+		return false;
+	}
+}
+
 function packageInnoSetup(iss: string, options: { definitions?: Record<string, unknown> }, cb: (err?: Error | null) => void) {
 	const definitions = options.definitions || {};
 
@@ -137,6 +148,12 @@ function buildWin32Setup(arch: string, target: string): task.CallbackTask {
 			if (ctxMenu && ctxMenu[arch]) {
 				definitions['FileExplorerContextMenuCLSID'] = ctxMenu[arch].clsid;
 			}
+		}
+
+		const ollamaDir = path.join(sourcePath, 'resources', 'ollama');
+		if (hasStagedOllamaTree(ollamaDir)) {
+			// Must omit the define entirely when absent: Inno #ifdef is true for any defined ident.
+			definitions['IncludeOllama'] = '1';
 		}
 
 		fs.writeFileSync(productJsonPath, JSON.stringify(productJson, undefined, '\t'));
