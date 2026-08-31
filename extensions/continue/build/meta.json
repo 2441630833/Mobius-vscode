@@ -46639,7 +46639,7 @@
       "format": "esm"
     },
     "../../core/llm/defaultSystemMessages.ts": {
-      "bytes": 4956,
+      "bytes": 7785,
       "imports": [
         {
           "path": "E:\\MobiusCode\\Mobius\\continue\\extensions\\vscode\\scripts\\importMetaUrl.js",
@@ -150383,15 +150383,15 @@
       "format": "esm"
     },
     "../../core/llm/llms/TransformersJsGlmOcrClient.ts": {
-      "bytes": 5330,
+      "bytes": 7485,
       "imports": [
         {
-          "path": "path",
+          "path": "child_process",
           "kind": "import-statement",
           "external": true
         },
         {
-          "path": "worker_threads",
+          "path": "path",
           "kind": "import-statement",
           "external": true
         },
@@ -152805,7 +152805,7 @@
       "format": "esm"
     },
     "src/commands.ts": {
-      "bytes": 37884,
+      "bytes": 38134,
       "imports": [
         {
           "path": "node:fs",
@@ -155670,12 +155670,6 @@
         }
       },
       "bytes": 215448
-    },
-    "out/extension.js.map": {
-      "imports": [],
-      "exports": [],
-      "inputs": {},
-      "bytes": 85789107
     },
     "out/extension.js": {
       "imports": [
@@ -162012,12 +162006,12 @@
           "external": true
         },
         {
-          "path": "path",
+          "path": "child_process",
           "kind": "require-call",
           "external": true
         },
         {
-          "path": "worker_threads",
+          "path": "path",
           "kind": "require-call",
           "external": true
         },
@@ -167771,7 +167765,7 @@
           "bytesInOutput": 4387
         },
         "../../core/llm/defaultSystemMessages.ts": {
-          "bytesInOutput": 4890
+          "bytesInOutput": 7720
         },
         "../../core/tools/definitions/editFile.ts": {
           "bytesInOutput": 2426
@@ -177221,61 +177215,61 @@
           "bytesInOutput": 24682
         },
         "../../core/node_modules/ast-types/lib/path.js": {
-          "bytesInOutput": 10254
+          "bytesInOutput": 10256
         },
         "../../core/node_modules/ast-types/lib/scope.js": {
-          "bytesInOutput": 10884
+          "bytesInOutput": 10886
         },
         "../../core/node_modules/ast-types/lib/node-path.js": {
-          "bytesInOutput": 12781
+          "bytesInOutput": 12785
         },
         "../../core/node_modules/ast-types/lib/path-visitor.js": {
-          "bytesInOutput": 10924
+          "bytesInOutput": 10927
         },
         "../../core/node_modules/ast-types/lib/equiv.js": {
-          "bytesInOutput": 5123
+          "bytesInOutput": 5125
         },
         "../../core/node_modules/ast-types/fork.js": {
-          "bytesInOutput": 2024
+          "bytesInOutput": 2035
         },
         "../../core/node_modules/ast-types/lib/shared.js": {
-          "bytesInOutput": 1908
+          "bytesInOutput": 1910
         },
         "../../core/node_modules/ast-types/def/core.js": {
-          "bytesInOutput": 9665
+          "bytesInOutput": 9668
         },
         "../../core/node_modules/ast-types/def/es6.js": {
-          "bytesInOutput": 6826
+          "bytesInOutput": 6830
         },
         "../../core/node_modules/ast-types/def/es7.js": {
-          "bytesInOutput": 1466
+          "bytesInOutput": 1470
         },
         "../../core/node_modules/ast-types/def/es2020.js": {
-          "bytesInOutput": 743
+          "bytesInOutput": 746
         },
         "../../core/node_modules/ast-types/def/jsx.js": {
-          "bytesInOutput": 3919
+          "bytesInOutput": 3923
         },
         "../../core/node_modules/ast-types/def/type-annotations.js": {
-          "bytesInOutput": 1881
+          "bytesInOutput": 1884
         },
         "../../core/node_modules/ast-types/def/flow.js": {
-          "bytesInOutput": 9719
+          "bytesInOutput": 9724
         },
         "../../core/node_modules/ast-types/def/esprima.js": {
-          "bytesInOutput": 2222
+          "bytesInOutput": 2226
         },
         "../../core/node_modules/ast-types/def/babel-core.js": {
-          "bytesInOutput": 8798
+          "bytesInOutput": 8802
         },
         "../../core/node_modules/ast-types/def/babel.js": {
-          "bytesInOutput": 610
+          "bytesInOutput": 613
         },
         "../../core/node_modules/ast-types/def/typescript.js": {
-          "bytesInOutput": 13255
+          "bytesInOutput": 13260
         },
         "../../core/node_modules/ast-types/def/es-proposals.js": {
-          "bytesInOutput": 1290
+          "bytesInOutput": 1294
         },
         "../../core/node_modules/ast-types/gen/namedTypes.js": {
           "bytesInOutput": 397
@@ -179636,7 +179630,7 @@
           "bytesInOutput": 17428
         },
         "../../core/llm/llms/TransformersJsGlmOcrClient.ts": {
-          "bytesInOutput": 5241
+          "bytesInOutput": 7071
         },
         "node_modules/yaml/dist/nodes/identity.js": {
           "bytesInOutput": 2040
@@ -179897,7 +179891,7 @@
           "bytesInOutput": 9252
         },
         "src/commands.ts": {
-          "bytesInOutput": 32766
+          "bytesInOutput": 32984
         },
         "src/ContinueConsoleWebviewViewProvider.ts": {
           "bytesInOutput": 6131
@@ -180122,7 +180116,7 @@
           "bytesInOutput": 79
         }
       },
-      "bytes": 56060593
+      "bytes": 56065505
     }
   }
 }
