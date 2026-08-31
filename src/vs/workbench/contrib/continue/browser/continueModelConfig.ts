@@ -36,6 +36,8 @@ export const BUNDLED_ONNX_OCR = {
 export const BUNDLED_OLLAMA_OCR = BUNDLED_ONNX_OCR;
 
 export const CONTINUE_RUN_GLM_OCR = 'continue.runGlmOcr';
+/** Kill forked GLM-OCR process after timeout / cancel. */
+export const CONTINUE_CANCEL_GLM_OCR = 'continue.cancelGlmOcr';
 
 const OPENAI_COMPATIBLE = new Set([
 	'openai', 'openrouter', 'groq', 'deepseek', 'mistral', 'together', 'lmstudio', 'siliconflow',

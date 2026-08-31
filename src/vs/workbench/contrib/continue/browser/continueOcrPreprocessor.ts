@@ -22,7 +22,7 @@ import {
 import { coerceImageBuffer } from '../../chat/common/chatImageExtraction.js';
 import { CHAT_ATTACHABLE_IMAGE_MIME_TYPES } from '../../chat/common/model/chatModel.js';
 import { IChatAgentRequest } from '../../chat/common/participants/chatAgents.js';
-import { BUNDLED_ONNX_OCR, CONTINUE_RUN_GLM_OCR } from './continueModelConfig.js';
+import { BUNDLED_ONNX_OCR, CONTINUE_CANCEL_GLM_OCR, CONTINUE_RUN_GLM_OCR } from './continueModelConfig.js';
 
 /** CPU-only hosts often need >60s for cold ONNX load + vision encode. */
 const OCR_REQUEST_TIMEOUT_MS = 180_000;
@@ -279,13 +279,31 @@ async function runLocalOcr(
 	commandService: ICommandService,
 	token: CancellationToken,
 ): Promise<string | undefined> {
+	let settled = false;
+	const clearPending = async (reason: string) => {
+		if (settled) {
+			return;
+		}
+		settled = true;
+		// Kill the forked OCR process so a hung ORT session cannot stick around.
+		try {
+			await commandService.executeCommand(CONTINUE_CANCEL_GLM_OCR, { reason });
+		} catch {
+			/* command may be unavailable during shutdown */
+		}
+	};
+
 	const timeoutPromise = new Promise<never>((_, reject) => {
 		const handle = setTimeout(() => {
-			reject(new Error(`GLM-OCR timed out after ${OCR_REQUEST_TIMEOUT_MS}ms`));
+			const reason = `GLM-OCR timed out after ${OCR_REQUEST_TIMEOUT_MS}ms`;
+			void clearPending(reason);
+			reject(new Error(reason));
 		}, OCR_REQUEST_TIMEOUT_MS);
 		token.onCancellationRequested(() => {
 			clearTimeout(handle);
-			reject(new Error('GLM-OCR canceled'));
+			const reason = 'GLM-OCR canceled';
+			void clearPending(reason);
+			reject(new Error(reason));
 		});
 	});
 
@@ -297,7 +315,10 @@ async function runLocalOcr(
 			prompt: OCR_PROMPT,
 			maxNewTokens: OCR_MAX_NEW_TOKENS,
 		},
-	);
+	).then((result) => {
+		settled = true;
+		return result;
+	});
 
 	const result = await Promise.race([invokePromise, timeoutPromise]);
 	if (!result?.ok || typeof result.text !== 'string') {

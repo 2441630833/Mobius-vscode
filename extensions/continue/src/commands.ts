@@ -9,7 +9,7 @@ import { walkDirAsync } from "core/indexing/walkDir";
 import { isModelInstaller } from "core/llm";
 import { NextEditLoggingService } from "core/nextEdit/NextEditLoggingService";
 import { startLocalLemonade } from "core/util/lemonadeHelper";
-import { runGlmOcrViaWorker } from "core/llm/llms/TransformersJsGlmOcrClient";
+import { cancelGlmOcrViaWorker, runGlmOcrViaWorker } from "core/llm/llms/TransformersJsGlmOcrClient";
 import {
   getConfigJsonPath,
   getConfigYamlPath,
@@ -752,6 +752,12 @@ const getCommandsMap: (
           error: err instanceof Error ? err.message : String(err),
         };
       }
+    },
+
+    /** Agents window: kill hung GLM-OCR child after timeout / cancel. */
+    "continue.cancelGlmOcr": (request?: { reason?: string }) => {
+      cancelGlmOcrViaWorker(request?.reason);
+      return { ok: true };
     },
 
     /** @deprecated Bundled OCR is ONNX-only; kept for older error-handler links. */

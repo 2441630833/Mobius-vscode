@@ -12,6 +12,10 @@ vsc-extension-quickstart.md
 **/.env
 **/env
 node_modules/**
+!node_modules/@huggingface/
+!node_modules/@huggingface/**
+!node_modules/@img/
+!node_modules/@img/**
 
 **/.pytest_cache
 **/__pycache__
