@@ -28,8 +28,11 @@ export const BUNDLED_OLLAMA_PORT = 25137;
 
 /** Bundled local OCR (image → text) before cloud/agent turns. Sync with scripts/ensure-glm-ocr-onnx.ps1. */
 export const BUNDLED_ONNX_OCR = {
-	name: 'GLM-OCR (Local ONNX)',
-	model: 'onnx-community/GLM-OCR-ONNX',
+	name: 'GLM-OCR',
+	/** Short UI label; weights still load from onnx-community/GLM-OCR-ONNX on disk. */
+	model: 'GLM-OCR',
+	/** HuggingFace / on-disk folder id used by the Continue ONNX worker. */
+	modelId: 'onnx-community/GLM-OCR-ONNX',
 } as const;
 
 /** @deprecated Use {@link BUNDLED_ONNX_OCR}. */
@@ -88,7 +91,7 @@ export function isLocalOllamaChatModel(entry: {
 	readonly model?: string;
 	readonly apiBase?: string;
 }): boolean {
-	if (entry.model === 'nomic-embed-text' || entry.model === 'glm-ocr' || entry.model === BUNDLED_ONNX_OCR.model) {
+	if (entry.model === 'nomic-embed-text' || entry.model === 'glm-ocr' || entry.model === BUNDLED_ONNX_OCR.model || entry.model === BUNDLED_ONNX_OCR.modelId) {
 		return false;
 	}
 	if (entry.name && /\(Local\)$/i.test(entry.name) && /^Qwen/i.test(entry.name)) {

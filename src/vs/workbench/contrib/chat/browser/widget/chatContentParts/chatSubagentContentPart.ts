@@ -28,7 +28,7 @@ import { IChatContentPart, IChatContentPartRenderContext } from './chatContentPa
 import { renderFileWidgets } from './chatInlineAnchorWidget.js';
 import { IChatMarkdownAnchorService } from './chatMarkdownAnchorService.js';
 import { CollapsibleListPool } from './chatReferencesContentPart.js';
-import { buildPhrasePool, createThinkingIcon, getToolInvocationIcon } from './chatThinkingContentPart.js';
+import { buildPhrasePool, createThinkingIcon, formatWorkingElapsed, getToolInvocationIcon } from './chatThinkingContentPart.js';
 import { ChatToolInvocationPart } from './toolInvocationParts/chatToolInvocationPart.js';
 import './media/chatSubagentContent.css';
 
@@ -126,6 +126,9 @@ export class ChatSubagentContentPart extends ChatCollapsibleContentPart implemen
 	// Working spinner elements for expanded state
 	private workingSpinnerElement: HTMLElement | undefined;
 	private workingSpinnerLabel: HTMLElement | undefined;
+	private workingPhraseBase: string | undefined;
+	private workingStartedAt = 0;
+	private readonly workingStatusTimer = this._register(new MutableDisposable<IDisposable>());
 	private availableMessages: string[] | undefined;
 
 	// Persistent title elements for shimmer
@@ -299,6 +302,48 @@ export class ChatSubagentContentPart extends ChatCollapsibleContentPart implemen
 		return this.availableMessages.splice(index, 1)[0];
 	}
 
+	private setWorkingSpinnerPhrase(phrase: string): void {
+		this.workingPhraseBase = phrase;
+		if (!this.workingStartedAt) {
+			this.workingStartedAt = Date.now();
+		}
+		this.refreshWorkingSpinnerLabel();
+	}
+
+	private refreshWorkingSpinnerLabel(): void {
+		if (!this.workingSpinnerLabel || !this.workingPhraseBase) {
+			return;
+		}
+		const elapsed = formatWorkingElapsed(Date.now() - this.workingStartedAt);
+		this.workingSpinnerLabel.textContent = localize('chat.working.withElapsed', "{0} · {1}", this.workingPhraseBase, elapsed);
+		this.workingSpinnerLabel.title = localize(
+			'chat.working.stillRunning',
+			"Agent is still running ({0} elapsed). New output will appear here when available.",
+			elapsed,
+		);
+	}
+
+	private startWorkingStatusTimer(): void {
+		this.workingStatusTimer.clear();
+		if (!this.workingStartedAt) {
+			this.workingStartedAt = Date.now();
+		}
+		let ticks = 0;
+		const handle = dom.getWindow(this.domNode).setInterval(() => {
+			if (!this.workingSpinnerLabel) {
+				this.workingStatusTimer.clear();
+				return;
+			}
+			ticks++;
+			if (ticks % 4 === 0) {
+				this.setWorkingSpinnerPhrase(this.getRandomWorkingMessage());
+			} else {
+				this.refreshWorkingSpinnerLabel();
+			}
+		}, 1000);
+		this.workingStatusTimer.value = { dispose: () => dom.getWindow(this.domNode).clearInterval(handle) };
+	}
+
 	private createWorkingSpinner(): void {
 		if (this.workingSpinnerElement || !this.wrapper) {
 			return;
@@ -307,22 +352,26 @@ export class ChatSubagentContentPart extends ChatCollapsibleContentPart implemen
 		const spinnerIcon = createThinkingIcon(Codicon.circleFilled);
 		this.workingSpinnerElement.appendChild(spinnerIcon);
 		this.workingSpinnerLabel = $('span.chat-thinking-spinner-label');
-		this.workingSpinnerLabel.textContent = this.getRandomWorkingMessage();
 		this.workingSpinnerElement.appendChild(this.workingSpinnerLabel);
+		this.setWorkingSpinnerPhrase(this.getRandomWorkingMessage());
 		this.wrapper.appendChild(this.workingSpinnerElement);
+		this.startWorkingStatusTimer();
 	}
 
 	private removeWorkingSpinner(): void {
+		this.workingStatusTimer.clear();
 		if (this.workingSpinnerElement) {
 			this.workingSpinnerElement.remove();
 			this.workingSpinnerElement = undefined;
 			this.workingSpinnerLabel = undefined;
+			this.workingPhraseBase = undefined;
 		}
 	}
 
 	private showWorkingSpinner(): void {
 		if (this.workingSpinnerElement) {
 			this.workingSpinnerElement.style.display = '';
+			this.startWorkingStatusTimer();
 		} else {
 			this.createWorkingSpinner();
 		}

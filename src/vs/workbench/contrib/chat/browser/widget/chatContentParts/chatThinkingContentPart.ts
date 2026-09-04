@@ -223,6 +223,18 @@ const funWorkingMessages = [
 ];
 
 const FUN_WORKING_MESSAGE_RATE = 50;
+const WORKING_PHRASE_ROTATE_MS = 4000;
+const WORKING_ELAPSED_TICK_MS = 1000;
+
+export function formatWorkingElapsed(elapsedMs: number): string {
+	const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+	if (totalSeconds < 60) {
+		return localize('chat.working.elapsed.seconds', "{0}s", totalSeconds);
+	}
+	const minutes = Math.floor(totalSeconds / 60);
+	const seconds = totalSeconds % 60;
+	return localize('chat.working.elapsed.minutes', "{0}m {1}s", minutes, seconds.toString().padStart(2, '0'));
+}
 
 type ThinkingPhrasesConfiguration = { mode?: 'replace' | 'append'; phrases?: string[] };
 
@@ -306,6 +318,9 @@ export class ChatThinkingContentPart extends ChatCollapsibleContentPart implemen
 	private hasExpandedOnce: boolean = false;
 	private workingSpinnerElement: HTMLElement | undefined;
 	private workingSpinnerLabel: HTMLElement | undefined;
+	private workingPhraseBase: string | undefined;
+	private workingStartedAt = 0;
+	private readonly workingStatusTimer = this._register(new MutableDisposable<IDisposable>());
 	private availableMessagesByCategory = new Map<WorkingMessageCategory, string[]>();
 	private readonly toolWrappersByCallId = new Map<string, HTMLElement>();
 	private readonly toolIconsByCallId = new Map<string, HTMLElement>();
@@ -362,6 +377,61 @@ export class ChatThinkingContentPart extends ChatCollapsibleContentPart implemen
 		return pool.splice(index, 1)[0];
 	}
 
+	private setWorkingSpinnerPhrase(phrase: string): void {
+		this.workingPhraseBase = phrase;
+		if (!this.workingStartedAt) {
+			this.workingStartedAt = Date.now();
+		}
+		this.refreshWorkingSpinnerLabel();
+	}
+
+	private refreshWorkingSpinnerLabel(): void {
+		if (!this.workingSpinnerLabel || !this.workingPhraseBase) {
+			return;
+		}
+		const elapsed = formatWorkingElapsed(Date.now() - this.workingStartedAt);
+		this.workingSpinnerLabel.textContent = localize(
+			'chat.working.withElapsed',
+			"{0} · {1}",
+			this.workingPhraseBase,
+			elapsed,
+		);
+		this.workingSpinnerLabel.title = localize(
+			'chat.working.stillRunning',
+			"Agent is still running ({0} elapsed). New output will appear here when available.",
+			elapsed,
+		);
+	}
+
+	private startWorkingStatusTimer(category: WorkingMessageCategory = WorkingMessageCategory.Thinking): void {
+		if (this.streamingCompleted || this.element.isComplete) {
+			this.stopWorkingStatusTimer();
+			return;
+		}
+		if (!this.workingStartedAt) {
+			this.workingStartedAt = Date.now();
+		}
+		this.stopWorkingStatusTimer();
+		let ticks = 0;
+		const handle = getWindow(this.domNode).setInterval(() => {
+			if (this.streamingCompleted || this.element.isComplete || !this.workingSpinnerLabel) {
+				this.stopWorkingStatusTimer();
+				return;
+			}
+			ticks++;
+			if (ticks % Math.max(1, Math.round(WORKING_PHRASE_ROTATE_MS / WORKING_ELAPSED_TICK_MS)) === 0) {
+				this.setWorkingSpinnerPhrase(this.getRandomWorkingMessage(category));
+			} else {
+				this.refreshWorkingSpinnerLabel();
+			}
+		}, WORKING_ELAPSED_TICK_MS);
+		this.workingStatusTimer.value = toDisposable(() => getWindow(this.domNode).clearInterval(handle));
+	}
+
+	private stopWorkingStatusTimer(): void {
+		this.workingStatusTimer.clear();
+	}
+
 	constructor(
 		content: IChatThinkingPart,
 		context: IChatContentPartRenderContext,
@@ -415,7 +485,9 @@ export class ChatThinkingContentPart extends ChatCollapsibleContentPart implemen
 			// parts, meaning this thinking part won't receive more content.
 			this.setExpanded(!this.streamingCompleted && !this.element.isComplete);
 		} else {
-			this.setExpanded(false);
+			// FixedScrolling: keep the streaming panel expanded in the foreground
+			// while the agent is still producing thinking/tool output.
+			this.setExpanded(!this.streamingCompleted && !this.element.isComplete);
 		}
 
 		const node = this.domNode;
@@ -564,10 +636,11 @@ export class ChatThinkingContentPart extends ChatCollapsibleContentPart implemen
 			const spinnerIcon = createThinkingIcon(Codicon.circleFilled);
 			this.workingSpinnerElement.appendChild(spinnerIcon);
 			this.workingSpinnerLabel = $('span.chat-thinking-spinner-label');
-			this.workingSpinnerLabel.textContent = this.getRandomWorkingMessage(WorkingMessageCategory.Thinking);
 			this.workingSpinnerElement.appendChild(this.workingSpinnerLabel);
+			this.setWorkingSpinnerPhrase(this.getRandomWorkingMessage(WorkingMessageCategory.Thinking));
 			this.wrapper.appendChild(this.workingSpinnerElement);
 			this.updateWorkingSpinnerVisibility();
+			this.startWorkingStatusTimer(WorkingMessageCategory.Thinking);
 		}
 
 		// wrap content in scrollable element for fixed scrolling mode
@@ -1055,9 +1128,11 @@ export class ChatThinkingContentPart extends ChatCollapsibleContentPart implemen
 		this.domNode.classList.remove('chat-thinking-fade-top', 'chat-thinking-fade-bottom');
 		this.processPendingRemovals();
 		if (this.workingSpinnerElement) {
+			this.stopWorkingStatusTimer();
 			this.workingSpinnerElement.remove();
 			this.workingSpinnerElement = undefined;
 			this.workingSpinnerLabel = undefined;
+			this.workingPhraseBase = undefined;
 		}
 
 		// Clear the attached-to-thinking flag on all tool invocations
@@ -1088,9 +1163,11 @@ export class ChatThinkingContentPart extends ChatCollapsibleContentPart implemen
 		}
 
 		if (this.workingSpinnerElement) {
+			this.stopWorkingStatusTimer();
 			this.workingSpinnerElement.remove();
 			this.workingSpinnerElement = undefined;
 			this.workingSpinnerLabel = undefined;
+			this.workingPhraseBase = undefined;
 		}
 
 		if (this._collapseButton) {
@@ -1545,7 +1622,8 @@ ${this.hookCount > 0 ? `EXAMPLES WITH BLOCKED CONTENT (from hooks):
 		if (this.workingSpinnerLabel) {
 			const isTerminalTool = toolInvocationOrMarkdown && (toolInvocationOrMarkdown.kind === 'toolInvocation' || toolInvocationOrMarkdown.kind === 'toolInvocationSerialized') && toolInvocationOrMarkdown.toolSpecificData?.kind === 'terminal';
 			const category = isTerminalTool ? WorkingMessageCategory.Terminal : WorkingMessageCategory.Tool;
-			this.workingSpinnerLabel.textContent = this.getRandomWorkingMessage(category);
+			this.setWorkingSpinnerPhrase(this.getRandomWorkingMessage(category));
+			this.startWorkingStatusTimer(category);
 		}
 
 		// If expanded or has been expanded once, render immediately
@@ -2134,7 +2212,8 @@ ${this.hookCount > 0 ? `EXAMPLES WITH BLOCKED CONTENT (from hooks):
 		if (this.workingSpinnerLabel) {
 			const isTerminalTool = item.toolInvocationOrMarkdown && (item.toolInvocationOrMarkdown.kind === 'toolInvocation' || item.toolInvocationOrMarkdown.kind === 'toolInvocationSerialized') && item.toolInvocationOrMarkdown.toolSpecificData?.kind === 'terminal';
 			const category = isTerminalTool ? WorkingMessageCategory.Terminal : WorkingMessageCategory.Tool;
-			this.workingSpinnerLabel.textContent = this.getRandomWorkingMessage(category);
+			this.setWorkingSpinnerPhrase(this.getRandomWorkingMessage(category));
+			this.startWorkingStatusTimer(category);
 		}
 
 		// Handle tool items
@@ -2196,7 +2275,8 @@ ${this.hookCount > 0 ? `EXAMPLES WITH BLOCKED CONTENT (from hooks):
 			}
 
 			if (this.workingSpinnerLabel) {
-				this.workingSpinnerLabel.textContent = this.getRandomWorkingMessage(WorkingMessageCategory.Thinking);
+				this.setWorkingSpinnerPhrase(this.getRandomWorkingMessage(WorkingMessageCategory.Thinking));
+				this.startWorkingStatusTimer(WorkingMessageCategory.Thinking);
 			}
 		}
 		this.updateDropdownClickability();
@@ -2282,10 +2362,12 @@ ${this.hookCount > 0 ? `EXAMPLES WITH BLOCKED CONTENT (from hooks):
 
 	override dispose(): void {
 		this.isActive = false;
+		this.stopWorkingStatusTimer();
 		if (this.workingSpinnerElement) {
 			this.workingSpinnerElement.remove();
 			this.workingSpinnerElement = undefined;
 			this.workingSpinnerLabel = undefined;
+			this.workingPhraseBase = undefined;
 		}
 		this.pendingRemovalFlushDisposable?.dispose();
 		this.pendingRemovalFlushDisposable = undefined;

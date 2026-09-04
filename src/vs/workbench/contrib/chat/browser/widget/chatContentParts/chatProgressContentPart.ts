@@ -3,13 +3,13 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, append, isHTMLElement } from '../../../../../../base/browser/dom.js';
+import { $, append, getWindow, isHTMLElement } from '../../../../../../base/browser/dom.js';
 import { IRenderedMarkdown, renderAsPlaintext } from '../../../../../../base/browser/markdownRenderer.js';
 import { alert } from '../../../../../../base/browser/ui/aria/aria.js';
 import { Codicon } from '../../../../../../base/common/codicons.js';
 import { MarkdownString, type IMarkdownString } from '../../../../../../base/common/htmlContent.js';
 import { stripIcons } from '../../../../../../base/common/iconLabels.js';
-import { Disposable, DisposableStore, MutableDisposable } from '../../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../../../base/common/themables.js';
 import { IMarkdownRenderer } from '../../../../../../platform/markdown/browser/markdownRenderer.js';
 import { IInstantiationService } from '../../../../../../platform/instantiation/common/instantiation.js';
@@ -27,7 +27,8 @@ import { IHoverService } from '../../../../../../platform/hover/browser/hover.js
 import { HoverStyle } from '../../../../../../base/browser/ui/hover/hover.js';
 import { ILanguageModelToolsService } from '../../../common/tools/languageModelToolsService.js';
 import { isEqual } from '../../../../../../base/common/resources.js';
-import { buildPhrasePool, defaultThinkingMessages, maybePickFunWorkingMessage } from './chatThinkingContentPart.js';
+import { autorun } from '../../../../../../base/common/observable.js';
+import { buildPhrasePool, defaultThinkingMessages, formatWorkingElapsed, maybePickFunWorkingMessage } from './chatThinkingContentPart.js';
 
 export class ChatProgressContentPart extends Disposable implements IChatContentPart {
 	public readonly domNode: HTMLElement;
@@ -325,16 +326,38 @@ export class ChatWorkingProgressContentPart extends Disposable implements IChatC
 	}
 
 	private renderCompletedProgress(state: IChatWorkingProgressState): void {
-		// Stats are intentionally hidden in the minimal shipping version.
+		const elapsedMs = state.elapsedMs
+			?? (state.completedAt ? Math.max(0, state.completedAt - state.confirmationAdjustedTimestamp.get()) : undefined);
+		if (elapsedMs !== undefined) {
+			this.statsElement.textContent = localize('chat.working.completedElapsed', " · {0}", formatWorkingElapsed(elapsedMs));
+		}
 	}
 
 	private startLiveProgress(state: IChatWorkingProgressState): void {
-		// If explicit content was set (e.g., tool unresponsive), show that; otherwise
-		// just show the shimmered working label. Stats are intentionally hidden in
-		// the minimal shipping version.
-		if (!this.explicitContent) {
+		const update = () => {
+			if (this.explicitContent) {
+				this.labelElement.textContent = renderAsPlaintext(this.explicitContent);
+				this.statsElement.textContent = '';
+				return;
+			}
 			this.labelElement.textContent = this.label;
-		}
+			const elapsedMs = Math.max(0, Date.now() - state.confirmationAdjustedTimestamp.get());
+			this.statsElement.textContent = localize('chat.working.liveElapsed', " · {0}", formatWorkingElapsed(elapsedMs));
+			this.statsElement.title = localize(
+				'chat.working.stillRunning',
+				"Agent is still running ({0} elapsed). New output will appear here when available.",
+				formatWorkingElapsed(elapsedMs),
+			);
+		};
+
+		update();
+		const handle = getWindow(this.domNode).setInterval(update, 1000);
+		this._register(toDisposable(() => getWindow(this.domNode).clearInterval(handle)));
+		this._register(autorun(reader => {
+			state.confirmationAdjustedTimestamp.read(reader);
+			state.completionTokenCountObs.read(reader);
+			update();
+		}));
 	}
 
 	updateWorkingContent(content: IMarkdownString): void {

@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Codicon } from '../../../../../base/common/codicons.js';
+import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { isMobile, isWeb } from '../../../../../base/common/platform.js';
 import { localize, localize2 } from '../../../../../nls.js';
@@ -30,7 +31,8 @@ import { ChatContextKeys } from '../../../../../workbench/contrib/chat/common/ac
 import { ActiveSessionContextKeys } from '../../../changes/common/changes.js';
 import { ISessionsPartService } from '../../../../services/sessions/browser/sessionsPartService.js';
 import { ISessionsService } from '../../../../services/sessions/browser/sessionsService.js';
-import { IChatService } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
+import { ChatSendResult, IChatService } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
+import { ChatAgentLocation } from '../../../../../workbench/contrib/chat/common/constants.js';
 import { IGitService } from '../../../../../workbench/contrib/git/common/gitService.js';
 
 const CLOSE_SESSION_COMMAND_ID = 'sessionsViewPane.closeSession';
@@ -877,16 +879,16 @@ registerAction2(class GitCommitAndDoneAction extends Action2 {
 			icon: Codicon.check,
 			precondition: ChatContextKeys.requestInProgress.negate(),
 			menu: [{
-				id: MenuId.AgentsChangesToolbar,
-				group: 'navigation',
-				order: 1,
-				when: ContextKeyExpr.and(
-							IsSessionsWindowContext,
-							IsActiveSessionArchivedContext.negate(),
-							ActiveSessionContextKeys.HasUncommittedChanges.isEqualTo(true),
-							ActiveSessionContextKeys.HasGitOperationInProgress.negate(),
-						)
-			}]
+							id: MenuId.AgentsChangesToolbar,
+							group: 'navigation',
+							order: 1,
+							when: ContextKeyExpr.and(
+								IsSessionsWindowContext,
+								IsActiveSessionArchivedContext.negate(),
+								ActiveSessionContextKeys.HasUncommittedChanges.isEqualTo(true),
+								ActiveSessionContextKeys.HasGitOperationInProgress.negate(),
+							)
+						}]
 		});
 	}
 
@@ -914,15 +916,35 @@ registerAction2(class GitCommitAndDoneAction extends Action2 {
 				const instruction = gitRepo?.upstreamBranchName
 					? `In the git repository at ${repoPath}, stage all uncommitted changes, commit them with a meaningful commit message summarizing the changes, and push to the remote. Do not ask which repository to use — use ${repoPath}.`
 					: `In the git repository at ${repoPath}, stage all uncommitted changes and commit them with a meaningful commit message summarizing the changes. Do not ask which repository to use — use ${repoPath}.`;
-				const result = await chatService.sendRequest(
+
+				// Acquire (or load) the chat model before sending. sendRequest throws
+				// 'Unknown session' when the model is not loaded — e.g. the session was
+				// never opened or its model was released — and the catch below would
+				// silently swallow it, making the button appear to do nothing.
+				const modelRef = await chatService.acquireOrLoadSession(
 					activeSession.resource,
-					instruction,
-					{ agentIdSilent: activeSession.providerId }
+					ChatAgentLocation.Chat,
+					CancellationToken.None,
+					'GitCommitAndDoneAction'
 				);
-				if (result.kind === 'sent') {
-					await result.data.responseCompletePromise;
-				} else if (result.kind === 'queued') {
-					await result.deferred;
+				if (!modelRef) {
+					return;
+				}
+				try {
+					// When queued, deferred resolves to the sent result — so we
+					// still await responseCompletePromise afterwards to make sure
+					// the button actually blocks until the commit is done.
+					let result = await chatService.sendRequest(
+						activeSession.resource,
+						instruction,
+						{ agentIdSilent: activeSession.providerId }
+					);
+					result = ChatSendResult.isQueued(result) ? await result.deferred : result;
+					if (ChatSendResult.isSent(result)) {
+						await result.data.responseCompletePromise;
+					}
+				} finally {
+					modelRef.dispose();
 				}
 			} catch {
 				// Chat request failed — silently skip. The user can try again.

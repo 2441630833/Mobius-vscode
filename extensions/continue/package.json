@@ -59,7 +59,9 @@
   "contributes": {
     "configurationDefaults": {
       "files.encoding": "utf8",
-      "files.autoGuessEncoding": false
+      "files.autoGuessEncoding": false,
+      "chat.agent.thinkingStyle": "collapsedPreview",
+      "chat.agent.thinking.collapsedTools": "off"
     },
     "languages": [
       {
@@ -393,6 +395,18 @@
         "command": "continue.openInNewWindow",
         "category": "Continue",
         "title": "Open in new window",
+        "group": "Continue"
+      },
+      {
+        "command": "continue.runGlmOcr",
+        "category": "Continue",
+        "title": "Run Local GLM-OCR (ONNX)",
+        "group": "Continue"
+      },
+      {
+        "command": "continue.cancelGlmOcr",
+        "category": "Continue",
+        "title": "Cancel Local GLM-OCR",
         "group": "Continue"
       }
     ],

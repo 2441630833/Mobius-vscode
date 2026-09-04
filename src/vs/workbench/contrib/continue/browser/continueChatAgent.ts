@@ -95,10 +95,14 @@ const CONTINUE_AGENT_IDS = {
 /**
  * Coding tasks run until the user task is complete (not merely until the model
  * stops talking). This guard only aborts pathological runaway loops.
+ * Raised to 100000 so real tasks are never truncated mid-edit; only a truly
+ * runaway loop reaches this. A mid-task guard stop left fixes un-written —
+ * the user asked for less intervention, so the guard is now effectively
+ * unbounded for coding runs.
  */
-const RUNAWAY_TOOL_TURN_GUARD = 500;
+const RUNAWAY_TOOL_TURN_GUARD = 100000;
 /** Soft cap for pure short Q&A tool loops before forcing an answer. */
-const QA_TOOL_TURNS = 16;
+const QA_TOOL_TURNS = 64;
 /** After this many turns with no writes on a change request, force an edit nudge. */
 const EXPLORE_BEFORE_EDIT_NUDGE_TURN = 2;
 /** Extra tool turns when a coding run hit the soft cap with zero writes. */
@@ -209,6 +213,120 @@ Do not stop after a single terminal/read call. Forbidden: asking the user to con
 
 const TODO_LIST_FORCE_NUDGE =
 	`You must call manage_todo_list NOW before other tools. Split the user's request into 3–7 actionable items in their language, mark the first item in-progress, then continue the work. Do NOT narrate the plan only in chat text.`;
+
+/**
+ * Internal orchestrator nudges are injected into the agent's model context as
+ * User turns (mid-loop steering, search/stream recovery, final-answer prompts).
+ * Some models ECHO those instructions back as assistant text, which then shows
+ * up in the chat UI mid-call ("Stop exploring. Call edit tools NOW …").
+ * These signatures mark the start of such an echo so it can be held while
+ * streaming and stripped before anything reaches the chat UI.
+ */
+const NUDGE_ECHO_SIGNATURES: readonly string[] = [
+	'Stop exploring. Call edit tools NOW',
+	'Stop narrating. You have enough context.',
+	'Stop narrating. Emit exactly ONE real tool_use',
+	'Do not continue planning. Call create_file or write_file NOW',
+	'Stop condition is TASK COMPLETION',
+	'You stopped after tool results without finishing.',
+	'You stopped early and asked the user to reply',
+	'Stop answering from memory. Call search_web NOW',
+	'Write your final answer to the user now',
+	'Your previous turn produced no user-visible answer.',
+	'Your previous turn wrote tool calls as plain chat text.',
+	'Your previous turn ONLY NARRATED a tool call',
+	'Investigation is incomplete. Continue NOW with tools',
+	'You must call manage_todo_list NOW before other tools',
+	'A workspace search timed out or failed.',
+	'A tool just failed because it is unavailable in Continue Agent',
+	'The previous model response failed (provider/stream error).',
+	'A safety guard stopped further tool calls after a very long run.',
+	'Tools paused after a long investigation.',
+	'Tools are done for this question.',
+	'Next: do NOT stop. Retry grep_search with a short literal string',
+];
+
+/** Full verbatim texts of the nudges injected as User turns (exact-echo removal). */
+const INJECTED_NUDGES: readonly string[] = [
+	FINAL_ANSWER_NUDGE,
+	FINAL_ANSWER_RETRY_NUDGE,
+	TEXTUAL_TOOL_NUDGE,
+	NARRATED_TOOL_NUDGE,
+	FINISH_REMAINING_EDITS_NUDGE,
+	CONTINUE_UNTIL_TASK_DONE_NUDGE,
+	SEARCH_FAILURE_RECOVERY_HINT,
+	SEARCH_FAILURE_CONTINUE_NUDGE,
+	DEAD_END_TOOL_CONTINUE_NUDGE,
+	STREAM_ERROR_CONTINUE_NUDGE,
+	POST_TOOL_CONTINUE_NUDGE,
+	INVESTIGATE_CONTINUE_NUDGE,
+	TODO_LIST_FORCE_NUDGE,
+	'Stop exploring. Call edit tools NOW (replace_string_in_file / multi_replace_string_in_file / insert_edit_into_file / write_file). Do not ask the user to reply again.',
+	'Do not continue planning. Call create_file or write_file NOW — create the first file under the session working directory (e.g. README.md). Tools are required.',
+	'Stop narrating. You have enough context. Call edit tools NOW (replace_string_in_file / multi_replace_string_in_file / insert_edit_into_file / write_file). Do not ask the user to reply. Do not only describe planned updates.',
+	'Stop answering from memory. Call search_web NOW with a query about the user question, then answer using only the search results.',
+	'A safety guard stopped further tool calls after a very long run. Report briefly what was changed and what remains. FORBIDDEN: "工具调用已用完", "请回复任意消息", or asking the user to ping you.',
+	'Tools paused after a long investigation. Write the root-cause conclusion now from tool results. FORBIDDEN: asking the user to reply again.',
+	'Tools are done for this question. Write the final answer now. FORBIDDEN: asking the user to reply again.',
+];
+
+/** Earliest index at which an echoed internal nudge starts, else -1. */
+function indexOfNudgeEchoStart(text: string): number {
+	let found = -1;
+	for (const sig of NUDGE_ECHO_SIGNATURES) {
+		const at = text.indexOf(sig);
+		if (at >= 0 && (found < 0 || at < found)) {
+			found = at;
+		}
+	}
+	return found;
+}
+
+/**
+ * Remove echoed internal nudges from user-visible assistant text. Exact
+ * verbatim copies of known nudges are removed wholesale; truncated or
+ * paraphrased copies are cut from the signature through the end of the first
+ * sentence (or next line) so stragglers never reach the chat UI.
+ */
+function stripNudgeEchoes(text: string): string {
+	if (!text) {
+		return text;
+	}
+	let out = text;
+	let guard = 0;
+	for (; guard < 64; guard++) {
+		let start = indexOfNudgeEchoStart(out);
+		if (start < 0) {
+			break;
+		}
+		let end = -1;
+		for (const nudge of INJECTED_NUDGES) {
+			const at = out.indexOf(nudge);
+			if (at >= 0 && at < start) {
+				start = at;
+			}
+			if (at === start) {
+				end = start + nudge.length;
+			}
+		}
+		if (end < 0) {
+			// Truncated/paraphrased echo: cut through the first sentence (≤600 chars).
+			const tail = out.slice(start);
+			const sentence = tail.match(/^[\s\S]{0,600}?[.!?。！？](?:\s|$)/);
+			if (sentence) {
+				end = start + sentence[0].length;
+			} else {
+				const newline = out.indexOf('\n', start);
+				end = newline >= 0 && newline - start <= 600 ? newline : Math.min(out.length, start + 600);
+			}
+		}
+		if (end <= start) {
+			break;
+		}
+		out = out.slice(0, start) + out.slice(end);
+	}
+	return out;
+}
 
 function isWorkspaceSearchTool(toolName: string): boolean {
 	return toolName === 'grep_search'
@@ -1794,7 +1912,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				undefined,
 				true,
 			);
-			assistantText = stripUnrecoverableToolMarkup(assistantText);
+			assistantText = stripNudgeEchoes(stripUnrecoverableToolMarkup(assistantText));
 
 			if (!assistantText.trim() && !token.isCancellationRequested) {
 				this._logService.warn(`[Continue] Final ${logLabel} empty — retrying with stronger nudge`);
@@ -1814,7 +1932,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					undefined,
 					true,
 				));
-				assistantText = stripUnrecoverableToolMarkup(assistantText);
+				assistantText = stripNudgeEchoes(stripUnrecoverableToolMarkup(assistantText));
 			}
 
 			if (!assistantText.trim() && !token.isCancellationRequested) {
@@ -1990,11 +2108,23 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 						}
 						// Hold incomplete prefixes (`<tool_ca`) so mid-stream truncation
 						// cannot leak partial tool tags into the chat.
-						const holdAt = incompleteToolMarkupHoldStart(assistantText);
+												const holdAt = incompleteToolMarkupHoldStart(assistantText);
 						if (holdAt >= 0) {
 							flushSafeText(holdAt);
 							continue;
 						}
+					}
+					// Model echoed an internal steering nudge into visible text
+					// ("Stop exploring. Call edit tools NOW …"): hold everything from
+					// the echo start so it never streams to the chat UI. The echo is
+					// stripped when the stream ends, then any real prose that followed
+					// it is flushed by the end-of-stream logic.
+					const nudgeEchoAt = indexOfNudgeEchoStart(assistantText);
+					if (nudgeEchoAt >= 0) {
+						const holdFrom = Math.max(streamedUpTo, nudgeEchoAt);
+						flushSafeText(holdFrom);
+						streamedUpTo = holdFrom;
+						continue;
 					}
 					flushSafeText(assistantText.length);
 				} else if (item.type === 'thinking') {
@@ -2020,8 +2150,15 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		// Drop dangling incomplete tags if the stream ended mid-markup (`...:<tool_ca`).
 		const hadIncompleteToolMarkup = incompleteToolMarkupHoldStart(assistantText) >= 0;
 		assistantText = stripIncompleteTrailingToolMarkup(assistantText);
-		if (hadIncompleteToolMarkup && toolUses.length === 0) {
+				if (hadIncompleteToolMarkup && toolUses.length === 0) {
 			truncatedTextualToolDump = true;
+		}
+
+		// Models sometimes echo an injected steering nudge into their reply.
+		// Strip it from user-visible text (and from the agent's own context);
+		// the final-flush logic below then streams any real prose that followed.
+		if (indexOfNudgeEchoStart(assistantText) >= 0) {
+			assistantText = stripNudgeEchoes(assistantText);
 		}
 
 		// Local / poorly-aligned models sometimes emit tool calls as XML/text.
@@ -2041,7 +2178,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				streamedUpTo = assistantText.length;
 			} else {
 				// Unrecoverable dump — keep prose before markup; hide the dump itself.
-				assistantText = stripUnrecoverableToolMarkup(assistantText);
+				assistantText = stripNudgeEchoes(stripUnrecoverableToolMarkup(assistantText));
 				streamedUpTo = assistantText.length;
 				truncatedTextualToolDump = true;
 			}

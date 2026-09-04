@@ -33,7 +33,8 @@ const FPGA_TOOL_NAMES = new Set([
 	'fpga_clean',
 	'fpga_flash',
 	'fpga_list_cables',
-	'fpga_device_info',
+		'fpga_device_info',
+	'fpga_bound',
 	'fpga_sample_token',
 	'fpga_sample_sequence',
 	'fpga_verify_distribution',
@@ -156,6 +157,21 @@ export const FPGA_TOOL_SCHEMAS: readonly ContinueAgentToolSchema[] = [
 				properties: {
 					port: { type: 'string' },
 					baud: { type: 'number' },
+				},
+			},
+		},
+	},
+		{
+		type: 'function',
+		function: {
+			name: 'fpga_bound',
+			description:
+				'Redwood-style roofline budget for the closed sampling loop (no board). Predicts per-token ms at a given K/baud; calibrate against measured latency_ms from fpga_sample_token/fpga_sample_sequence.',
+			parameters: {
+				type: 'object',
+				properties: {
+					k: { type: 'number', description: 'Window K (1-64). Default: sweep 8/16/32/64.' },
+					baud: { type: 'number', description: 'Link baud rate (default 115200).' },
 				},
 			},
 		},
@@ -422,9 +438,18 @@ function buildFpgaCli(scriptPath: string, name: string, args: Record<string, unk
 		case 'fpga_list_cables':
 			parts.push('cables');
 			break;
-		case 'fpga_device_info':
+				case 'fpga_device_info':
 			parts.push('info');
 			pushSerial();
+			break;
+		case 'fpga_bound':
+			parts.push('bound');
+			if (optionalNumber(args, 'k') !== undefined) {
+				parts.push('--k', String(Math.floor(optionalNumber(args, 'k')!)));
+			}
+			if (optionalNumber(args, 'baud') !== undefined) {
+				parts.push('--baud', String(Math.floor(optionalNumber(args, 'baud')!)));
+			}
 			break;
 		case 'fpga_sample_token':
 			parts.push('sample', jsonArg(args.logits ?? []));

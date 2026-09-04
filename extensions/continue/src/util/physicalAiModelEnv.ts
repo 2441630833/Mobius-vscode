@@ -80,7 +80,7 @@ export const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
 
 /** Bundled local OCR model used by Agents-window preprocess (not a user chat picker). */
 export const BUNDLED_ONNX_OCR = {
-  name: "GLM-OCR (Local ONNX)",
+  name: "GLM-OCR",
   provider: "transformers.js",
   model: "onnx-community/GLM-OCR-ONNX",
   apiBase: "",

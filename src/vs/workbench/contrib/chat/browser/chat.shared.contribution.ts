@@ -1670,7 +1670,7 @@ configurationRegistry.registerConfiguration({
 		},
 		[ChatConfiguration.ThinkingStyle]: {
 			type: 'string',
-			default: 'fixedScrolling',
+			default: 'collapsedPreview',
 			enum: ['collapsed', 'collapsedPreview', 'fixedScrolling'],
 			enumDescriptions: [
 				nls.localize('chat.agent.thinkingMode.collapsed', "Thinking parts will be collapsed by default."),
@@ -1688,7 +1688,7 @@ configurationRegistry.registerConfiguration({
 		},
 		'chat.agent.thinking.collapsedTools': {
 			type: 'string',
-			default: 'always',
+			default: 'off',
 			enum: ['off', 'withThinking', 'always'],
 			enumDescriptions: [
 				nls.localize('chat.agent.thinking.collapsedTools.off', "Tool calls are shown separately, not collapsed into thinking."),
