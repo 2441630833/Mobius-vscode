@@ -150383,7 +150383,7 @@
       "format": "esm"
     },
     "../../core/llm/llms/TransformersJsGlmOcrClient.ts": {
-      "bytes": 8787,
+      "bytes": 8513,
       "imports": [
         {
           "path": "child_process",
@@ -152748,7 +152748,7 @@
       "format": "esm"
     },
     "src/util/physicalAiModelEnv.ts": {
-      "bytes": 60390,
+      "bytes": 58303,
       "imports": [
         {
           "path": "fs",

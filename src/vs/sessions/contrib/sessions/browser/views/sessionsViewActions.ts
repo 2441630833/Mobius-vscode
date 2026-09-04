@@ -106,7 +106,7 @@ CommandsRegistry.registerCommand({
 });
 
 // Open Nth session from the list. Windows/Linux: Alt+1..9 (Ctrl+1..9 is reserved
-// for focusing sessions in the grid). macOS: Ctrl+1..9 (WinCtrl) — the grid uses
+// for focusing sessions in the grid). macOS: Ctrl+1..9 (WinCtrl) 鈥?the grid uses
 // Cmd+1..9 there, so Ctrl is free and avoids Option+digit typing symbols.
 // 1..8 open that session; 9 opens the last session.
 for (let visibleIndex = 1; visibleIndex <= 9; visibleIndex++) {
@@ -901,9 +901,17 @@ registerAction2(class GitCommitAndDoneAction extends Action2 {
 			return;
 		}
 
-		// Trigger the AI to git commit + push — no archiving, session stays active.
+		// Target the chat the user is currently viewing, not the session's
+		// primary (first) chat. The session resource points at the primary
+		// chat, so sending there would surface the git request in the first
+		// agent chat even when the user is in a later chat of a multi-chat
+		// session. Falling back to the session resource keeps single-chat
+		// sessions (where both are identical) working unchanged.
+		const targetResource = activeSession.activeChat.get().resource ?? activeSession.resource;
+
+		// Trigger the AI to git commit + push 鈥?no archiving, session stays active.
 		// Uses a plain text instruction (not /commit slash command) so it works
-		// with ANY AI provider (continue, copilotcli, claude-code, agent-host…).
+		// with ANY AI provider (continue, copilotcli, claude-code, agent-host鈥?.
 		// The AI agent handles staging, committing, and pushing via terminal tools.
 		const workspace = activeSession.workspace.get();
 		const folder = workspace?.folders[0];
@@ -914,15 +922,15 @@ registerAction2(class GitCommitAndDoneAction extends Action2 {
 			try {
 				const repoPath = repoRoot.fsPath;
 				const instruction = gitRepo?.upstreamBranchName
-					? `In the git repository at ${repoPath}, stage all uncommitted changes, commit them with a meaningful commit message summarizing the changes, and push to the remote. Do not ask which repository to use — use ${repoPath}.`
-					: `In the git repository at ${repoPath}, stage all uncommitted changes and commit them with a meaningful commit message summarizing the changes. Do not ask which repository to use — use ${repoPath}.`;
+					? `In the git repository at ${repoPath}, stage all uncommitted changes, commit them with a meaningful commit message summarizing the changes, and push to the remote. Do not ask which repository to use 鈥?use ${repoPath}.`
+					: `In the git repository at ${repoPath}, stage all uncommitted changes and commit them with a meaningful commit message summarizing the changes. Do not ask which repository to use 鈥?use ${repoPath}.`;
 
 				// Acquire (or load) the chat model before sending. sendRequest throws
-				// 'Unknown session' when the model is not loaded — e.g. the session was
-				// never opened or its model was released — and the catch below would
+				// 'Unknown session' when the model is not loaded 鈥?e.g. the session was
+				// never opened or its model was released 鈥?and the catch below would
 				// silently swallow it, making the button appear to do nothing.
 				const modelRef = await chatService.acquireOrLoadSession(
-					activeSession.resource,
+					targetResource,
 					ChatAgentLocation.Chat,
 					CancellationToken.None,
 					'GitCommitAndDoneAction'
@@ -931,11 +939,11 @@ registerAction2(class GitCommitAndDoneAction extends Action2 {
 					return;
 				}
 				try {
-					// When queued, deferred resolves to the sent result — so we
+					// When queued, deferred resolves to the sent result 鈥?so we
 					// still await responseCompletePromise afterwards to make sure
 					// the button actually blocks until the commit is done.
 					let result = await chatService.sendRequest(
-						activeSession.resource,
+						targetResource,
 						instruction,
 						{ agentIdSilent: activeSession.providerId }
 					);
@@ -947,7 +955,7 @@ registerAction2(class GitCommitAndDoneAction extends Action2 {
 					modelRef.dispose();
 				}
 			} catch {
-				// Chat request failed — silently skip. The user can try again.
+				// Chat request failed 鈥?silently skip. The user can try again.
 			} finally {
 				try {
 					const repo = await gitService.openRepository(repoRoot);
@@ -957,7 +965,7 @@ registerAction2(class GitCommitAndDoneAction extends Action2 {
 				}
 			}
 		}
-		// Session NOT archived — the user continues working in the same session.
+		// Session NOT archived 鈥?the user continues working in the same session.
 	}
 });
 
