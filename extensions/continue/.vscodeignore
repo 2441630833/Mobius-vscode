@@ -16,6 +16,15 @@ node_modules/**
 !node_modules/@huggingface/**
 !node_modules/@img/
 !node_modules/@img/**
+# MiniLM embedding worker requires onnxruntime-node with its real napi-v3 layout.
+# These are copied into node_modules/ by scripts/prepackage.js; without them the
+# worker fails with `Cannot find module 'onnxruntime-node'` and indexing dies.
+!node_modules/onnxruntime-node/
+!node_modules/onnxruntime-node/**
+!node_modules/onnxruntime-web/
+!node_modules/onnxruntime-web/**
+!node_modules/onnxruntime-common/
+!node_modules/onnxruntime-common/**
 
 **/.pytest_cache
 **/__pycache__

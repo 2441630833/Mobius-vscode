@@ -102414,7 +102414,7 @@
       "format": "esm"
     },
     "../../core/llm/llms/TransformersJsEmbeddingsProvider.ts": {
-      "bytes": 11009,
+      "bytes": 11684,
       "imports": [
         {
           "path": "path",
@@ -173984,7 +173984,7 @@
           "bytesInOutput": 1795
         },
         "../../core/llm/llms/TransformersJsEmbeddingsProvider.ts": {
-          "bytesInOutput": 10744
+          "bytesInOutput": 11271
         },
         "../../core/promptFiles/getPromptFiles.ts": {
           "bytesInOutput": 1928
@@ -180116,7 +180116,7 @@
           "bytesInOutput": 79
         }
       },
-      "bytes": 56066719
+      "bytes": 56067246
     }
   }
 }

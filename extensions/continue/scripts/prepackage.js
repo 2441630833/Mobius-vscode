@@ -14,7 +14,11 @@ const { copySqlite } = require("./download-copy-sqlite");
 const { generateAndCopyConfigYamlSchema } = require("./generate-copy-config");
 const { installAndCopyNodeModules } = require("./install-copy-nodemodule");
 const { npmInstall } = require("./npm-install");
-const { writeBuildTimestamp, continueDir, downloadRipgrepBinary } = require("./utils");
+const {
+  writeBuildTimestamp,
+  continueDir,
+  downloadRipgrepBinary,
+} = require("./utils");
 
 // Clear folders that will be packaged to ensure clean slate
 rimrafSync(path.join(__dirname, "..", "bin"));
@@ -108,7 +112,9 @@ void (async () => {
     fs.mkdirSync(intellijExtensionWebviewPath, { recursive: true });
 
     const jetbrainsCopyStart = Date.now();
-    console.log(`[timer] Starting JetBrains copy at ${new Date().toISOString()}`);
+    console.log(
+      `[timer] Starting JetBrains copy at ${new Date().toISOString()}`,
+    );
     await new Promise((resolve, reject) => {
       ncp("dist", intellijExtensionWebviewPath, (error) => {
         if (error) {
@@ -202,7 +208,11 @@ void (async () => {
 
   // Full packages so the MiniLM worker can `require("onnxruntime-node")` with
   // the real napi-v3 layout (esbuild must not hash the .node binaries).
-  for (const pkg of ["onnxruntime-node", "onnxruntime-web", "onnxruntime-common"]) {
+  for (const pkg of [
+    "onnxruntime-node",
+    "onnxruntime-web",
+    "onnxruntime-common",
+  ]) {
     const from = path.join(__dirname, "../../../core/node_modules", pkg);
     const to = path.join(__dirname, "../node_modules", pkg);
     if (!fs.existsSync(from)) {
@@ -211,6 +221,25 @@ void (async () => {
     fs.mkdirSync(path.dirname(to), { recursive: true });
     fs.cpSync(from, to, { recursive: true, dereference: true });
   }
+
+  // The bundled onnxruntime-node carries binaries for every platform (~90MB).
+  // Keep only the target platform inside node_modules too, same as ../bin above.
+  try {
+    const pkgBin = path.join(
+      __dirname,
+      "../node_modules/onnxruntime-node/bin/napi-v3",
+    );
+    if (fs.existsSync(pkgBin)) {
+      for (const platform of ["darwin", "linux", "win32"]) {
+        if (!target.startsWith(platform)) {
+          rimrafSync(path.join(pkgBin, platform));
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("[info] Error trimming onnxruntime-node package binaries", e);
+  }
+
   if (target) {
     // If building for production, only need the binaries for current platform
     try {
@@ -281,6 +310,35 @@ void (async () => {
       path.join(__dirname, "..", "out", path.basename(f)),
     );
     console.log(`[info] Copied ${path.basename(f)}`);
+  }
+
+  // ORT wasm binaries for the in-process transformers.js fallback.
+  // The vendored @xenova/transformers sets `onnx_env.wasm.wasmPaths` to
+  // path.join(__dirname, "/dist/") -> <extension>/out/dist. Without these the
+  // wasm fallback aborts with ENOENT on ort-wasm-simd-threaded.wasm and the
+  // codebase indexer retries forever, wedging the extension host.
+  const ortDistDir = path.join(
+    __dirname,
+    "../../../core/node_modules/onnxruntime-web/dist",
+  );
+  if (fs.existsSync(ortDistDir)) {
+    const outDistDir = path.join(__dirname, "..", "out", "dist");
+    fs.mkdirSync(outDistDir, { recursive: true });
+    let copied = 0;
+    for (const file of fs.readdirSync(ortDistDir)) {
+      if (!/^ort-wasm.*\.(wasm|js)$/.test(file)) {
+        continue;
+      }
+      fs.copyFileSync(path.join(ortDistDir, file), path.join(outDistDir, file));
+      copied++;
+    }
+    console.log(
+      `[info] Copied ${copied} onnxruntime-web wasm files to out/dist`,
+    );
+  } else {
+    console.warn(
+      `[warn] onnxruntime-web dist not found at ${ortDistDir}; wasm embedding fallback will be unavailable`,
+    );
   }
 
   // tree-sitter tag query files
@@ -398,7 +456,15 @@ void (async () => {
   // Copy node_modules for pre-built binaries
   const NODE_MODULES_TO_COPY = ["@lancedb", "@vscode/ripgrep", "workerpool"];
 
-  const rgPath = path.join(__dirname, "..", "node_modules", "@vscode", "ripgrep", "bin", `rg${exe}`);
+  const rgPath = path.join(
+    __dirname,
+    "..",
+    "node_modules",
+    "@vscode",
+    "ripgrep",
+    "bin",
+    `rg${exe}`,
+  );
   if (!fs.existsSync(rgPath)) {
     console.log("[info] ripgrep binary missing, downloading...");
     await downloadRipgrepBinary(target);
@@ -482,6 +548,14 @@ void (async () => {
           ? "libonnxruntime.so.1.14.0"
           : "onnxruntime.dll"
     }`,
+
+    // MiniLM embedding worker: onnxruntime-node must ship with its napi-v3 layout
+    // (see .vscodeignore negations) or the worker cannot require("onnxruntime-node").
+    "node_modules/onnxruntime-node/package.json",
+    "node_modules/onnxruntime-common/package.json",
+    "node_modules/onnxruntime-web/package.json",
+    // wasm fallback for in-process transformers.js
+    "out/dist/ort-wasm-simd-threaded.wasm",
 
     // Code/styling for the sidebar
     "gui/assets/index.js",
