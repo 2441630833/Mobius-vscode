@@ -39083,7 +39083,7 @@
       "format": "cjs"
     },
     "../../core/util/treeSitter.ts": {
-      "bytes": 9179,
+      "bytes": 9335,
       "imports": [
         {
           "path": "node:fs",
@@ -49994,7 +49994,7 @@
       "format": "esm"
     },
     "../../core/indexing/chunk/code.ts": {
-      "bytes": 7636,
+      "bytes": 8027,
       "imports": [
         {
           "path": "web-tree-sitter",
@@ -50024,9 +50024,45 @@
       ],
       "format": "esm"
     },
-    "../../core/indexing/chunk/chunk.ts": {
-      "bytes": 2800,
+    "../../core/indexing/chunk/chunkWorkerClient.ts": {
+      "bytes": 4578,
       "imports": [
+        {
+          "path": "path",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "worker_threads",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "../../index.js",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "D:\\AI\\physical-ai-ide\\continue\\extensions\\vscode\\scripts\\importMetaUrl.js",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "fs",
+          "kind": "require-call",
+          "external": true
+        }
+      ],
+      "format": "esm"
+    },
+    "../../core/indexing/chunk/chunk.ts": {
+      "bytes": 3658,
+      "imports": [
+        {
+          "path": "worker_threads",
+          "kind": "import-statement",
+          "external": true
+        },
         {
           "path": "../../index.js",
           "kind": "import-statement",
@@ -50056,6 +50092,11 @@
           "path": "../../core/indexing/chunk/code.ts",
           "kind": "import-statement",
           "original": "./code.js"
+        },
+        {
+          "path": "../../core/indexing/chunk/chunkWorkerClient.ts",
+          "kind": "import-statement",
+          "original": "./chunkWorkerClient.js"
         },
         {
           "path": "D:\\AI\\physical-ai-ide\\continue\\extensions\\vscode\\scripts\\importMetaUrl.js",
@@ -102414,7 +102455,7 @@
       "format": "esm"
     },
     "../../core/llm/llms/TransformersJsEmbeddingsProvider.ts": {
-      "bytes": 11684,
+      "bytes": 11301,
       "imports": [
         {
           "path": "path",
@@ -158042,6 +158083,26 @@
           "external": true
         },
         {
+          "path": "worker_threads",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "fs",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "worker_threads",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "path",
+          "kind": "require-call",
+          "external": true
+        },
+        {
           "path": "stream",
           "kind": "require-call",
           "external": true
@@ -162752,10 +162813,10 @@
           "bytesInOutput": 1789
         },
         "../../core/node_modules/node-forge/lib/tls.js": {
-          "bytesInOutput": 69559
+          "bytesInOutput": 69594
         },
         "../../core/node_modules/node-forge/lib/aesCipherSuites.js": {
-          "bytesInOutput": 5291
+          "bytesInOutput": 5296
         },
         "../../core/node_modules/node-forge/lib/sha512.js": {
           "bytesInOutput": 13940
@@ -162806,7 +162867,7 @@
           "bytesInOutput": 3880
         },
         "../../core/node_modules/mac-ca/node_modules/undici/lib/core/util.js": {
-          "bytesInOutput": 18464
+          "bytesInOutput": 18466
         },
         "../../core/node_modules/mac-ca/node_modules/undici/lib/core/diagnostics.js": {
           "bytesInOutput": 6824
@@ -162869,10 +162930,10 @@
           "bytesInOutput": 11134
         },
         "../../core/node_modules/mac-ca/node_modules/undici/lib/dispatcher/client-h1.js": {
-          "bytesInOutput": 37502
+          "bytesInOutput": 37703
         },
         "../../core/node_modules/mac-ca/node_modules/undici/lib/dispatcher/client-h2.js": {
-          "bytesInOutput": 17797
+          "bytesInOutput": 17879
         },
         "../../core/node_modules/mac-ca/node_modules/undici/lib/handler/redirect-handler.js": {
           "bytesInOutput": 6252
@@ -162881,7 +162942,7 @@
           "bytesInOutput": 867
         },
         "../../core/node_modules/mac-ca/node_modules/undici/lib/dispatcher/client.js": {
-          "bytesInOutput": 18295
+          "bytesInOutput": 18403
         },
         "../../core/node_modules/mac-ca/node_modules/undici/lib/dispatcher/fixed-queue.js": {
           "bytesInOutput": 1504
@@ -162890,16 +162951,16 @@
           "bytesInOutput": 824
         },
         "../../core/node_modules/mac-ca/node_modules/undici/lib/dispatcher/pool-base.js": {
-          "bytesInOutput": 5280
+          "bytesInOutput": 5293
         },
         "../../core/node_modules/mac-ca/node_modules/undici/lib/dispatcher/pool.js": {
-          "bytesInOutput": 3178
+          "bytesInOutput": 3181
         },
         "../../core/node_modules/mac-ca/node_modules/undici/lib/dispatcher/balanced-pool.js": {
-          "bytesInOutput": 5712
+          "bytesInOutput": 5714
         },
         "../../core/node_modules/mac-ca/node_modules/undici/lib/dispatcher/agent.js": {
-          "bytesInOutput": 4299
+          "bytesInOutput": 4305
         },
         "../../core/node_modules/mac-ca/node_modules/undici/lib/dispatcher/proxy-agent.js": {
           "bytesInOutput": 8620
@@ -162965,7 +163026,7 @@
           "bytesInOutput": 1500
         },
         "../../core/node_modules/mac-ca/node_modules/undici/lib/mock/mock-agent.js": {
-          "bytesInOutput": 4846
+          "bytesInOutput": 4849
         },
         "../../core/node_modules/mac-ca/node_modules/undici/lib/global.js": {
           "bytesInOutput": 981
@@ -163055,7 +163116,7 @@
           "bytesInOutput": 2464
         },
         "../../core/node_modules/mac-ca/node_modules/undici/lib/web/websocket/connection.js": {
-          "bytesInOutput": 7316
+          "bytesInOutput": 7326
         },
         "../../core/node_modules/mac-ca/node_modules/undici/lib/web/websocket/permessage-deflate.js": {
           "bytesInOutput": 2991
@@ -163067,7 +163128,7 @@
           "bytesInOutput": 2409
         },
         "../../core/node_modules/mac-ca/node_modules/undici/lib/web/websocket/websocket.js": {
-          "bytesInOutput": 13831
+          "bytesInOutput": 13833
         },
         "../../core/node_modules/mac-ca/node_modules/undici/lib/web/eventsource/util.js": {
           "bytesInOutput": 757
@@ -164210,19 +164271,19 @@
           "bytesInOutput": 4076
         },
         "../../packages/openai-adapters/node_modules/openai/internal/utils/log.mjs": {
-          "bytesInOutput": 2476
+          "bytesInOutput": 2481
         },
         "../../packages/openai-adapters/node_modules/openai/core/streaming.mjs": {
-          "bytesInOutput": 8846
+          "bytesInOutput": 8854
         },
         "../../packages/openai-adapters/node_modules/openai/internal/parse.mjs": {
-          "bytesInOutput": 1743
+          "bytesInOutput": 1748
         },
         "../../packages/openai-adapters/node_modules/openai/core/api-promise.mjs": {
-          "bytesInOutput": 2795
+          "bytesInOutput": 2799
         },
         "../../packages/openai-adapters/node_modules/openai/core/pagination.mjs": {
-          "bytesInOutput": 4248
+          "bytesInOutput": 4258
         },
         "../../packages/openai-adapters/node_modules/openai/internal/uploads.mjs": {
           "bytesInOutput": 3955
@@ -164234,7 +164295,7 @@
           "bytesInOutput": 158
         },
         "../../packages/openai-adapters/node_modules/openai/core/resource.mjs": {
-          "bytesInOutput": 256
+          "bytesInOutput": 258
         },
         "../../packages/openai-adapters/node_modules/openai/internal/utils/path.mjs": {
           "bytesInOutput": 2665
@@ -164258,10 +164319,10 @@
           "bytesInOutput": 240
         },
         "../../packages/openai-adapters/node_modules/openai/lib/AbstractChatCompletionRunner.mjs": {
-          "bytesInOutput": 14009
+          "bytesInOutput": 14015
         },
         "../../packages/openai-adapters/node_modules/openai/lib/ChatCompletionRunner.mjs": {
-          "bytesInOutput": 915
+          "bytesInOutput": 917
         },
         "../../packages/openai-adapters/node_modules/openai/_vendor/partial-json-parser/parser.mjs": {
           "bytesInOutput": 7418
@@ -164270,10 +164331,10 @@
           "bytesInOutput": 159
         },
         "../../packages/openai-adapters/node_modules/openai/lib/ChatCompletionStream.mjs": {
-          "bytesInOutput": 23007
+          "bytesInOutput": 23011
         },
         "../../packages/openai-adapters/node_modules/openai/lib/ChatCompletionStreamingRunner.mjs": {
-          "bytesInOutput": 1000
+          "bytesInOutput": 1002
         },
         "../../packages/openai-adapters/node_modules/openai/resources/chat/completions/completions.mjs": {
           "bytesInOutput": 3791
@@ -164429,7 +164490,7 @@
           "bytesInOutput": 3396
         },
         "../../packages/openai-adapters/node_modules/openai/lib/responses/ResponseStream.mjs": {
-          "bytesInOutput": 11346
+          "bytesInOutput": 11351
         },
         "../../packages/openai-adapters/node_modules/openai/resources/responses/input-items.mjs": {
           "bytesInOutput": 800
@@ -164447,7 +164508,7 @@
           "bytesInOutput": 756
         },
         "../../packages/openai-adapters/node_modules/openai/resources/vector-stores/file-batches.mjs": {
-          "bytesInOutput": 5049
+          "bytesInOutput": 5051
         },
         "../../packages/openai-adapters/node_modules/openai/resources/vector-stores/files.mjs": {
           "bytesInOutput": 5611
@@ -164462,7 +164523,7 @@
           "bytesInOutput": 587
         },
         "../../packages/openai-adapters/node_modules/openai/client.mjs": {
-          "bytesInOutput": 23506
+          "bytesInOutput": 23508
         },
         "../../packages/openai-adapters/node_modules/openai/azure.mjs": {
           "bytesInOutput": 207
@@ -164537,7 +164598,7 @@
           "bytesInOutput": 375
         },
         "../../packages/openai-adapters/node_modules/@smithy/core/dist-es/pagination/createPaginator.js": {
-          "bytesInOutput": 1766
+          "bytesInOutput": 1768
         },
         "../../packages/openai-adapters/node_modules/@smithy/is-array-buffer/dist-cjs/index.js": {
           "bytesInOutput": 401
@@ -165107,7 +165168,7 @@
           "bytesInOutput": 5385
         },
         "../../packages/openai-adapters/node_modules/@aws-sdk/credential-provider-env/dist-cjs/index.js": {
-          "bytesInOutput": 1922
+          "bytesInOutput": 1924
         },
         "../../packages/openai-adapters/node_modules/@smithy/credential-provider-imds/dist-cjs/index.js": {
           "bytesInOutput": 15333
@@ -165203,7 +165264,7 @@
           "bytesInOutput": 2373
         },
         "../../packages/openai-adapters/node_modules/@aws-sdk/credential-provider-sso/node_modules/@aws-sdk/token-providers/dist-cjs/index.js": {
-          "bytesInOutput": 7801
+          "bytesInOutput": 7803
         },
         "../../packages/openai-adapters/node_modules/@aws-sdk/nested-clients/dist-es/submodules/sso/auth/httpAuthSchemeProvider.js": {
           "bytesInOutput": 1983
@@ -165260,7 +165321,7 @@
           "bytesInOutput": 385
         },
         "../../packages/openai-adapters/node_modules/@aws-sdk/credential-provider-sso/dist-cjs/index.js": {
-          "bytesInOutput": 8510
+          "bytesInOutput": 8513
         },
         "../../packages/openai-adapters/node_modules/@aws-sdk/nested-clients/dist-es/submodules/signin/auth/httpAuthSchemeProvider.js": {
           "bytesInOutput": 1991
@@ -165317,7 +165378,7 @@
           "bytesInOutput": 1629
         },
         "../../packages/openai-adapters/node_modules/@aws-sdk/credential-provider-login/dist-cjs/index.js": {
-          "bytesInOutput": 12365
+          "bytesInOutput": 12367
         },
         "../../packages/openai-adapters/node_modules/@aws-sdk/nested-clients/dist-es/submodules/sts/auth/httpAuthSchemeProvider.js": {
           "bytesInOutput": 2180
@@ -165380,7 +165441,7 @@
           "bytesInOutput": 2485
         },
         "../../packages/openai-adapters/node_modules/@aws-sdk/credential-provider-process/dist-cjs/index.js": {
-          "bytesInOutput": 3610
+          "bytesInOutput": 3612
         },
         "../../packages/openai-adapters/node_modules/@aws-sdk/credential-provider-web-identity/dist-cjs/fromWebToken.js": {
           "bytesInOutput": 3172
@@ -165392,7 +165453,7 @@
           "bytesInOutput": 1180
         },
         "../../packages/openai-adapters/node_modules/@aws-sdk/credential-provider-ini/dist-cjs/index.js": {
-          "bytesInOutput": 12057
+          "bytesInOutput": 12067
         },
         "../../packages/openai-adapters/node_modules/@aws-sdk/credential-provider-node/dist-cjs/index.js": {
           "bytesInOutput": 7055
@@ -165401,7 +165462,7 @@
           "bytesInOutput": 4375
         },
         "../../packages/openai-adapters/node_modules/@aws-sdk/token-providers/dist-cjs/index.js": {
-          "bytesInOutput": 7755
+          "bytesInOutput": 7757
         },
         "../../packages/openai-adapters/node_modules/@smithy/eventstream-serde-node/dist-cjs/index.js": {
           "bytesInOutput": 1923
@@ -165491,7 +165552,7 @@
           "bytesInOutput": 580
         },
         "../../packages/openai-adapters/node_modules/@aws-sdk/credential-provider-cognito-identity/dist-cjs/index.js": {
-          "bytesInOutput": 8514
+          "bytesInOutput": 8524
         },
         "../../packages/openai-adapters/node_modules/@aws-sdk/credential-providers/dist-cjs/fromCognitoIdentity.js": {
           "bytesInOutput": 593
@@ -165542,7 +165603,7 @@
           "bytesInOutput": 1474
         },
         "../../packages/openai-adapters/dist/apis/Bedrock.js": {
-          "bytesInOutput": 18558
+          "bytesInOutput": 18562
         },
         "../../packages/openai-adapters/dist/apis/Cohere.js": {
           "bytesInOutput": 5355
@@ -165719,7 +165780,7 @@
           "bytesInOutput": 10124
         },
         "../../packages/openai-adapters/node_modules/google-auth-library/build/src/auth/refreshclient.js": {
-          "bytesInOutput": 5525
+          "bytesInOutput": 5528
         },
         "../../packages/openai-adapters/node_modules/google-auth-library/build/src/auth/impersonated.js": {
           "bytesInOutput": 7963
@@ -165770,7 +165831,7 @@
           "bytesInOutput": 8229
         },
         "../../packages/openai-adapters/node_modules/google-auth-library/build/src/auth/googleauth.js": {
-          "bytesInOutput": 32684
+          "bytesInOutput": 32737
         },
         "../../packages/openai-adapters/node_modules/google-auth-library/build/src/auth/iam.js": {
           "bytesInOutput": 982
@@ -165827,7 +165888,7 @@
           "bytesInOutput": 763
         },
         "../../packages/openai-adapters/node_modules/@google/genai/dist/node/index.mjs": {
-          "bytesInOutput": 703824
+          "bytesInOutput": 703861
         },
         "../../packages/openai-adapters/dist/util/gemini-types.js": {
           "bytesInOutput": 6156
@@ -165866,7 +165927,7 @@
           "bytesInOutput": 3549
         },
         "../../packages/openai-adapters/dist/apis/VertexAI.js": {
-          "bytesInOutput": 14629
+          "bytesInOutput": 14631
         },
         "../../packages/openai-adapters/dist/apis/WatsonX.js": {
           "bytesInOutput": 7613
@@ -166901,7 +166962,7 @@
           "bytesInOutput": 8370
         },
         "../../core/node_modules/workerpool/src/index.js": {
-          "bytesInOutput": 881
+          "bytesInOutput": 897
         },
         "../../core/llm/asyncEncoder.ts": {
           "bytesInOutput": 1082
@@ -166952,7 +167013,7 @@
           "bytesInOutput": 115231
         },
         "../../core/util/treeSitter.ts": {
-          "bytesInOutput": 7751
+          "bytesInOutput": 7774
         },
         "../../core/autocomplete/context/ImportDefinitionsService.ts": {
           "bytesInOutput": 2787
@@ -168248,10 +168309,13 @@
           "bytesInOutput": 1005
         },
         "../../core/indexing/chunk/code.ts": {
-          "bytesInOutput": 6392
+          "bytesInOutput": 6473
+        },
+        "../../core/indexing/chunk/chunkWorkerClient.ts": {
+          "bytesInOutput": 3799
         },
         "../../core/indexing/chunk/chunk.ts": {
-          "bytesInOutput": 1794
+          "bytesInOutput": 2305
         },
         "../../core/indexing/chunk/ChunkCodebaseIndex.ts": {
           "bytesInOutput": 7448
@@ -168908,7 +168972,7 @@
           "bytesInOutput": 1604
         },
         "../../core/node_modules/vectordb/dist/remote/index.js": {
-          "bytesInOutput": 14194
+          "bytesInOutput": 14196
         },
         "../../core/node_modules/openai/internal/tslib.js": {
           "bytesInOutput": 3340
@@ -168959,19 +169023,19 @@
           "bytesInOutput": 4711
         },
         "../../core/node_modules/openai/internal/utils/log.js": {
-          "bytesInOutput": 2869
+          "bytesInOutput": 2874
         },
         "../../core/node_modules/openai/core/streaming.js": {
-          "bytesInOutput": 9606
+          "bytesInOutput": 9614
         },
         "../../core/node_modules/openai/internal/parse.js": {
-          "bytesInOutput": 2186
+          "bytesInOutput": 2191
         },
         "../../core/node_modules/openai/core/api-promise.js": {
-          "bytesInOutput": 3031
+          "bytesInOutput": 3035
         },
         "../../core/node_modules/openai/core/pagination.js": {
-          "bytesInOutput": 4812
+          "bytesInOutput": 4822
         },
         "../../core/node_modules/openai/internal/uploads.js": {
           "bytesInOutput": 5450
@@ -168983,7 +169047,7 @@
           "bytesInOutput": 413
         },
         "../../core/node_modules/openai/core/resource.js": {
-          "bytesInOutput": 401
+          "bytesInOutput": 403
         },
         "../../core/node_modules/openai/internal/utils/path.js": {
           "bytesInOutput": 2930
@@ -169007,10 +169071,10 @@
           "bytesInOutput": 651
         },
         "../../core/node_modules/openai/lib/AbstractChatCompletionRunner.js": {
-          "bytesInOutput": 14751
+          "bytesInOutput": 14757
         },
         "../../core/node_modules/openai/lib/ChatCompletionRunner.js": {
-          "bytesInOutput": 1207
+          "bytesInOutput": 1209
         },
         "../../core/node_modules/openai/_vendor/partial-json-parser/parser.js": {
           "bytesInOutput": 7826
@@ -169019,10 +169083,10 @@
           "bytesInOutput": 310
         },
         "../../core/node_modules/openai/lib/ChatCompletionStream.js": {
-          "bytesInOutput": 24392
+          "bytesInOutput": 24396
         },
         "../../core/node_modules/openai/lib/ChatCompletionStreamingRunner.js": {
-          "bytesInOutput": 1236
+          "bytesInOutput": 1238
         },
         "../../core/node_modules/openai/resources/chat/completions/completions.js": {
           "bytesInOutput": 5357
@@ -169178,7 +169242,7 @@
           "bytesInOutput": 5659
         },
         "../../core/node_modules/openai/lib/responses/ResponseStream.js": {
-          "bytesInOutput": 11982
+          "bytesInOutput": 11987
         },
         "../../core/node_modules/openai/resources/responses/input-items.js": {
           "bytesInOutput": 1036
@@ -169196,7 +169260,7 @@
           "bytesInOutput": 917
         },
         "../../core/node_modules/openai/resources/vector-stores/file-batches.js": {
-          "bytesInOutput": 5472
+          "bytesInOutput": 5474
         },
         "../../core/node_modules/openai/resources/vector-stores/files.js": {
           "bytesInOutput": 6057
@@ -169211,7 +169275,7 @@
           "bytesInOutput": 4030
         },
         "../../core/node_modules/openai/client.js": {
-          "bytesInOutput": 25668
+          "bytesInOutput": 25670
         },
         "../../core/node_modules/openai/azure.js": {
           "bytesInOutput": 5466
@@ -171053,13 +171117,13 @@
           "bytesInOutput": 8946
         },
         "../../core/node_modules/jsdom/lib/jsdom/living/xhr/xhr-utils.js": {
-          "bytesInOutput": 14607
+          "bytesInOutput": 14627
         },
         "../../core/node_modules/jsdom/lib/jsdom/living/helpers/json.js": {
           "bytesInOutput": 414
         },
         "../../core/node_modules/jsdom/lib/jsdom/living/xhr/XMLHttpRequest-impl.js": {
-          "bytesInOutput": 34161
+          "bytesInOutput": 34203
         },
         "../../core/node_modules/jsdom/lib/jsdom/living/generated/XMLHttpRequest.js": {
           "bytesInOutput": 23907
@@ -171455,7 +171519,7 @@
           "bytesInOutput": 1338
         },
         "../../core/tools/callTool.ts": {
-          "bytesInOutput": 7436
+          "bytesInOutput": 7441
         },
         "../../core/tools/mcpToolName.ts": {
           "bytesInOutput": 515
@@ -171578,7 +171642,7 @@
           "bytesInOutput": 1373
         },
         "../../core/node_modules/@smithy/core/dist-es/submodules/client/util-waiter/poller.js": {
-          "bytesInOutput": 4018
+          "bytesInOutput": 4031
         },
         "../../core/node_modules/@smithy/core/dist-es/submodules/client/util-waiter/utils/validate.js": {
           "bytesInOutput": 1069
@@ -172415,7 +172479,7 @@
           "bytesInOutput": 358
         },
         "../../core/node_modules/@smithy/core/dist-es/legacy-root-exports/pagination/createPaginator.js": {
-          "bytesInOutput": 1774
+          "bytesInOutput": 1776
         },
         "../../core/node_modules/@smithy/core/dist-es/setFeature.js": {
           "bytesInOutput": 437
@@ -172586,7 +172650,7 @@
           "bytesInOutput": 1180
         },
         "../../core/node_modules/@smithy/signature-v4/dist-cjs/index.js": {
-          "bytesInOutput": 23988
+          "bytesInOutput": 23991
         },
         "../../core/node_modules/@aws-sdk/core/dist-es/submodules/httpAuthSchemes/aws_sdk/resolveAwsSdkSigV4Config.js": {
           "bytesInOutput": 5842
@@ -172604,7 +172668,7 @@
           "bytesInOutput": 3734
         },
         "../../core/node_modules/@aws-sdk/credential-provider-env/dist-cjs/index.js": {
-          "bytesInOutput": 1911
+          "bytesInOutput": 1913
         },
         "../../core/node_modules/@smithy/credential-provider-imds/dist-cjs/index.js": {
           "bytesInOutput": 15451
@@ -172802,7 +172866,7 @@
           "bytesInOutput": 2352
         },
         "../../core/node_modules/@aws-sdk/token-providers/dist-cjs/index.js": {
-          "bytesInOutput": 7529
+          "bytesInOutput": 7531
         },
         "../../core/node_modules/@aws-sdk/nested-clients/dist-es/submodules/sso/auth/httpAuthSchemeProvider.js": {
           "bytesInOutput": 1828
@@ -172859,7 +172923,7 @@
           "bytesInOutput": 368
         },
         "../../core/node_modules/@aws-sdk/credential-provider-sso/dist-cjs/index.js": {
-          "bytesInOutput": 8310
+          "bytesInOutput": 8313
         },
         "../../core/node_modules/@aws-sdk/nested-clients/dist-es/submodules/signin/auth/httpAuthSchemeProvider.js": {
           "bytesInOutput": 1836
@@ -172916,7 +172980,7 @@
           "bytesInOutput": 1587
         },
         "../../core/node_modules/@aws-sdk/credential-provider-login/dist-cjs/index.js": {
-          "bytesInOutput": 12233
+          "bytesInOutput": 12235
         },
         "../../core/node_modules/@aws-sdk/signature-v4-multi-region/dist-cjs/index.js": {
           "bytesInOutput": 7624
@@ -172982,7 +173046,7 @@
           "bytesInOutput": 2508
         },
         "../../core/node_modules/@aws-sdk/credential-provider-process/dist-cjs/index.js": {
-          "bytesInOutput": 3493
+          "bytesInOutput": 3495
         },
         "../../core/node_modules/@aws-sdk/credential-provider-web-identity/dist-cjs/fromWebToken.js": {
           "bytesInOutput": 1552
@@ -172994,7 +173058,7 @@
           "bytesInOutput": 1162
         },
         "../../core/node_modules/@aws-sdk/credential-provider-ini/dist-cjs/index.js": {
-          "bytesInOutput": 11924
+          "bytesInOutput": 11934
         },
         "../../core/node_modules/@aws-sdk/credential-provider-node/dist-cjs/index.js": {
           "bytesInOutput": 7226
@@ -173024,7 +173088,7 @@
           "bytesInOutput": 5040
         },
         "../../core/node_modules/@aws-sdk/client-bedrock-runtime/dist-cjs/index.js": {
-          "bytesInOutput": 22258
+          "bytesInOutput": 22275
         },
         "../../core/node_modules/@aws-sdk/credential-providers/dist-cjs/createCredentialChain.js": {
           "bytesInOutput": 1988
@@ -173087,7 +173151,7 @@
           "bytesInOutput": 563
         },
         "../../core/node_modules/@aws-sdk/credential-provider-cognito-identity/dist-cjs/index.js": {
-          "bytesInOutput": 8477
+          "bytesInOutput": 8487
         },
         "../../core/node_modules/@aws-sdk/credential-providers/dist-cjs/fromCognitoIdentity.js": {
           "bytesInOutput": 574
@@ -173141,10 +173205,10 @@
           "bytesInOutput": 293
         },
         "../../core/llm/llms/Bedrock.ts": {
-          "bytesInOutput": 22228
+          "bytesInOutput": 22235
         },
         "../../core/llm/llms/BedrockImport.ts": {
-          "bytesInOutput": 3082
+          "bytesInOutput": 3084
         },
         "../../core/llm/llms/Cerebras.ts": {
           "bytesInOutput": 2289
@@ -173561,7 +173625,7 @@
           "bytesInOutput": 3798
         },
         "../../core/node_modules/@aws-sdk/client-sagemaker-runtime/dist-cjs/index.js": {
-          "bytesInOutput": 8840
+          "bytesInOutput": 8850
         },
         "../../core/node_modules/jinja-js/lib/jinja.js": {
           "bytesInOutput": 17474
@@ -173570,7 +173634,7 @@
           "bytesInOutput": 174
         },
         "../../core/llm/llms/SageMaker.ts": {
-          "bytesInOutput": 9275
+          "bytesInOutput": 9281
         },
         "../../core/llm/llms/SambaNova.ts": {
           "bytesInOutput": 1059
@@ -173807,7 +173871,7 @@
           "bytesInOutput": 10110
         },
         "../../core/node_modules/google-auth-library/build/src/auth/refreshclient.js": {
-          "bytesInOutput": 5508
+          "bytesInOutput": 5511
         },
         "../../core/node_modules/google-auth-library/build/src/auth/impersonated.js": {
           "bytesInOutput": 7946
@@ -173861,7 +173925,7 @@
           "bytesInOutput": 11421
         },
         "../../core/node_modules/google-auth-library/build/src/auth/googleauth.js": {
-          "bytesInOutput": 33495
+          "bytesInOutput": 33555
         },
         "../../core/node_modules/google-auth-library/build/src/auth/iam.js": {
           "bytesInOutput": 963
@@ -173876,7 +173940,7 @@
           "bytesInOutput": 7463
         },
         "../../core/llm/llms/VertexAI.ts": {
-          "bytesInOutput": 15972
+          "bytesInOutput": 15976
         },
         "../../core/llm/llms/Vllm.ts": {
           "bytesInOutput": 2290
@@ -173984,7 +174048,7 @@
           "bytesInOutput": 1795
         },
         "../../core/llm/llms/TransformersJsEmbeddingsProvider.ts": {
-          "bytesInOutput": 11271
+          "bytesInOutput": 11274
         },
         "../../core/promptFiles/getPromptFiles.ts": {
           "bytesInOutput": 1928
@@ -174116,13 +174180,13 @@
           "bytesInOutput": 636
         },
         "../../core/node_modules/pg/lib/client.js": {
-          "bytesInOutput": 23388
+          "bytesInOutput": 23395
         },
         "../../core/node_modules/pg-pool/index.js": {
-          "bytesInOutput": 15095
+          "bytesInOutput": 15177
         },
         "../../core/node_modules/pg/lib/native/query.js": {
-          "bytesInOutput": 4941
+          "bytesInOutput": 4953
         },
         "../../core/node_modules/pg/lib/native/client.js": {
           "bytesInOutput": 8633
@@ -174140,7 +174204,7 @@
           "bytesInOutput": 765
         },
         "../../core/node_modules/dbinfoz/src/adapters/PostgresAdapter.js": {
-          "bytesInOutput": 2291
+          "bytesInOutput": 2303
         },
         "../../core/node_modules/sql-escaper/lib/index.js": {
           "bytesInOutput": 14135
@@ -174854,7 +174918,7 @@
           "bytesInOutput": 425
         },
         "../../core/node_modules/@azure/msal-node/lib/msal-node.cjs": {
-          "bytesInOutput": 453894
+          "bytesInOutput": 453896
         },
         "../../core/node_modules/@typespec/ts-http-runtime/dist/commonjs/util/random.js": {
           "bytesInOutput": 1462
@@ -175055,7 +175119,7 @@
           "bytesInOutput": 9619
         },
         "../../core/node_modules/@typespec/ts-http-runtime/dist/commonjs/client/getClient.js": {
-          "bytesInOutput": 6380
+          "bytesInOutput": 6383
         },
         "../../core/node_modules/@typespec/ts-http-runtime/dist/commonjs/client/operationOptionHelpers.js": {
           "bytesInOutput": 1913
@@ -175148,7 +175212,7 @@
           "bytesInOutput": 4010
         },
         "../../core/node_modules/@azure/core-rest-pipeline/dist/commonjs/defaultHttpClient.js": {
-          "bytesInOutput": 1927
+          "bytesInOutput": 1929
         },
         "../../core/node_modules/@azure/core-rest-pipeline/dist/commonjs/httpHeaders.js": {
           "bytesInOutput": 1427
@@ -175976,10 +176040,10 @@
           "bytesInOutput": 3915
         },
         "../../core/node_modules/undici/lib/core/util.js": {
-          "bytesInOutput": 22944
+          "bytesInOutput": 22946
         },
         "../../core/node_modules/undici/lib/util/stats.js": {
-          "bytesInOutput": 865
+          "bytesInOutput": 870
         },
         "../../core/node_modules/undici/lib/core/diagnostics.js": {
           "bytesInOutput": 7299
@@ -176051,28 +176115,28 @@
           "bytesInOutput": 10326
         },
         "../../core/node_modules/undici/lib/dispatcher/client-h1.js": {
-          "bytesInOutput": 40731
+          "bytesInOutput": 40951
         },
         "../../core/node_modules/undici/lib/dispatcher/client-h2.js": {
-          "bytesInOutput": 25564
+          "bytesInOutput": 25672
         },
         "../../core/node_modules/undici/lib/dispatcher/client.js": {
-          "bytesInOutput": 19697
+          "bytesInOutput": 19813
         },
         "../../core/node_modules/undici/lib/dispatcher/fixed-queue.js": {
           "bytesInOutput": 1861
         },
         "../../core/node_modules/undici/lib/dispatcher/pool-base.js": {
-          "bytesInOutput": 5819
+          "bytesInOutput": 5835
         },
         "../../core/node_modules/undici/lib/dispatcher/pool.js": {
-          "bytesInOutput": 3565
+          "bytesInOutput": 3571
         },
         "../../core/node_modules/undici/lib/dispatcher/balanced-pool.js": {
-          "bytesInOutput": 5874
+          "bytesInOutput": 5876
         },
         "../../core/node_modules/undici/lib/dispatcher/round-robin-pool.js": {
-          "bytesInOutput": 4106
+          "bytesInOutput": 4112
         },
         "../../core/node_modules/undici/lib/dispatcher/agent.js": {
           "bytesInOutput": 5437
@@ -176264,7 +176328,7 @@
           "bytesInOutput": 3554
         },
         "../../core/node_modules/undici/lib/web/websocket/connection.js": {
-          "bytesInOutput": 7238
+          "bytesInOutput": 7248
         },
         "../../core/node_modules/undici/lib/web/websocket/permessage-deflate.js": {
           "bytesInOutput": 3327
@@ -176276,13 +176340,13 @@
           "bytesInOutput": 2630
         },
         "../../core/node_modules/undici/lib/web/websocket/websocket.js": {
-          "bytesInOutput": 17378
+          "bytesInOutput": 17380
         },
         "../../core/node_modules/undici/lib/web/websocket/stream/websocketerror.js": {
           "bytesInOutput": 2693
         },
         "../../core/node_modules/undici/lib/web/websocket/stream/websocketstream.js": {
-          "bytesInOutput": 12662
+          "bytesInOutput": 12664
         },
         "../../core/node_modules/undici/lib/web/eventsource/util.js": {
           "bytesInOutput": 592
@@ -176339,7 +176403,7 @@
           "bytesInOutput": 854
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/common/util.js": {
-          "bytesInOutput": 11256
+          "bytesInOutput": 11259
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/api/Browser.js": {
           "bytesInOutput": 5267
@@ -176489,13 +176553,13 @@
           "bytesInOutput": 7284
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/Coverage.js": {
-          "bytesInOutput": 11995
+          "bytesInOutput": 12009
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/Dialog.js": {
-          "bytesInOutput": 798
+          "bytesInOutput": 800
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/EmulationManager.js": {
-          "bytesInOutput": 22357
+          "bytesInOutput": 22392
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/FirefoxTargetManager.js": {
           "bytesInOutput": 6300
@@ -176504,19 +176568,19 @@
           "bytesInOutput": 1305
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/DeviceRequestPrompt.js": {
-          "bytesInOutput": 6920
+          "bytesInOutput": 6924
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/utils.js": {
           "bytesInOutput": 6228
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/JSHandle.js": {
-          "bytesInOutput": 2955
+          "bytesInOutput": 2957
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/ElementHandle.js": {
           "bytesInOutput": 9293
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/ExecutionContext.js": {
-          "bytesInOutput": 17756
+          "bytesInOutput": 17758
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/FrameManagerEvents.js": {
           "bytesInOutput": 1164
@@ -176531,13 +176595,13 @@
           "bytesInOutput": 6942
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/Frame.js": {
-          "bytesInOutput": 16584
+          "bytesInOutput": 16590
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/FrameTree.js": {
           "bytesInOutput": 2838
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/HTTPRequest.js": {
-          "bytesInOutput": 5826
+          "bytesInOutput": 5828
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/common/SecurityDetails.js": {
           "bytesInOutput": 1989
@@ -176549,31 +176613,31 @@
           "bytesInOutput": 6734
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/NetworkManager.js": {
-          "bytesInOutput": 19290
+          "bytesInOutput": 19353
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/FrameManager.js": {
-          "bytesInOutput": 16787
+          "bytesInOutput": 16811
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/common/USKeyboardLayout.js": {
           "bytesInOutput": 17637
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/Input.js": {
-          "bytesInOutput": 15611
+          "bytesInOutput": 15628
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/Tracing.js": {
-          "bytesInOutput": 3446
+          "bytesInOutput": 3450
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/WebWorker.js": {
-          "bytesInOutput": 2748
+          "bytesInOutput": 2751
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/Page.js": {
-          "bytesInOutput": 37042
+          "bytesInOutput": 37054
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/BrowserContext.js": {
           "bytesInOutput": 6581
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/Target.js": {
-          "bytesInOutput": 8178
+          "bytesInOutput": 8184
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/ChromeTargetManager.js": {
           "bytesInOutput": 12583
@@ -176642,7 +176706,7 @@
           "bytesInOutput": 3673
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/chromium-bidi/lib/cjs/bidiMapper/modules/cdp/CdpProcessor.js": {
-          "bytesInOutput": 1824
+          "bytesInOutput": 1826
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/chromium-bidi/lib/cjs/bidiMapper/modules/context/BrowsingContextProcessor.js": {
           "bytesInOutput": 8411
@@ -176807,7 +176871,7 @@
           "bytesInOutput": 4534
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/bidi/BidiOverCdp.js": {
-          "bytesInOutput": 5685
+          "bytesInOutput": 5687
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/bidi/core/Navigation.js": {
           "bytesInOutput": 7567
@@ -176837,7 +176901,7 @@
           "bytesInOutput": 2087
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/bidi/ElementHandle.js": {
-          "bytesInOutput": 10018
+          "bytesInOutput": 10021
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/bidi/ExposedFunction.js": {
           "bytesInOutput": 10993
@@ -177107,7 +177171,7 @@
           "bytesInOutput": 1708
         },
         "../../core/node_modules/socks/build/client/socksclient.js": {
-          "bytesInOutput": 29267
+          "bytesInOutput": 29273
         },
         "../../core/node_modules/socks/build/index.js": {
           "bytesInOutput": 1062
@@ -177176,7 +177240,7 @@
           "bytesInOutput": 1692
         },
         "../../core/node_modules/get-uri/dist/ftp.js": {
-          "bytesInOutput": 2728
+          "bytesInOutput": 2735
         },
         "../../core/node_modules/get-uri/dist/http-error.js": {
           "bytesInOutput": 564
@@ -177626,7 +177690,7 @@
           "bytesInOutput": 9656
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/node/ScreenRecorder.js": {
-          "bytesInOutput": 10983
+          "bytesInOutput": 10995
         },
         "../../core/node_modules/puppeteer-chromium-resolver/node_modules/puppeteer-core/lib/cjs/puppeteer/node/node.js": {
           "bytesInOutput": 1407
@@ -178076,7 +178140,7 @@
           "bytesInOutput": 10493
         },
         "../../core/config/profile/doLoadConfig.ts": {
-          "bytesInOutput": 9058
+          "bytesInOutput": 9067
         },
         "../../core/config/profile/LocalProfileLoader.ts": {
           "bytesInOutput": 1901
@@ -180116,7 +180180,7 @@
           "bytesInOutput": 79
         }
       },
-      "bytes": 56067246
+      "bytes": 56073532
     }
   }
 }

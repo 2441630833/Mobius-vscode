@@ -54,10 +54,7 @@ const esbuildConfig = {
 const workerEsbuildConfig = {
   ...esbuildConfig,
   entryPoints: [
-    path.join(
-      __dirname,
-      "../../../core/llm/llms/transformersJsEmbedWorker.ts",
-    ),
+    path.join(__dirname, "../../../core/llm/llms/transformersJsEmbedWorker.ts"),
   ],
   outfile: "out/transformersJsEmbedWorker.js",
   metafile: false,
@@ -81,10 +78,15 @@ const glmOcrWorkerEsbuildConfig = {
     ),
   ],
   outfile: "out/transformersJsGlmOcrWorker.js",
-  external: [
-    ...workerEsbuildConfig.external,
-    "@huggingface/transformers",
+  external: [...workerEsbuildConfig.external, "@huggingface/transformers"],
+};
+
+const chunkWorkerEsbuildConfig = {
+  ...workerEsbuildConfig,
+  entryPoints: [
+    path.join(__dirname, "../../../core/indexing/chunk/chunkWorker.ts"),
   ],
+  outfile: "out/chunkWorker.js",
 };
 
 void (async () => {
@@ -95,17 +97,29 @@ void (async () => {
     const ctx = await esbuild.context(esbuildConfig);
     const workerCtx = await esbuild.context(workerEsbuildConfig);
     const glmOcrCtx = await esbuild.context(glmOcrWorkerEsbuildConfig);
-    await Promise.all([ctx.watch(), workerCtx.watch(), glmOcrCtx.watch()]);
+    const chunkWorkerCtx = await esbuild.context(chunkWorkerEsbuildConfig);
+    await Promise.all([
+      ctx.watch(),
+      workerCtx.watch(),
+      glmOcrCtx.watch(),
+      chunkWorkerCtx.watch(),
+    ]);
   } else if (flags.includes("--notify")) {
     const inFile = esbuildConfig.entryPoints[0];
     const outFile = esbuildConfig.outfile;
     const workerOut = workerEsbuildConfig.outfile;
     const glmOcrOut = glmOcrWorkerEsbuildConfig.outfile;
+    const chunkWorkerOut = chunkWorkerEsbuildConfig.outfile;
 
     // The watcher automatically notices changes to source files
     // so the only thing it needs to be notified about is if the
     // output file gets removed.
-    if (fs.existsSync(outFile) && fs.existsSync(workerOut) && fs.existsSync(glmOcrOut)) {
+    if (
+      fs.existsSync(outFile) &&
+      fs.existsSync(workerOut) &&
+      fs.existsSync(glmOcrOut) &&
+      fs.existsSync(chunkWorkerOut)
+    ) {
       console.log("VS Code Extension esbuild up to date");
       return;
     }
@@ -124,6 +138,9 @@ void (async () => {
     await esbuild.build(esbuildConfig);
     await esbuild.build(workerEsbuildConfig);
     await esbuild.build(glmOcrWorkerEsbuildConfig);
-    console.log("VS Code Extension MiniLM + GLM-OCR worker esbuild complete");
+    await esbuild.build(chunkWorkerEsbuildConfig);
+    console.log(
+      "VS Code Extension MiniLM + GLM-OCR + chunk worker esbuild complete",
+    );
   }
 })();
