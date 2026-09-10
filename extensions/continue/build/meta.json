@@ -39082,8 +39082,34 @@
       ],
       "format": "cjs"
     },
+    "../../core/indexing/chunk/chunkWorkerClient.ts": {
+      "bytes": 6466,
+      "imports": [
+        {
+          "path": "path",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "worker_threads",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "D:\\AI\\physical-ai-ide\\continue\\extensions\\vscode\\scripts\\importMetaUrl.js",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "fs",
+          "kind": "require-call",
+          "external": true
+        }
+      ],
+      "format": "esm"
+    },
     "../../core/util/treeSitter.ts": {
-      "bytes": 9335,
+      "bytes": 13687,
       "imports": [
         {
           "path": "node:fs",
@@ -39096,6 +39122,11 @@
           "external": true
         },
         {
+          "path": "worker_threads",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
           "path": "../../core/node_modules/web-tree-sitter/tree-sitter.js",
           "kind": "import-statement",
           "original": "web-tree-sitter"
@@ -39104,6 +39135,11 @@
           "path": "..",
           "kind": "import-statement",
           "external": true
+        },
+        {
+          "path": "../../core/indexing/chunk/chunkWorkerClient.ts",
+          "kind": "import-statement",
+          "original": "../indexing/chunk/chunkWorkerClient.js"
         },
         {
           "path": "../../core/util/uri.ts",
@@ -39119,7 +39155,7 @@
       "format": "esm"
     },
     "../../core/autocomplete/context/ImportDefinitionsService.ts": {
-      "bytes": 2969,
+      "bytes": 3240,
       "imports": [
         {
           "path": "../..",
@@ -47605,10 +47641,10 @@
       "format": "esm"
     },
     "../../core/indexing/CodeSnippetsIndex.ts": {
-      "bytes": 12923,
+      "bytes": 11230,
       "imports": [
         {
-          "path": "web-tree-sitter",
+          "path": "worker_threads",
           "kind": "import-statement",
           "external": true
         },
@@ -47621,6 +47657,11 @@
           "path": "../../core/util/treeSitter.ts",
           "kind": "import-statement",
           "original": "../util/treeSitter"
+        },
+        {
+          "path": "../../core/indexing/chunk/chunkWorkerClient.ts",
+          "kind": "import-statement",
+          "original": "./chunk/chunkWorkerClient"
         },
         {
           "path": "../../core/indexing/refreshIndex.ts",
@@ -49994,7 +50035,7 @@
       "format": "esm"
     },
     "../../core/indexing/chunk/code.ts": {
-      "bytes": 8027,
+      "bytes": 7775,
       "imports": [
         {
           "path": "web-tree-sitter",
@@ -50024,39 +50065,8 @@
       ],
       "format": "esm"
     },
-    "../../core/indexing/chunk/chunkWorkerClient.ts": {
-      "bytes": 4578,
-      "imports": [
-        {
-          "path": "path",
-          "kind": "import-statement",
-          "external": true
-        },
-        {
-          "path": "worker_threads",
-          "kind": "import-statement",
-          "external": true
-        },
-        {
-          "path": "../../index.js",
-          "kind": "import-statement",
-          "external": true
-        },
-        {
-          "path": "D:\\AI\\physical-ai-ide\\continue\\extensions\\vscode\\scripts\\importMetaUrl.js",
-          "kind": "import-statement",
-          "external": true
-        },
-        {
-          "path": "fs",
-          "kind": "require-call",
-          "external": true
-        }
-      ],
-      "format": "esm"
-    },
     "../../core/indexing/chunk/chunk.ts": {
-      "bytes": 3658,
+      "bytes": 3533,
       "imports": [
         {
           "path": "worker_threads",
@@ -157893,12 +157903,32 @@
           "external": true
         },
         {
+          "path": "path",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "worker_threads",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "fs",
+          "kind": "require-call",
+          "external": true
+        },
+        {
           "path": "node:fs",
           "kind": "require-call",
           "external": true
         },
         {
           "path": "path",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "worker_threads",
           "kind": "require-call",
           "external": true
         },
@@ -158073,22 +158103,12 @@
           "external": true
         },
         {
-          "path": "node:fs",
-          "kind": "require-call",
-          "external": true
-        },
-        {
-          "path": "path",
-          "kind": "require-call",
-          "external": true
-        },
-        {
           "path": "worker_threads",
           "kind": "require-call",
           "external": true
         },
         {
-          "path": "fs",
+          "path": "node:fs",
           "kind": "require-call",
           "external": true
         },
@@ -167012,11 +167032,14 @@
         "../../core/node_modules/web-tree-sitter/tree-sitter.js": {
           "bytesInOutput": 115231
         },
+        "../../core/indexing/chunk/chunkWorkerClient.ts": {
+          "bytesInOutput": 4670
+        },
         "../../core/util/treeSitter.ts": {
-          "bytesInOutput": 7774
+          "bytesInOutput": 10364
         },
         "../../core/autocomplete/context/ImportDefinitionsService.ts": {
-          "bytesInOutput": 2787
+          "bytesInOutput": 2868
         },
         "../../core/autocomplete/context/ranking/index.ts": {
           "bytesInOutput": 371
@@ -167934,7 +167957,7 @@
           "bytesInOutput": 905
         },
         "../../core/indexing/CodeSnippetsIndex.ts": {
-          "bytesInOutput": 11359
+          "bytesInOutput": 10009
         },
         "../../core/util/generateRepoMap.ts": {
           "bytesInOutput": 5136
@@ -168309,10 +168332,7 @@
           "bytesInOutput": 1005
         },
         "../../core/indexing/chunk/code.ts": {
-          "bytesInOutput": 6473
-        },
-        "../../core/indexing/chunk/chunkWorkerClient.ts": {
-          "bytesInOutput": 3799
+          "bytesInOutput": 6489
         },
         "../../core/indexing/chunk/chunk.ts": {
           "bytesInOutput": 2305
@@ -180180,7 +180200,7 @@
           "bytesInOutput": 79
         }
       },
-      "bytes": 56073532
+      "bytes": 56075740
     }
   }
 }
