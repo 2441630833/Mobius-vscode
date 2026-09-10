@@ -39109,7 +39109,7 @@
       "format": "esm"
     },
     "../../core/util/treeSitter.ts": {
-      "bytes": 13687,
+      "bytes": 13692,
       "imports": [
         {
           "path": "node:fs",
@@ -39155,7 +39155,7 @@
       "format": "esm"
     },
     "../../core/autocomplete/context/ImportDefinitionsService.ts": {
-      "bytes": 3240,
+      "bytes": 3077,
       "imports": [
         {
           "path": "../..",
@@ -46853,7 +46853,7 @@
       "format": "esm"
     },
     "../../core/edit/searchAndReplace/findSearchMatch.ts": {
-      "bytes": 12077,
+      "bytes": 14025,
       "imports": [
         {
           "path": "D:\\AI\\physical-ai-ide\\continue\\extensions\\vscode\\scripts\\importMetaUrl.js",
@@ -46864,7 +46864,7 @@
       "format": "esm"
     },
     "../../core/edit/searchAndReplace/performReplace.ts": {
-      "bytes": 4848,
+      "bytes": 6099,
       "imports": [
         {
           "path": "../../tools/definitions/multiEdit",
@@ -47641,7 +47641,7 @@
       "format": "esm"
     },
     "../../core/indexing/CodeSnippetsIndex.ts": {
-      "bytes": 11230,
+      "bytes": 10853,
       "imports": [
         {
           "path": "worker_threads",
@@ -167039,7 +167039,7 @@
           "bytesInOutput": 10364
         },
         "../../core/autocomplete/context/ImportDefinitionsService.ts": {
-          "bytesInOutput": 2868
+          "bytesInOutput": 2810
         },
         "../../core/autocomplete/context/ranking/index.ts": {
           "bytesInOutput": 371
@@ -167873,10 +167873,10 @@
           "bytesInOutput": 1385
         },
         "../../core/edit/searchAndReplace/findSearchMatch.ts": {
-          "bytesInOutput": 4027
+          "bytesInOutput": 5164
         },
         "../../core/edit/searchAndReplace/performReplace.ts": {
-          "bytesInOutput": 3516
+          "bytesInOutput": 4245
         },
         "../../core/edit/searchAndReplace/validateArgs.ts": {
           "bytesInOutput": 744
@@ -180200,7 +180200,7 @@
           "bytesInOutput": 79
         }
       },
-      "bytes": 56075740
+      "bytes": 56077548
     }
   }
 }
