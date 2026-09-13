@@ -317,12 +317,27 @@ function jsonArg(value: unknown): string {
 	return quotePs(JSON.stringify(value));
 }
 
-async function resolveFpgaPaths(
+export function collectFpgaMobiusRootCandidates(
 	host: FpgaToolHost,
 	workingDirectory: URI | undefined,
-): Promise<FpgaResolvedPaths | undefined> {
-	const folder = workingDirectory ?? host.workspaceService.getWorkspace().folders[0]?.uri;
+): URI[] {
 	const candidates: URI[] = [];
+	if (host.appRoot) {
+		const appRootUri = URI.file(host.appRoot);
+		// Packaged payload (resources/mobius-chip), sibling of resources/app.
+		// The installer stages the chip tree ONLY here — walking up from appRoot
+		// lands on resources/ then the install root, neither of which contains
+		// scripts/fpga-cli.js on an installed IDE. Probe the sibling first.
+		candidates.push(URI.joinPath(appRootUri, '..', 'mobius-chip'));
+		for (let depth = 0; depth < 6; depth++) {
+			let candidate = appRootUri;
+			for (let i = 0; i < depth; i++) {
+				candidate = URI.joinPath(candidate, '..');
+			}
+			candidates.push(candidate);
+		}
+	}
+	const folder = workingDirectory ?? host.workspaceService.getWorkspace().folders[0]?.uri;
 	if (folder) {
 		let cur = folder;
 		for (let depth = 0; depth < 10; depth++) {
@@ -334,16 +349,14 @@ async function resolveFpgaPaths(
 			cur = parent;
 		}
 	}
-	if (host.appRoot) {
-		const appRootUri = URI.file(host.appRoot);
-		for (let depth = 0; depth < 6; depth++) {
-			let candidate = appRootUri;
-			for (let i = 0; i < depth; i++) {
-				candidate = URI.joinPath(candidate, '..');
-			}
-			candidates.push(candidate);
-		}
-	}
+	return candidates;
+}
+
+async function resolveFpgaPaths(
+	host: FpgaToolHost,
+	workingDirectory: URI | undefined,
+): Promise<FpgaResolvedPaths | undefined> {
+	const candidates = collectFpgaMobiusRootCandidates(host, workingDirectory);
 
 	for (const root of candidates) {
 		const script = URI.joinPath(root, 'scripts', 'fpga-cli.js');
