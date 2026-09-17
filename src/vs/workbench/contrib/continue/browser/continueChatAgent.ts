@@ -1528,7 +1528,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					isComplete: true,
 					pastTenseMessage: ok && !searchTimedOut
 						? `${formatSupersetToolDisplayName(call.name)} done`
-						: `${formatSupersetToolDisplayName(call.name)} failed`,
+						: `${formatSupersetToolDisplayName(call.name)} failed${formatToolFailureSuffix(toolResultText)}`,
 					errorMessage: ok && !searchTimedOut ? undefined : toolResultText,
 				}]);
 				if (editUri && editKind) {
@@ -3526,6 +3526,24 @@ function shouldUseTodoList(
 function isManageTodoListTool(toolName: string): boolean {
 	const normalized = remapCopilotNameToContinueFallback(toolName) ?? toolName;
 	return normalized === 'manage_todo_list' || normalized === 'todo' || normalized === 'todos';
+}
+
+/**
+ * Tool rows used to read just "Replace String failed" / "Multi Replace failed",
+ * with the actual reason hidden in the collapsed detail — indistinguishable from
+ * an unexplained tool failure. Append the first non-empty line of the error so
+ * the reason is visible in the row itself.
+ */
+function formatToolFailureSuffix(text: string): string {
+	const line = (text ?? '')
+		.split('\n')
+		.map(part => part.trim())
+		.find(part => part.length > 0);
+	if (!line) {
+		return '';
+	}
+	const compact = line.length > 160 ? `${line.slice(0, 159)}…` : line;
+	return ` — ${compact}`;
 }
 
 /**

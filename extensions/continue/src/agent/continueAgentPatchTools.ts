@@ -98,7 +98,8 @@ function patchFailureResult(message: string): ClientEditToolResult {
     ok: false,
     suggestFallback: true,
     errorMessage: message,
-    text: `${message} Use write_file with full contents, or retry with fallback_contents.`,
+    text: `${message}
+No changes were written — the file is unchanged. Re-read the file, then retry with a corrected old_string, or use write_file with full contents.`,
   };
 }
 
@@ -150,16 +151,20 @@ async function applyMultiEdit(
   args: Record<string, unknown>,
   ide: IDE,
 ): Promise<ClientEditToolResult> {
-  const { edits } = validateMultiEdit(args);
+  const { edits, skippedNoOps } = validateMultiEdit(args);
   const filepath = await validateSearchAndReplaceFilepath(args.filepath, ide);
   const oldContents = await readFileForEdit(ide, filepath);
   const newContents = executeMultiFindAndReplace(oldContents, edits);
   await writeFileWithRetry(ide, filepath, newContents);
+  const skippedNote =
+    skippedNoOps.length > 0
+      ? ` (skipped ${skippedNoOps.length} no-op edit(s) at index ${skippedNoOps.join(", ")}: old_string === new_string)`
+      : "";
   return {
     ok: true,
     fileUri: filepath,
     fileEditKind: "edit",
-    text: `Applied ${edits.length} edit(s) to ${filepath}`,
+    text: `Applied ${edits.length} edit(s) to ${filepath}${skippedNote}`,
   };
 }
 

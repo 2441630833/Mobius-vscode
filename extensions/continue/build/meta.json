@@ -46827,7 +46827,7 @@
       "format": "esm"
     },
     "../../core/edit/searchAndReplace/multiEditValidation.ts": {
-      "bytes": 1802,
+      "bytes": 2865,
       "imports": [
         {
           "path": "../../tools/definitions/multiEdit",
@@ -46864,7 +46864,7 @@
       "format": "esm"
     },
     "../../core/edit/searchAndReplace/performReplace.ts": {
-      "bytes": 6099,
+      "bytes": 8140,
       "imports": [
         {
           "path": "../../tools/definitions/multiEdit",
@@ -152696,7 +152696,7 @@
       "format": "esm"
     },
     "src/agent/continueAgentPatchTools.ts": {
-      "bytes": 7865,
+      "bytes": 8147,
       "imports": [
         {
           "path": "core",
@@ -167870,13 +167870,13 @@
           "bytesInOutput": 1321
         },
         "../../core/edit/searchAndReplace/multiEditValidation.ts": {
-          "bytesInOutput": 1385
+          "bytesInOutput": 1936
         },
         "../../core/edit/searchAndReplace/findSearchMatch.ts": {
           "bytesInOutput": 5164
         },
         "../../core/edit/searchAndReplace/performReplace.ts": {
-          "bytesInOutput": 4245
+          "bytesInOutput": 5286
         },
         "../../core/edit/searchAndReplace/validateArgs.ts": {
           "bytesInOutput": 744
@@ -179960,7 +179960,7 @@
           "bytesInOutput": 3221
         },
         "src/agent/continueAgentPatchTools.ts": {
-          "bytesInOutput": 6366
+          "bytesInOutput": 6643
         },
         "src/agent/continueAgentRules.ts": {
           "bytesInOutput": 660
@@ -180200,7 +180200,7 @@
           "bytesInOutput": 79
         }
       },
-      "bytes": 56077548
+      "bytes": 56079417
     }
   }
 }
