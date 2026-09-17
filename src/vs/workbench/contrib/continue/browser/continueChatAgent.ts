@@ -137,6 +137,41 @@ const MAX_TRANSIENT_CANCEL_RECOVERIES = 12;
 const MAX_STREAM_ERROR_TASK_RESCUES = 1;
 /** Extra budget for TPM/429 rate limits — wait and retry instead of dumping tool noise. */
 const MAX_RATE_LIMIT_RECOVERIES = 5;
+/**
+ * Same tool + same arguments for this many *consecutive* turns means the model is
+ * stuck, not progressing: the call is deterministic, so re-running it cannot
+ * produce new information. Fires on the 3rd identical turn.
+ */
+const MAX_IDENTICAL_TOOL_REPEATS = 2;
+/** Consecutive turns that only rewrite an unchanged todo list before we stop the loop. */
+const MAX_NO_PROGRESS_CONTROL_TURNS = 2;
+/**
+ * Hard cap on consecutive tool_choice='required' turns with zero writes.
+ * `required` forbids a plain-text answer, so a model that only wants to *explain*
+ * (typical for a "why does X happen / 排查" ask that the intent classifier labels
+ * as a code change) can never terminate: it keeps emitting the cheapest tool call
+ * while its reasoning says "I must answer now". Release the constraint so the
+ * final answer stays reachable.
+ */
+const MAX_FORCED_TOOL_TURNS_NO_WRITE = 6;
+
+/**
+ * Tools whose identical consecutive call can still be legitimate (re-run a build,
+ * poll terminal output, re-check errors after an edit). Excluded from the
+ * identical-call circuit breaker so those flows are never cut short.
+ */
+const VOLATILE_TOOL_NAMES = new Set([
+	'run_in_terminal',
+	'run_terminal_command',
+	'get_terminal_output',
+	'get_terminal_last_command',
+	'send_to_terminal',
+	'kill_terminal',
+	'get_errors',
+	'get_problems',
+	'vscode_askQuestions',
+	'vscode_ask_questions',
+]);
 
 const PATCH_EDIT_TOOLS = new Set([
 	'edit_existing_file',
@@ -215,6 +250,18 @@ const TODO_LIST_FORCE_NUDGE =
 	`You must call manage_todo_list NOW before other tools. Split the user's request into 3–7 actionable items in their language, mark the first item in-progress, then continue the work. Do NOT narrate the plan only in chat text.`;
 
 /**
+ * Injected right before the stuck-loop breaker disables tools. The model has
+ * already been re-issuing the same tool call with the same arguments, so spell
+ * out that the repeated call was a no-op and that an answer is the only valid
+ * output left.
+ */
+const STUCK_TOOL_LOOP_NUDGE =
+	`STOP — you are stuck in a tool-call loop. You called the same tool with the same arguments repeatedly and it returned the same result every time; nothing changed. Tools are now DISABLED, so calling any tool will fail.
+Write the complete final answer to the user now, in the same language they used, using ONLY the tool results already in this conversation.
+If the remaining work genuinely cannot be done without more tool calls, say exactly what is missing and what you already found — that is an acceptable answer.
+FORBIDDEN: asking the user to send another message, "工具调用已用完", "请回复任意消息", or narrating another tool call.`;
+
+/**
  * Internal orchestrator nudges are injected into the agent's model context as
  * User turns (mid-loop steering, search/stream recovery, final-answer prompts).
  * Some models ECHO those instructions back as assistant text, which then shows
@@ -243,6 +290,7 @@ const NUDGE_ECHO_SIGNATURES: readonly string[] = [
 	'A safety guard stopped further tool calls after a very long run.',
 	'Tools paused after a long investigation.',
 	'Tools are done for this question.',
+	'STOP — you are stuck in a tool-call loop',
 	'Next: do NOT stop. Retry grep_search with a short literal string',
 ];
 
@@ -261,6 +309,7 @@ const INJECTED_NUDGES: readonly string[] = [
 	POST_TOOL_CONTINUE_NUDGE,
 	INVESTIGATE_CONTINUE_NUDGE,
 	TODO_LIST_FORCE_NUDGE,
+	STUCK_TOOL_LOOP_NUDGE,
 	'Stop exploring. Call edit tools NOW (replace_string_in_file / multi_replace_string_in_file / insert_edit_into_file / write_file). Do not ask the user to reply again.',
 	'Do not continue planning. Call create_file or write_file NOW — create the first file under the session working directory (e.g. README.md). Tools are required.',
 	'Stop narrating. You have enough context. Call edit tools NOW (replace_string_in_file / multi_replace_string_in_file / insert_edit_into_file / write_file). Do not ask the user to reply. Do not only describe planned updates.',
@@ -844,6 +893,14 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		let completionVerifyNudges = 0;
 		let compileFixNudges = 0;
 		let forceRequiredTools = false;
+		/** Consecutive turns we pinned tool_choice='required' (reset by a successful write). */
+		let forcedToolTurns = 0;
+		/** Previous turn's tool-call signature, for the identical-call circuit breaker. */
+		let lastToolSignature = '';
+		let identicalToolRepeats = 0;
+		/** Consecutive control-only (todo) turns that changed nothing. */
+		let noProgressControlTurns = 0;
+		let lastControlTodosJson = '';
 		const editedUris = new Set<string>();
 		const godotAutoPreview = isGameMode ? createGodotAutoPreviewState() : undefined;
 		const taskRecorder = new TaskExecutionRecorder();
@@ -926,10 +983,21 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					? 'manage_todo_list'
 					: undefined;
 			// Force native tool_calls when coding still needs writes, or after a textual-tool dump.
-			const requireNativeTools = !forceTool && (
+			// Bounded: tool_choice='required' forbids plain text, so leaving it on forever
+			// deadlocks a model that only wants to answer (see MAX_FORCED_TOOL_TURNS_NO_WRITE).
+			const wantNativeTools = !forceTool && (
 				forceRequiredTools
 				|| (untilDoneIntent && codeChangeIntent && toolStats.writeSuccess === 0)
 			);
+			const requireNativeTools = wantNativeTools && forcedToolTurns < MAX_FORCED_TOOL_TURNS_NO_WRITE;
+			if (requireNativeTools) {
+				forcedToolTurns++;
+				if (forcedToolTurns === MAX_FORCED_TOOL_TURNS_NO_WRITE) {
+					this._logService.warn(
+						`[Continue] tool_choice='required' hit ${MAX_FORCED_TOOL_TURNS_NO_WRITE} consecutive turns with 0 writes — releasing the constraint so a final answer is reachable`,
+					);
+				}
+			}
 			let assistantText = '';
 			let toolUses: IChatResponseToolUsePart[] = [];
 			let recoveredTextualTools = false;
@@ -1511,6 +1579,67 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 						}],
 					},
 				];
+			}
+
+			// ── Stuck-loop circuit breaker ───────────────────────────────────────
+			// Models can emit valid but progress-free tool calls forever (classic:
+			// manage_todo_list with identical arguments). Such turns carry no stall
+			// text and no tool failure, so none of the nudges above fire, and the
+			// loop would only end at the (effectively unbounded) turn budget.
+			// Detect it here and fall through to a tools-disabled final answer.
+			if (toolStats.writeSuccess > 0) {
+				// Real progress — the forced-tool budget and both counters restart.
+				forcedToolTurns = 0;
+			}
+			const turnToolSignature = toolUses
+				.filter(call => !VOLATILE_TOOL_NAMES.has(call.name))
+				.map(call => `${call.name}:${stableToolParameters(call.parameters)}`)
+				.sort()
+				.join('|');
+			identicalToolRepeats = turnToolSignature && turnToolSignature === lastToolSignature
+				? identicalToolRepeats + 1
+				: 0;
+			lastToolSignature = turnToolSignature;
+
+			const controlOnlyTurn = toolUses.length > 0
+				&& toolUses.every(call => isManageTodoListTool(call.name));
+			const controlTodosJson = controlOnlyTurn
+				? JSON.stringify(this._chatTodoListService.getTodos(request.sessionResource))
+				: null;
+			noProgressControlTurns = controlOnlyTurn && controlTodosJson === lastControlTodosJson
+				? noProgressControlTurns + 1
+				: 0;
+			if (controlTodosJson !== null) {
+				lastControlTodosJson = controlTodosJson;
+			}
+
+			if (
+				identicalToolRepeats >= MAX_IDENTICAL_TOOL_REPEATS
+				|| (controlOnlyTurn && noProgressControlTurns >= MAX_NO_PROGRESS_CONTROL_TURNS)
+			) {
+				const stuckToolName = toolUses[0]?.name ?? 'tools';
+				this._logService.warn(
+					`[Continue] Stuck tool loop detected (identical=${identicalToolRepeats}, no-progress-control=${noProgressControlTurns}, tool=${stuckToolName}) — disabling tools and forcing the final answer`,
+				);
+				progress([{
+					kind: 'warning',
+					content: new MarkdownString(
+						localize(
+							'continue.stuckToolLoop',
+							"检测到工具调用死循环（{0} 被反复调用但没有产生任何进展），已停止工具并直接根据已有结果输出答案。",
+							stuckToolName,
+						),
+					),
+				}]);
+				needsFinalAnswer = true;
+				messages = [
+					...messages,
+					{
+						role: ChatMessageRole.User,
+						content: [{ type: 'text', value: STUCK_TOOL_LOOP_NUDGE }],
+					},
+				];
+				break;
 			}
 
 			// Search timeout/failure must not end the agent run — force a narrower retry / edit.
@@ -3397,6 +3526,29 @@ function shouldUseTodoList(
 function isManageTodoListTool(toolName: string): boolean {
 	const normalized = remapCopilotNameToContinueFallback(toolName) ?? toolName;
 	return normalized === 'manage_todo_list' || normalized === 'todo' || normalized === 'todos';
+}
+
+/**
+ * Stable stringify for tool parameters — object keys are sorted so the same call
+ * written with a different key order still produces the same signature (the
+ * stuck-loop breaker compares consecutive turns by signature).
+ */
+function stableToolParameters(value: unknown): string {
+	try {
+		return JSON.stringify(value, (_key, val) => {
+			if (val && typeof val === 'object' && !Array.isArray(val)) {
+				const source = val as Record<string, unknown>;
+				const sorted: Record<string, unknown> = {};
+				for (const key of Object.keys(source).sort()) {
+					sorted[key] = source[key];
+				}
+				return sorted;
+			}
+			return val;
+		}) ?? '';
+	} catch {
+		return '';
+	}
 }
 
 /** Assistant dumped tool calls as XML/prose instead of native function calling. */
