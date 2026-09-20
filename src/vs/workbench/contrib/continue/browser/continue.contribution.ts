@@ -5,6 +5,7 @@
 
 
 import { timeout } from '../../../../base/common/async.js';
+import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { Disposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { localize2, localize } from '../../../../nls.js';
@@ -44,6 +45,7 @@ import { CONTINUE_LM_VENDOR, CONTINUE_LM_VENDOR_DISPLAY, ContinueLanguageModelPr
 import { registerContinueLanguageModelReloader, triggerContinueLanguageModelReload } from './continueLanguageModelReload.js';
 import { CONTINUE_EXTENSION_ID, CONTINUE_EXTENSION_IDENTIFIER, isContinuePhysicalAiIde } from './continueProduct.js';
 import { registerContinueChatAgentContribution } from './continueChatAgent.js';
+import { getActiveRsiController } from './continueRsiController.js';
 import { registerContinueMobiusBundledAgentsContribution } from './continueMobiusBundledAgents.js';
 import { registerContinueGameFactory3AWorkflowContribution } from './continueGameFactory3AWorkflow.js';
 import { registerContinueGameStudioWorkflowContribution } from './continueGameStudioWorkflow.js';
@@ -120,6 +122,30 @@ if (isContinuePhysicalAiIde()) {
 				minimum: 1,
 				maximum: 50,
 				description: 'Minimum number of tool calls in a successful task before it is considered for automatic skill generation.',
+			},
+		},
+	});
+
+	Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+		id: 'continueRsi',
+		title: 'Mobius Recursive Self-Improvement (RSI)',
+		type: 'object',
+		properties: {
+			'continue.rsi.mode': {
+				type: 'string',
+				enum: ['off', 'shadow', 'enforce'],
+				enumDescriptions: [
+					'Disabled — never evaluate or gate self-evolved skills.',
+					'Shadow — evaluate candidates on the hidden acceptance set + 5 gates, log and keep an audit trail, but still write the skill (safe rollout).',
+					'Enforce — only write a candidate skill when it passes every gate; otherwise the current champion is kept. Promotions are one-step rollbackable.',
+				],
+				default: 'shadow',
+				description: 'RSI safety mode. A hidden acceptance set at .agents/skills/rsi/acceptance.json and five deterministic quality gates decide whether a self-evolved skill change is promoted.',
+			},
+			'continue.rsi.storeSubdir': {
+				type: 'string',
+				default: '.agents/skills/rsi',
+				description: 'Workspace-relative folder holding the RSI sandbox: acceptance.json (human-owned), champion.json, candidates/, history/.',
 			},
 		},
 	});
@@ -482,6 +508,85 @@ class ReloadContinueLanguageModelsAction extends Action2 {
 	}
 }
 
+class RsiEvaluateAction extends Action2 {
+	constructor() {
+		super({
+			id: 'mobius.rsi.evaluate',
+			title: localize2('mobius.rsi.evaluate', "RSI: Evaluate Champion Skills"),
+			f1: true,
+		});
+	}
+
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		const logService = accessor.get(ILogService);
+		const controller = getActiveRsiController();
+		if (!controller) {
+			logService.warn('[RSI] No active controller (Open Continue chat once, then retry).');
+			return;
+		}
+		const result = await controller.evaluateChampion();
+		if (!result) {
+			logService.warn('[RSI] No acceptance set found at .agents/skills/rsi/acceptance.json');
+			return;
+		}
+		logService.info(
+			`[RSI] Champion accuracy ${(result.accuracy * 100).toFixed(1)}% (${Math.round(result.accuracy * result.total)}/${result.total})`,
+		);
+	}
+}
+
+class RsiApproveAction extends Action2 {
+	constructor() {
+		super({
+			id: 'mobius.rsi.approve',
+			title: localize2('mobius.rsi.approve', "RSI: Run One Improvement Iteration"),
+			f1: true,
+		});
+	}
+
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		const logService = accessor.get(ILogService);
+		const controller = getActiveRsiController();
+		if (!controller) {
+			logService.warn('[RSI] No active controller (Open Continue chat once, then retry).');
+			return;
+		}
+		const report = await controller.maybeImprove(CancellationToken.None);
+		if (!report) {
+			logService.info('[RSI] Nothing to improve (no acceptance set or no auto-generated skills).');
+			return;
+		}
+		logService.info(
+			`[RSI] Iteration ${report.status}: champion=${report.championAccuracy.toFixed(3)} candidate=${report.candidateAccuracy.toFixed(3)} — ${report.rationale}`,
+		);
+	}
+}
+
+class RsiRollbackAction extends Action2 {
+	constructor() {
+		super({
+			id: 'mobius.rsi.rollback',
+			title: localize2('mobius.rsi.rollback', "RSI: Roll Back Last Promotion"),
+			f1: true,
+		});
+	}
+
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		const logService = accessor.get(ILogService);
+		const controller = getActiveRsiController();
+		if (!controller) {
+			logService.warn('[RSI] No active controller (Open Continue chat once, then retry).');
+			return;
+		}
+		const result = await controller.rollback();
+		if (!result.restored) {
+			logService.info('[RSI] Nothing to roll back.');
+			return;
+		}
+		logService.info(`[RSI] Rolled back. Restored skills=[${result.skills.join(', ')}]`);
+	}
+}
+
 class FocusContinueChatAction extends Action2 {
 	constructor() {
 		super({
@@ -554,3 +659,6 @@ registerAction2(FocusContinueChatAction);
 registerAction2(OpenModelProviderSettingsAction);
 registerAction2(AddModelProviderAction);
 registerAction2(DeleteModelProviderAction);
+registerAction2(RsiEvaluateAction);
+registerAction2(RsiApproveAction);
+registerAction2(RsiRollbackAction);

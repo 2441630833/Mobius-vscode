@@ -24,6 +24,7 @@ import {
 	ChatMessageRole,
 	IChatMessage,
 	IChatMessageImagePart,
+	IChatMessagePart,
 	IChatResponseToolUsePart,
 	ILanguageModelsService,
 } from '../../chat/common/languageModels.js';
@@ -47,6 +48,8 @@ import { buildContinueSkillsContext, buildContinueSkillsContextFast, type Contin
 import { ContinueSkillEmbeddingIndex } from './continueSkillEmbeddings.js';
 import { classifySkillRoutingOutcome, ContinueSkillFeedbackStore } from './continueSkillFeedback.js';
 import { AgentMemoryStore, ContinueSelfEvolving, TaskExecutionRecorder } from './continueSelfEvolving.js';
+import { ContinueRsiController, setActiveRsiController } from './continueRsiController.js';
+import type { RsiMode } from './continueRsiEngine.js';
 import {
 	ContinueAgentToolSchema,
 	invokeContinueBuiltInTool,
@@ -137,6 +140,12 @@ const MAX_TRANSIENT_CANCEL_RECOVERIES = 12;
 const MAX_STREAM_ERROR_TASK_RESCUES = 1;
 /** Extra budget for TPM/429 rate limits — wait and retry instead of dumping tool noise. */
 const MAX_RATE_LIMIT_RECOVERIES = 5;
+/** Extra retries granted after pruning history to fit the provider context window. */
+const MAX_CONTEXT_OVERFLOW_RECOVERIES = 4;
+/** Max characters of a single tool-result / history text kept in the model context. */
+const MAX_TOOL_RESULT_CHARS = 12_000;
+/** Fallback context char budget (~4 chars/token) when the model's window is unknown. */
+const MODEL_CONTEXT_CHAR_BUDGET = 200_000;
 /**
  * Same tool + same arguments for this many *consecutive* turns means the model is
  * stuck, not progressing: the call is deterministic, so re-running it cannot
@@ -420,6 +429,96 @@ export function rateLimitBackoffMs(attempt: number, message: string): number {
 }
 
 /**
+ * Provider rejected the request because the prompt exceeded the model's context
+ * window (HTTP 400 `ContextWindowExceededError` / "maximum context length"). Unlike
+ * a 429, retrying the SAME messages can never succeed — history must be pruned first.
+ * `ponytail:` regex on the known phrasings (OpenAI/LiteLLM/VLLM/Anthropic/OpenRouter);
+ * widen the alternation if a new provider wording shows up.
+ */
+export function isContextOverflowError(message: string): boolean {
+	const msg = message.trim();
+	if (!msg) {
+		return false;
+	}
+	return /ContextWindowExceeded|context[_ ]length[_ ]exceeded|maximum context length|prompt is too long|reduce the length of the (messages|prompt)|exceeds? the (maximum )?context|too many tokens/i.test(msg);
+}
+
+/**
+ * Keep a conversation under a rough character budget by dropping the OLDEST
+ * history/tool turns while always preserving the system message, the most recent
+ * turns, and tool-call ↔ tool-result pairing (a tool_result whose calling
+ * assistant message was dropped is invalid and would 400 again).
+ *
+ * `ponytail:` intentional ceiling — char-based (~4 chars/token) estimate, no
+ * tokenizer dependency here; covers the client-side cap. The provider's own
+ * tokenizer may still shrink the window at runtime, which the retry loop handles.
+ */
+export function pruneHistoryForContext(
+	messages: IChatMessage[],
+	modelLimit: number,
+	maxTokens: number,
+): IChatMessage[] {
+	const charBudget = modelLimit && modelLimit > 0
+		? Math.max(4_000, (modelLimit - maxTokens) * 4)
+		: MODEL_CONTEXT_CHAR_BUDGET;
+	if (charBudget <= 0 || messages.length === 0) {
+		return messages;
+	}
+
+	const shrink = (text: string): string =>
+		text.length <= MAX_TOOL_RESULT_CHARS ? text : `${text.slice(0, MAX_TOOL_RESULT_CHARS)}\n…[truncated]`;
+	// Truncate oversized text wherever it hides: top-level parts AND the text nested
+	// inside a `tool_result.value` (the classic runaway — a `read_file`/search result).
+	const shrinkPart = (part: IChatMessagePart | undefined): IChatMessagePart | undefined => {
+		if (!part) {
+			return part;
+		}
+		if (part.type === 'text' && typeof part.value === 'string') {
+			return { ...part, value: shrink(part.value) };
+		}
+		if (part.type === 'thinking' && typeof part.value === 'string') {
+			return { ...part, value: shrink(part.value) };
+		}
+		if (part.type === 'tool_result' && Array.isArray(part.value)) {
+			return {
+				...part,
+				value: part.value.map(v =>
+					v && v.type === 'text' && typeof v.value === 'string'
+						? { ...v, value: shrink(v.value) }
+						: v),
+			};
+		}
+		return part;
+	};
+	const kept: IChatMessage[] = messages.map(msg => ({
+		...msg,
+		content: (msg.content ?? []).map(shrinkPart).filter((p): p is IChatMessagePart => !!p),
+	}));
+
+	const size = (msgs: IChatMessage[]): number =>
+		msgs.reduce((sum, m) => sum + (m.content ? JSON.stringify(m.content).length : 0), 0);
+
+	const system = kept[0]?.role === ChatMessageRole.System ? kept[0] : undefined;
+	const rest = system ? kept.slice(1) : kept;
+	const tail: IChatMessage[] = [];
+	let budget = charBudget - (system ? size([system]) : 0);
+	for (let i = rest.length - 1; i >= 0; i--) {
+		const cost = size([rest[i]]);
+		if (tail.length > 0 && budget - cost < 0) {
+			break;
+		}
+		budget -= cost;
+		tail.unshift(rest[i]);
+	}
+	// Never lead with a tool_result (its assistant/tool_calls parent was dropped).
+	while (tail.length > 0 && tail[0].role === ChatMessageRole.User && Array.isArray(tail[0].content)
+		&& tail[0].content.some(part => part && part.type === 'tool_result')) {
+		tail.shift();
+	}
+	return system ? [system, ...tail] : tail;
+}
+
+/**
  * Stream aborted by provider / extension host / network — not the user clicking Stop.
  * These must retry the same turn quietly; treating them as fatal after 2 tries aborts
  * mid-edit ("Model stream failed repeatedly (Canceled)").
@@ -489,6 +588,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 	private readonly _skillFeedbackStore: ContinueSkillFeedbackStore;
 	private readonly _selfEvolving: ContinueSelfEvolving;
 	private readonly _memoryStore: AgentMemoryStore;
+	private readonly _rsi: ContinueRsiController;
 
 	constructor(
 		private readonly _languageModelsService: ILanguageModelsService,
@@ -540,6 +640,19 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			this._workspaceService,
 			selfEvolutionGlobal,
 		);
+
+		// RSI: gate self-evolved skills behind a hidden acceptance set + 5 gates.
+		const rsiMode = this._configurationService.getValue<RsiMode>('continue.rsi.mode') ?? 'shadow';
+		const rsiStoreSubdir = this._configurationService.getValue<string>('continue.rsi.storeSubdir') ?? '.agents/skills/rsi';
+		this._rsi = new ContinueRsiController(
+			this._languageModelsService,
+			this._fileService,
+			this._workspaceService,
+			this._logService,
+			() => this._resolveModelId(undefined),
+			{ mode: rsiMode, storeSubdir: rsiStoreSubdir, global: selfEvolutionGlobal },
+		);
+		setActiveRsiController(this._rsi);
 	}
 
 	async invoke(
@@ -885,6 +998,8 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		let streamErrorTaskRescues = 0;
 		let rateLimitRecoveries = 0;
 		let stoppedForRateLimit = false;
+		let contextOverflowRecoveries = 0;
+		let stoppedForContextOverflow = false;
 		let postToolContinueNudges = 0;
 		let lastTurnHadTools = false;
 				let midLoopEditNudged = false;
@@ -1061,6 +1176,51 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 						),
 					}]);
 					await delayCancellable(waitMs, token);
+					continue;
+				}
+
+				// Context-window overflow (HTTP 400 ContextWindowExceededError): retrying the
+				// SAME messages can never succeed — prune the oldest history/tool results and
+				// retry the same turn. This is the fix for "Model stream failed repeatedly
+				// (…maximum context length is 200000 tokens…)" mid-task.
+				if (isContextOverflowError(msg)) {
+					if (contextOverflowRecoveries >= MAX_CONTEXT_OVERFLOW_RECOVERIES) {
+						stoppedForContextOverflow = true;
+						progress([{
+							kind: 'warning',
+							content: new MarkdownString(
+								localize(
+									'continue.contextOverflowFinal',
+									"The conversation exceeded the model's context window and could not be reduced further ({0}). Edits already applied are kept — start a new session or pick a larger-context model to continue.",
+									msg.slice(0, 200),
+								),
+							),
+						}]);
+						break;
+					}
+					contextOverflowRecoveries++;
+					const pruned = pruneHistoryForContext(
+						messages,
+						this._languageModelsService.lookupLanguageModel(modelId)?.maxInputTokens ?? 0,
+						this._languageModelsService.lookupLanguageModel(modelId)?.maxOutputTokens ?? 4096,
+					);
+					const dropped = messages.length - pruned.length;
+					this._logService.warn(
+						`[Continue] Context window exceeded — pruned ${dropped} history message(s) (attempt ${contextOverflowRecoveries}/${MAX_CONTEXT_OVERFLOW_RECOVERIES}) and retrying`,
+					);
+					progress([{
+						kind: 'markdownContent',
+						content: new MarkdownString(
+							localize(
+								'continue.contextOverflowPrune',
+								"Context window exceeded — trimming older history ({0} message(s) dropped) and retrying ({1}/{2})…",
+								dropped,
+								contextOverflowRecoveries,
+								MAX_CONTEXT_OVERFLOW_RECOVERIES,
+							),
+						),
+					}]);
+					messages = pruned;
 					continue;
 				}
 
@@ -1755,7 +1915,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		}
 
 		// Exhausted maxTurns without task completion (coding runaway guard, or Q&A soft cap).
-		if (!exitedOnTaskComplete && !token.isCancellationRequested && !needsFinalAnswer && !stoppedForRateLimit) {
+		if (!exitedOnTaskComplete && !token.isCancellationRequested && !needsFinalAnswer && !stoppedForRateLimit && !stoppedForContextOverflow) {
 			this._logService.warn(
 				`[Continue] Tool-turn loop exhausted (${turnBudget}) without task completion — forcing status summary`,
 			);
@@ -1776,7 +1936,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			];
 		}
 
-		if (needsFinalAnswer && !token.isCancellationRequested && !stoppedForRateLimit) {
+		if (needsFinalAnswer && !token.isCancellationRequested && !stoppedForRateLimit && !stoppedForContextOverflow) {
 			await this._forceFinalAnswer(modelId, messages, progress, token);
 		}
 
@@ -1851,6 +2011,32 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					}
 				})
 				.catch(err => this._logService.warn('[SelfEvolving] Background generation failed', err));
+
+			// RSI: independently evaluate the (possibly just-grown) skill set against the
+			// hidden acceptance set and 5 gates. Fire-and-forget; promote/rollback only.
+			if (this._rsi.active) {
+				this._rsi.maybeImprove(CancellationToken.None)
+					.then(report => {
+						if (report && report.status === 'promoted') {
+							this._logService.info(
+								`[RSI] Promoted (${report.championAccuracy.toFixed(3)} -> ${report.candidateAccuracy.toFixed(3)}); skills=[${report.writtenSkills.join(', ')}]`,
+							);
+							progress([{
+								kind: 'markdownContent',
+								content: new MarkdownString(
+									localize(
+										'continue.rsiPromoted',
+										"\n\n🔒 _RSI: candidate passed all gates (accuracy {0} → {1}). Rollback stamp `{2}`._",
+										report.championAccuracy.toFixed(3),
+										report.candidateAccuracy.toFixed(3),
+										report.rollbackStamp ?? 'n/a',
+									),
+								),
+							}]);
+						}
+					})
+					.catch(err => this._logService.warn('[RSI] Background iteration failed', err));
+			}
 		}
 
 		return {};
@@ -2193,7 +2379,13 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		const response = await this._languageModelsService.sendChatRequest(
 			modelId,
 			undefined,
-			messages,
+			// Proactive guard: keep the prompt under a char budget so an oversized
+			// history never reaches the provider (which 400s with ContextWindowExceeded).
+			pruneHistoryForContext(
+				messages,
+				this._languageModelsService.lookupLanguageModel(modelId)?.maxInputTokens ?? 0,
+				this._languageModelsService.lookupLanguageModel(modelId)?.maxOutputTokens ?? 4096,
+			),
 			requestOptions,
 			token,
 		);
