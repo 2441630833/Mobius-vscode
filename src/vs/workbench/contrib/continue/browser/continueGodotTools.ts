@@ -163,7 +163,7 @@ const GAME_EXECUTE_HINT = `GAME DEV (Game mode — user never names this; Game m
 2. RESEARCH FIRST: When starting a new game, DO NOT immediately create files from scratch.
    First search GitHub (using search_web or GitHub tools) for mature open-source Godot game projects with matching mechanics or genre.
    Clone / pull the repository or reference its architecture into the workspace.
-   GH-PROXY MIRROR: If connecting to foreign GitHub fails / is blocked / times out, ALWAYS use the gh-proxy mirror source: https://gh-proxy.com/ (e.g. git clone https://gh-proxy.com/https://github.com/<owner>/<repo>.git).
+   GH-PROXY MIRROR: If connecting to foreign GitHub fails / is blocked / times out, ALWAYS use the gh-proxy mirror source: https://gh-proxy.org/ (e.g. git clone https://gh-proxy.org/https://github.com/<owner>/<repo>.git).
 3. HEADLESS WHILE CODING: During development and coding, DO NOT open Godot windows or the editor by default.
    Keep asset import (godot_import) and test (godot_test) operations headless.
    ONLY open the Godot editor if the user explicitly sends a prompt asking to open Godot (e.g. "打开godot", "open godot").

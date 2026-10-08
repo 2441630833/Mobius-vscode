@@ -78,7 +78,7 @@ export const MOBIUS_GAME_MODE_INVISIBLE_STACK_RULES = `USER-FACING RULE (mandato
 The user selected **Game** mode — that alone activates every bundled game pipeline (studio design docs, 3A asset/mechanic workflows, Godot engine under \`game-dev/\`). They are a normal game creator and do **not** know internal product names, skill files, or tool names.
 
 - MANDATORY GODOT: All 2D and 3D games MUST use Godot engine (Godot 4 GDScript). NEVER build web/canvas games and NEVER start a web server.
-- SEARCH GITHUB FIRST: Do not start creating from scratch immediately. First search GitHub for mature open-source Godot game projects with matching mechanics and pull them. If foreign GitHub is unreachable, use gh-proxy mirror source: https://gh-proxy.com/ (e.g. \`git clone https://gh-proxy.com/https://github.com/<owner>/<repo>.git\`).
+- SEARCH GITHUB FIRST: Do not start creating from scratch immediately. First search GitHub for mature open-source Godot game projects with matching mechanics and pull them. If foreign GitHub is unreachable, use gh-proxy mirror source: https://gh-proxy.org/ (e.g. \`git clone https://gh-proxy.org/https://github.com/<owner>/<repo>.git\`).
 - HEADLESS WHILE CODING: Default to NOT opening Godot editor or windows during coding. Keep operations headless (\`godot_import\`, \`godot_test\`). Only open Godot editor if user prompt explicitly requests it.
 - PLAYABLE PREVIEW: On completion, launch the playable Godot preview game (\`godot_play\`), NOT a web browser/server.
 - Never ask them to "use GameFactory", "read setting_overview", "follow CCGS", "use Godogen", "run godot_import", or similar — do that silently yourself.
