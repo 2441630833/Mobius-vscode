@@ -23,6 +23,7 @@ import { ContinueSkillEmbeddingIndex } from './continueSkillEmbeddings.js';
 import { ContinueSkillFeedbackStore } from './continueSkillFeedback.js';
 import { CCGS_ROOT_FOLDER, isGameModeExplicitlySelected } from './continueGameStudioWorkflow.js';
 import { GF3A_ROOT_FOLDER } from './continueGameFactory3AWorkflow.js';
+import { GODOGEN_ROOT_FOLDER } from './continueGodogenWorkflow.js';
 
 /** Max full SKILL.md bodies injected per turn (compatible set, not conflicting). */
 const MAX_FULL_SKILLS = 3;
@@ -658,7 +659,8 @@ export function formatRoutingQueryForLog(query: string): string {
 }
 
 /**
- * When Agents Game mode is selected, prefer CCGS and GameFactory-3A skills over generic Mobius skills.
+ * When Agents Game mode is selected, prefer CCGS, GameFactory-3A, and Godogen
+ * (asset generation) skills over generic Mobius skills.
  */
 function applyGameStudioSkillBoost<T extends { skill: IAgentSkill; fusedScore: number }>(
 	request: IChatAgentRequest,
@@ -673,6 +675,9 @@ function applyGameStudioSkillBoost<T extends { skill: IAgentSkill; fusedScore: n
 			return { ...d, fusedScore: d.fusedScore + 40 };
 		}
 		if (path.includes(`/${GF3A_ROOT_FOLDER}/`)) {
+			return { ...d, fusedScore: d.fusedScore + 35 };
+		}
+		if (path.includes(`/${GODOGEN_ROOT_FOLDER}/asset-gen/`)) {
 			return { ...d, fusedScore: d.fusedScore + 35 };
 		}
 		return d;

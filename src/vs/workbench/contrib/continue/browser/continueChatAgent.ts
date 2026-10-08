@@ -66,9 +66,10 @@ import {
 	unsupportedCopilotToolRecovery,
 } from './continueCopilotToolsBridge.js';
 import { executeRunTerminalCommand } from './continueTerminalTool.js';
-import { executeGodotTool, bootstrapGameModeGodotLivePreview, createGodotAutoPreviewState, createGodotToolHost, ensureGodotPreviewLaunched, gameDevSystemHint, GodotAutoPreviewState, hasGameDevIntent, isGameDevProjectUri, isGodotTool, openGodotLiveEditorIfNeeded, trackGodotToolCall } from './continueGodotTools.js';
+import { executeGodotTool, bootstrapGameModeGodotLivePreview, createGodotAutoPreviewState, createGodotToolHost, ensureGodotPreviewLaunched, gameDevSystemHint, GodotAutoPreviewState, hasGameDevIntent, isGameDevProjectUri, isGodotTool, openGodotLiveEditorIfNeeded, trackGodotToolCall, userRequestedGodotOpen } from './continueGodotTools.js';
 import { bootstrapChipModeDetect, createFpgaToolHost, executeFpgaTool, isFpgaTool } from './continueFpgaTools.js';
 import { chipDesignSystemHint, isChipModeExplicitlySelected } from './continueChipDesign.js';
+import { isPptModeExplicitlySelected, pptModeSystemHint } from './continuePptMode.js';
 import {
 	ccgsRelativePath,
 	gameStudioWorkflowSystemHint,
@@ -82,6 +83,12 @@ import {
 	loadGameFactory3ABootstrapContext,
 	resolveGameFactory3ARootUri,
 } from './continueGameFactory3AWorkflow.js';
+import {
+	godogenRelativePath,
+	godogenWorkflowSystemHint,
+	loadGodogenBootstrapContext,
+	resolveGodogenRootUri,
+} from './continueGodogenWorkflow.js';
 import { acquireIndexingPause } from './continueIndexingPause.js';
 import { preprocessAgentRequestOcr, collectAgentRequestImageParts } from './continueOcrPreprocessor.js';
 import { BUNDLED_ONNX_OCR } from './continueModelConfig.js';
@@ -93,6 +100,7 @@ const CONTINUE_AGENT_IDS = {
 	agent: `${CONTINUE_EXTENSION_ID}.agent`,
 	game: `${CONTINUE_EXTENSION_ID}.game`,
 	chip: `${CONTINUE_EXTENSION_ID}.chip`,
+	ppt: `${CONTINUE_EXTENSION_ID}.ppt`,
 } as const;
 
 /**
@@ -674,14 +682,17 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		);
 
 		const isChipModeSelected = isChipModeExplicitlySelected(request);
+		const isPptModeSelected = isPptModeExplicitlySelected(request);
 		const isGameModeSelected = isGameModeExplicitlySelected(request);
-		const isGameMode = !isChipModeSelected && (isGameModeSelected || hasGameDevIntent(request.message));
+		const isGameMode = !isChipModeSelected && !isPptModeSelected && (isGameModeSelected || hasGameDevIntent(request.message));
 		const isAgentMode = request.agentId === CONTINUE_AGENT_IDS.agent
 			|| request.agentId === CONTINUE_AGENT_IDS.game
 			|| request.agentId === CONTINUE_AGENT_IDS.chip
-			|| isChipModeSelected;
+			|| request.agentId === CONTINUE_AGENT_IDS.ppt
+			|| isChipModeSelected
+			|| isPptModeSelected;
 		const docEditTask = isDocumentationEditTask(request.message);
-		const codeChangeIntent = hasCodeChangeIntent(request.message) || isExecuteNowMessage(request.message) || isGameMode || isChipModeSelected;
+		const codeChangeIntent = hasCodeChangeIntent(request.message) || isExecuteNowMessage(request.message) || isGameMode || isChipModeSelected || isPptModeSelected;
 		const investigateIntent = docEditTask ? false : hasInvestigateIntent(request.message);
 		const releaseIndexingPause = isAgentMode
 			? acquireIndexingPause(this._commandService, this._logService)
@@ -701,18 +712,29 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			if (isGameModeSelected) {
 				const ccgsRoot = resolveCcgsRootUri(cwd, this._workspaceService);
 				const gf3aRoot = resolveGameFactory3ARootUri(cwd, this._workspaceService);
-				const [ccgsBootstrap, gf3aBootstrap] = await Promise.all([
+				const godogenRoot = resolveGodogenRootUri(cwd, this._workspaceService);
+				const [ccgsBootstrap, gf3aBootstrap, godogenBootstrap] = await Promise.all([
 					loadGameStudioBootstrapContext(ccgsRoot, this._fileService, token),
 					loadGameFactory3ABootstrapContext(gf3aRoot, this._fileService, token),
+					loadGodogenBootstrapContext(godogenRoot, this._fileService, token),
 				]);
 				const seen = new Set(routedSkillNames);
-				for (const name of [...gf3aBootstrap.routedSkillNames, ...ccgsBootstrap.routedSkillNames]) {
+				for (const name of [
+					...godogenBootstrap.routedSkillNames,
+					...gf3aBootstrap.routedSkillNames,
+					...ccgsBootstrap.routedSkillNames,
+				]) {
 					if (!seen.has(name)) {
 						seen.add(name);
 						routedSkillNames.unshift(name);
 					}
 				}
-				skillAttachments = [...gf3aBootstrap.attachmentTexts, ...ccgsBootstrap.attachmentTexts, ...skillAttachments];
+				skillAttachments = [
+					...godogenBootstrap.attachmentTexts,
+					...gf3aBootstrap.attachmentTexts,
+					...ccgsBootstrap.attachmentTexts,
+					...skillAttachments,
+				];
 			}
 			if (routedSkillNames.length) {
 				progress([{
@@ -760,11 +782,15 @@ class ContinueChatAgent implements IChatAgentImplementation {
 				}]);
 				agentSystem += `\n\n<fpga-detect ok="${detect.ok}">\n${detect.text}\n</fpga-detect>`;
 			}
+		} else if (isPptModeSelected) {
+			agentSystem += `\n\n<ppt-master>\n${pptModeSystemHint()}\n</ppt-master>`;
 		} else if (isGameModeSelected) {
 			const ccgsRel = ccgsRelativePath(resolveCcgsRootUri(cwd, this._workspaceService), this._workspaceService);
 			const gf3aRel = gf3aRelativePath(resolveGameFactory3ARootUri(cwd, this._workspaceService), this._workspaceService);
+			const godogenRel = godogenRelativePath(resolveGodogenRootUri(cwd, this._workspaceService), this._workspaceService);
 			agentSystem += `\n\n<game-studio-workflow>\n${gameStudioWorkflowSystemHint(ccgsRel)}\n</game-studio-workflow>`;
 			agentSystem += `\n\n<game-factory-3a>\n${gameFactory3AWorkflowSystemHint(gf3aRel)}\n</game-factory-3a>`;
+			agentSystem += `\n\n<godogen>\n${godogenWorkflowSystemHint(godogenRel)}\n</godogen>`;
 			agentSystem += `\n\n<game-dev>\n${gameDevSystemHint()}\n</game-dev>`;
 		} else if (isGameMode) {
 			agentSystem += `\n\n<game-dev>\n${gameDevSystemHint()}\n</game-dev>`;
@@ -912,12 +938,14 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			investigateIntent,
 			isGameMode,
 			isChipMode: isChipModeSelected,
+			isPptMode: isPptModeSelected,
 		}) || docEditTask;
 		const todoListIntent = !lightweightTask && shouldUseTodoList(request.message, {
 			codeChangeIntent,
 			investigateIntent,
 			isGameMode,
 			isChipMode: isChipModeSelected,
+			isPptMode: isPptModeSelected,
 			webSearchIntent,
 		});
 		const maxCompletionVerifyNudges = lightweightTask
@@ -1031,6 +1059,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				workingDirectory: cwd,
 				chatRequestId: request.requestId,
 			};
+			const wantsGodotOpen = userRequestedGodotOpen(request.message);
 			void bootstrapGameModeGodotLivePreview(
 				godotHost,
 				this._languageModelToolsService,
@@ -1038,30 +1067,31 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				terminalContext,
 				godotAutoPreview,
 				token,
+				wantsGodotOpen,
 			).then(result => {
 				if (token.isCancellationRequested) {
 					return;
 				}
 				if (result.editorOpened) {
-					this._logService.info('[Continue][Godot] Live editor opened at Game-mode start');
+					this._logService.info('[Continue][Godot] Live editor opened per user request');
 					progress([{
 						kind: 'markdownContent',
 						content: new MarkdownString(
 							localize(
 								'continue.godotLivePreviewStart',
-								"**Live preview** — Godot editor is open. Script/scene saves hot-reload while the agent edits; press **Stop** anytime to change direction.",
+								"**Godot editor opened** — per your request. Scenes/scripts hot-reload as edits are saved.",
 							),
 						),
 					}]);
 				}
 				if (result.gameOpened) {
-					this._logService.info('[Continue][Godot] Live game window opened at Game-mode start');
+					this._logService.info('[Continue][Godot] Live game window opened');
 					progress([{
 						kind: 'markdownContent',
 						content: new MarkdownString(
 							localize(
 								'continue.godotLiveGameStart',
-								"**Game running** — use **arrow keys** to play (no autopilot). Score starts at 0; watch stars spawn while the agent edits.",
+								"**Game running** — use **arrow keys** to play (no autopilot). Score starts at 0.",
 							),
 						),
 					}]);
@@ -3662,9 +3692,9 @@ function editedUrisAreDocumentationOnly(editedUris: ReadonlySet<string>): boolea
  */
 function isLightweightAgentTask(
 	message: string,
-	opts: { codeChangeIntent: boolean; investigateIntent: boolean; isGameMode: boolean; isChipMode: boolean },
+	opts: { codeChangeIntent: boolean; investigateIntent: boolean; isGameMode: boolean; isChipMode: boolean; isPptMode?: boolean },
 ): boolean {
-	if (opts.isGameMode || opts.isChipMode) {
+	if (opts.isGameMode || opts.isChipMode || opts.isPptMode) {
 		return false;
 	}
 	const trimmed = message.trim();
@@ -3697,16 +3727,16 @@ function hasTodoPlanningShape(message: string): boolean {
 
 function shouldUseTodoList(
 	message: string,
-	opts: { codeChangeIntent: boolean; investigateIntent: boolean; isGameMode: boolean; isChipMode: boolean; webSearchIntent: boolean },
+	opts: { codeChangeIntent: boolean; investigateIntent: boolean; isGameMode: boolean; isChipMode: boolean; isPptMode?: boolean; webSearchIntent: boolean },
 ): boolean {
 	const trimmed = message.trim();
 	if (!trimmed || /^(hi|hello|thanks|thank you|你好|谢谢)\b/i.test(trimmed)) {
 		return false;
 	}
-	if (opts.webSearchIntent && !opts.codeChangeIntent && !opts.investigateIntent && !opts.isGameMode && !opts.isChipMode) {
+	if (opts.webSearchIntent && !opts.codeChangeIntent && !opts.investigateIntent && !opts.isGameMode && !opts.isChipMode && !opts.isPptMode) {
 		return false;
 	}
-	if (opts.codeChangeIntent || opts.investigateIntent || opts.isGameMode || opts.isChipMode) {
+	if (opts.codeChangeIntent || opts.investigateIntent || opts.isGameMode || opts.isChipMode || opts.isPptMode) {
 		return true;
 	}
 	if (hasTodoPlanningShape(message)) {
@@ -4494,6 +4524,19 @@ class ContinueChatAgentContribution extends Disposable implements IWorkbenchCont
 					description: localize(
 						'continue.chipAgentDescription',
 						"FPGA physical token sampler in chip-design/ — RTL, Yosys/openXC7, UART. No Godot.",
+					),
+				},
+			},
+			{
+				id: CONTINUE_AGENT_IDS.ppt,
+				name: 'PPT',
+				mode: ChatModeKind.Agent,
+				opts: {
+					isDefault: false,
+					fullName: 'PPT',
+					description: localize(
+						'continue.pptAgentDescription',
+						"Presentation design and slide deck generation powered by ppt-master. No Godot.",
 					),
 				},
 			},

@@ -3,7 +3,8 @@
 
 .monaco-workbench .codicon.codicon-mobius-mode-agent::before,
 .monaco-workbench .codicon.codicon-mobius-mode-game::before,
-.monaco-workbench .codicon.codicon-mobius-mode-chip::before {
+.monaco-workbench .codicon.codicon-mobius-mode-chip::before,
+.monaco-workbench .codicon.codicon-mobius-mode-ppt::before {
 	content: '' !important;
 	font-family: inherit !important;
 	display: inline-block;
@@ -35,4 +36,10 @@
 .monaco-workbench .codicon.codicon-mobius-mode-chip::before {
 	-webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M9 3h2v2H9V3zm4 0h2v2h-2V3zM9 19h2v2H9v-2zm4 0h2v2h-2v-2zM3 9h2v2H3V9zm0 4h2v2H3v-2zm16-4h2v2h-2V9zm0 4h2v2h-2v-2zM6 6h12v12H6V6zm2 2v8h8V8H8z'/%3E%3C/svg%3E");
 	mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M9 3h2v2H9V3zm4 0h2v2h-2V3zM9 19h2v2H9v-2zm4 0h2v2h-2v-2zM3 9h2v2H3V9zm0 4h2v2H3v-2zm16-4h2v2h-2V9zm0 4h2v2h-2v-2zM6 6h12v12H6V6zm2 2v8h8V8H8z'/%3E%3C/svg%3E");
+}
+
+/* Presentation Screen / Slides — PPT */
+.monaco-workbench .codicon.codicon-mobius-mode-ppt::before {
+	-webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M19 3H5c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h6v2H8v2h8v-2h-3v-2h6c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 12H5V5h14v10z'/%3E%3Cpath fill='black' d='M7 10h4v3H7zm0-3h10v2H7zm6 3h4v1h-4zm0 2h3v1h-3z'/%3E%3C/svg%3E");
+	mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M19 3H5c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h6v2H8v2h8v-2h-3v-2h6c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 12H5V5h14v10z'/%3E%3Cpath fill='black' d='M7 10h4v3H7zm0-3h10v2H7zm6 3h4v1h-4zm0 2h3v1h-3z'/%3E%3C/svg%3E");
 }

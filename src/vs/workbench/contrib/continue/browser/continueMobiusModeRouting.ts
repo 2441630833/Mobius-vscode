@@ -9,7 +9,8 @@ import { URI } from '../../../../base/common/uri.js';
 import { ChatMode, IChatMode, IChatModeService, IChatModes } from '../../chat/common/chatModes.js';
 import { hasChipDesignIntent } from './continueChipDesign.js';
 import { hasGameDevIntent } from './continueGodotTools.js';
-import { isMobiusAgentMode, isMobiusChipMode, isMobiusGameMode } from './continueMobiusModeIcons.js';
+import { hasPptIntent } from './continuePptMode.js';
+import { isMobiusAgentMode, isMobiusChipMode, isMobiusGameMode, isMobiusPptMode } from './continueMobiusModeIcons.js';
 
 export { getMobiusChatModeIcon } from './continueMobiusModeIcons.js';
 
@@ -21,6 +22,7 @@ export function getMobiusChatModes(modes: IChatModes): IChatMode[] {
 		ChatMode.Agent,
 		modes.findModeByName('Game'),
 		modes.findModeByName('Chip'),
+		modes.findModeByName('PPT'),
 	]);
 }
 
@@ -40,7 +42,16 @@ export function getMobiusModePickerHoverContent(mode: IChatMode): MarkdownString
 		return new MarkdownString(
 			localize(
 				'mobius.modeHover.chip',
-				"**Chip** — FPGA physical token sampler under `chip-design/`.\n\n- Edit RTL, lint/simulate, synthesize with Yosys + openXC7 (no Docker), flash Arty A7, sample tokens over UART\n- Thermal-noise TRNG + stochastic softmax — not a software PRNG\n- Does **not** auto-open Godot. Missing board is normal: stay on lint/sim\n\n_Use **Agent** for general coding; **Game** for Godot._",
+				"**Chip** — FPGA physical token sampler under `chip-design/`.\n\n- Edit RTL, lint/simulate, synthesize with Yosys + openXC7 (no Docker), flash Arty A7, sample tokens over UART\n- Thermal-noise TRNG + stochastic softmax — not a software PRNG\n- Does **not** auto-open Godot. Missing board is normal: stay on lint/sim\n\n_Use **Agent** for general coding; **Game** for Godot; **PPT** for presentations._",
+			),
+			{ isTrusted: true },
+		);
+	}
+	if (name === 'PPT') {
+		return new MarkdownString(
+			localize(
+				'mobius.modeHover.ppt',
+				"**PPT** — AI-powered presentation generation and slide design.\n\n- Generate structured presentation outlines, slide decks, and rich visual slides\n- End-to-end presentation authoring powered by ppt-master skills\n- Does **not** auto-open Godot\n\n_Use **Agent** for general coding; **Game** for Godot; **Chip** for FPGA._",
 			),
 			{ isTrusted: true },
 		);
@@ -49,7 +60,7 @@ export function getMobiusModePickerHoverContent(mode: IChatMode): MarkdownString
 		return new MarkdownString(
 			localize(
 				'mobius.modeHover.agent',
-				"**Agent** — general software development.\n\n- Edit files, terminal, search, todos, multi-step tasks\n- Does **not** auto-open Godot\n\n_Use **Game** for `game-dev/` with live Godot preview. Use **Chip** for FPGA sampling._",
+				"**Agent** — general software development.\n\n- Edit files, terminal, search, todos, multi-step tasks\n- Does **not** auto-open Godot\n\n_Use **Game** for `game-dev/` with live Godot preview. Use **Chip** for FPGA sampling. Use **PPT** for presentations._",
 			),
 			{ isTrusted: true },
 		);
@@ -65,6 +76,9 @@ export function getMobiusModePickerDetailLine(mode: IChatMode): string | undefin
 	}
 	if (isMobiusChipMode(mode)) {
 		return localize('mobius.modeDetail.chip', "FPGA sampler · no auto Godot");
+	}
+	if (isMobiusPptMode(mode)) {
+		return localize('mobius.modeDetail.ppt', "Make presentations · slide design");
 	}
 	if (isMobiusAgentMode(mode)) {
 		return localize('mobius.modeDetail.agent', "General coding · no auto Godot");
@@ -86,7 +100,7 @@ export function normalizeMobiusChatMode(mode: IChatMode | undefined): IChatMode 
 	return mode;
 }
 
-export type MobiusRoutableMode = 'agent' | 'game' | 'chip';
+export type MobiusRoutableMode = 'agent' | 'game' | 'chip' | 'ppt';
 
 export interface IMobiusModeInference {
 	readonly mode: MobiusRoutableMode;
@@ -102,6 +116,7 @@ export interface IMobiusModeAutoSwitch {
 const MOBIUS_MODE_SWITCH_REASON_LABELS: Record<string, string> = {
 	'game-dev-keywords': localize('mobius.modeSwitchReason.game', "game development task"),
 	'chip-design-keywords': localize('mobius.modeSwitchReason.chip', "chip design task"),
+	'ppt-keywords': localize('mobius.modeSwitchReason.ppt', "presentation task"),
 	'implementation-keywords': localize('mobius.modeSwitchReason.agent', "implementation task"),
 	'slash-override': localize('mobius.modeSwitchReason.slash', "slash command"),
 };
@@ -122,8 +137,8 @@ export function formatMobiusModeAutoSwitchMessage(switchInfo: IMobiusModeAutoSwi
 /** Copy-paste prompts to manually verify each mode (picker label + behavior). */
 export const MOBIUS_MODE_TEST_PROMPTS: Readonly<Record<MobiusRoutableMode, { zh: string; en: string; expect: string }>> = {
 	agent: {
-		zh: '在 README.md 末尾加一行说明 Mobius 支持 Agent、Game 和 Chip 三种模式，直接改文件并保存。',
-		en: 'Add one sentence to README.md documenting Mobius Agent, Game, and Chip modes, then save the file.',
+		zh: '在 README.md 末尾加一行说明 Mobius 支持 Agent、Game、Chip 和 PPT 四种模式，直接改文件并保存。',
+		en: 'Add one sentence to README.md documenting Mobius Agent, Game, Chip, and PPT modes, then save the file.',
 		expect: 'Uses write/edit tools; may change the workspace.',
 	},
 	game: {
@@ -136,9 +151,14 @@ export const MOBIUS_MODE_TEST_PROMPTS: Readonly<Record<MobiusRoutableMode, { zh:
 		en: 'In chip-design/, detect the FPGA sampler toolchain, then lint and simulate the RTL. Do not open Godot.',
 		expect: 'FPGA loop: detect, lint, simulate; no Godot.',
 	},
+	ppt: {
+		zh: '制作一份关于人工智能发展历程的PPT，生成大纲和幻灯片内容。不要打开 Godot。',
+		en: 'Create a slide deck about the history of artificial intelligence, generating outline and slides. Do not open Godot.',
+		expect: 'PPT loop: outline, slide design, presentation authoring; no Godot.',
+	},
 };
 
-const SLASH_OVERRIDE = /^\/(agent|game|chip|ask|plan)\b(?:\s|$)/i;
+const SLASH_OVERRIDE = /^\/(agent|game|chip|ppt|ask|plan)\b(?:\s|$)/i;
 
 const AGENT_SIGNAL = /\b(implement|fix|add|create|refactor|patch|commit|update|change|modify|write|build|scaffold|migrate|rename|delete|remove|run tests|apply)\b|实现|修复|添加|修改|重构|直接改|帮我改|创建文件|写代码/i;
 
@@ -157,11 +177,18 @@ export function inferMobiusModeFromPrompt(message: string): IMobiusModeInference
 		if (raw === 'chip') {
 			return { mode: 'chip', reason: 'slash-override' };
 		}
+		if (raw === 'ppt') {
+			return { mode: 'ppt', reason: 'slash-override' };
+		}
 		return { mode: 'agent', reason: 'slash-override' };
 	}
 
 	if (hasChipDesignIntent(text)) {
 		return { mode: 'chip', reason: 'chip-design-keywords' };
+	}
+
+	if (hasPptIntent(text)) {
+		return { mode: 'ppt', reason: 'ppt-keywords' };
 	}
 
 	if (hasGameDevIntent(text)) {
@@ -187,7 +214,13 @@ export async function resolveMobiusChatMode(
 	const modes = chatModeService.createModes(sessionResource);
 	try {
 		await modes.waitForPendingUpdates();
-		return mode === 'chip' ? modes.findModeByName('Chip') : modes.findModeByName('Game');
+		if (mode === 'chip') {
+			return modes.findModeByName('Chip');
+		}
+		if (mode === 'ppt') {
+			return modes.findModeByName('PPT');
+		}
+		return modes.findModeByName('Game');
 	} finally {
 		modes.dispose();
 	}

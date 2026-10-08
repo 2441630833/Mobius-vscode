@@ -49,6 +49,7 @@ import { getActiveRsiController } from './continueRsiController.js';
 import { registerContinueMobiusBundledAgentsContribution } from './continueMobiusBundledAgents.js';
 import { registerContinueGameFactory3AWorkflowContribution } from './continueGameFactory3AWorkflow.js';
 import { registerContinueGameStudioWorkflowContribution } from './continueGameStudioWorkflow.js';
+import { registerContinueGodogenWorkflowContribution } from './continueGodogenWorkflow.js';
 import './mobiusCommitAction.js';
 import { IWorkspaceTrustEnablementService, IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
@@ -66,6 +67,7 @@ if (isContinuePhysicalAiIde()) {
 	registerIcon('mobius-mode-agent', Codicon.circleSmall, localize('mobiusModeIcon.agent', "Mobius Agent mode icon"));
 	registerIcon('mobius-mode-game', Codicon.game, localize('mobiusModeIcon.game', "Mobius Game mode icon"));
 	registerIcon('mobius-mode-chip', Codicon.chip, localize('mobiusModeIcon.chip', "Mobius Chip mode icon"));
+	registerIcon('mobius-mode-ppt', Codicon.fileMedia, localize('mobiusModeIcon.ppt', "Mobius PPT mode icon"));
 
 	Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
 		id: 'mobiusGithubMcpStub',
@@ -158,7 +160,7 @@ if (isContinuePhysicalAiIde()) {
 			'mobius.autoModeRouting.enabled': {
 				type: 'boolean',
 				default: true,
-				description: 'When enabled, the Agents composer infers Agent, Game, or Chip from each outgoing message and switches the mode picker before send. Use /agent, /game, or /chip at the start of a message to force a mode (/ask and /plan map to Agent).',
+				description: 'When enabled, the Agents composer infers Agent, Game, Chip, or PPT from each outgoing message and switches the mode picker before send. Use /agent, /game, /chip, or /ppt at the start of a message to force a mode (/ask and /plan map to Agent).',
 			},
 		},
 	});
@@ -189,6 +191,7 @@ registerContinueChatAgentContribution();
 registerContinueMobiusBundledAgentsContribution();
 registerContinueGameStudioWorkflowContribution();
 registerContinueGameFactory3AWorkflowContribution();
+registerContinueGodogenWorkflowContribution();
 
 /**
  * Mobius is a local dev environment — auto-trust opened folders so
