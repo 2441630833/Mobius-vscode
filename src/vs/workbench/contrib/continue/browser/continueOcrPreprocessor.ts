@@ -12,6 +12,7 @@ import { ILogService } from '../../../../platform/log/common/log.js';
 import {
 	ChatImageMimeType,
 	IChatMessageImagePart,
+	IChatMessagePart,
 } from '../../chat/common/languageModels.js';
 import {
 	IChatRequestVariableEntry,
@@ -27,6 +28,7 @@ import { BUNDLED_ONNX_OCR, CONTINUE_CANCEL_GLM_OCR, CONTINUE_RUN_GLM_OCR } from 
 /** CPU-only hosts often need >60s for cold ONNX load + vision encode. */
 const OCR_REQUEST_TIMEOUT_MS = 180_000;
 const OCR_MAX_IMAGES = 4;
+const OCR_MAX_MEDIA_ITEMS = 6;
 const OCR_MAX_CHARS_PER_IMAGE = 12_000;
 /** Cap generation — GLM-OCR on CPU otherwise burns the whole timeout emitting empty fences. */
 const OCR_MAX_NEW_TOKENS = 512;
@@ -35,6 +37,8 @@ const IMAGE_EXT_RE = new RegExp(
 	`\\.(${Object.keys(CHAT_ATTACHABLE_IMAGE_MIME_TYPES).join('|')}|bmp)$`,
 	'i',
 );
+
+export const VIDEO_EXT_RE = /\.(mp4|webm|mov|mkv|avi|mpg|mpeg|m4v)$/i;
 
 const OCR_PROMPT = `Text Recognition: Extract all readable text from this image in reading order.
 Preserve simple table structure with plain text or a single markdown table when helpful.
@@ -121,38 +125,76 @@ export async function preprocessAgentRequestOcr(
 	return { extractBlock, imageCount: limited.length, successCount, unresolvedAttachments: unresolved, lastError };
 }
 
+export interface ContinueMediaInput {
+	readonly name: string;
+	readonly mimeType: string;
+	readonly base64: string;
+	readonly isVideo: boolean;
+}
+
 /**
- * Collect attached images as {@link IChatMessageImagePart} for direct multimodal
- * delivery to vision-capable chat models (skips local OCR).
- * ponytail: cap at 4 images / 5MB each — matches OCR path and the chat image limit.
+ * Collect attached images and videos as {@link IChatMessagePart} for direct multimodal
+ * delivery to cloud API providers (skips local OCR).
+ */
+export async function collectAgentRequestMediaParts(
+	request: IChatAgentRequest,
+	fileService: IFileService,
+	logService: ILogService,
+): Promise<{ parts: IChatMessagePart[]; unresolved: number; imageCount: number; videoCount: number; mediaCount: number }> {
+	const { items, unresolved } = await collectAgentRequestMediaItems(request, fileService, logService);
+	const limited = items.slice(0, OCR_MAX_MEDIA_ITEMS);
+	const parts: IChatMessagePart[] = [];
+	let imageCount = 0;
+	let videoCount = 0;
+
+	for (const item of limited) {
+		let bytes: Uint8Array;
+		try {
+			bytes = decodeBase64(item.base64).buffer;
+		} catch {
+			logService.warn(`[Continue][Media] Could not decode base64 for ${item.name}`);
+			continue;
+		}
+
+		if (item.isVideo || item.mimeType.toLowerCase().startsWith('video/')) {
+			videoCount++;
+			parts.push({
+				type: 'data',
+				mimeType: item.mimeType || 'video/mp4',
+				data: VSBuffer.wrap(bytes),
+			});
+		} else {
+			imageCount++;
+			const chatImageMime = toChatImageMimeType(item.mimeType);
+			if (chatImageMime) {
+				parts.push({
+					type: 'image_url',
+					value: { mimeType: chatImageMime, data: VSBuffer.wrap(bytes) },
+				});
+			} else {
+				parts.push({
+					type: 'data',
+					mimeType: item.mimeType || 'image/png',
+					data: VSBuffer.wrap(bytes),
+				});
+			}
+		}
+	}
+
+	return { parts, unresolved, imageCount, videoCount, mediaCount: limited.length };
+}
+
+/**
+ * Backward-compatible helper: collects attached images as {@link IChatMessageImagePart}.
  */
 export async function collectAgentRequestImageParts(
 	request: IChatAgentRequest,
 	fileService: IFileService,
 	logService: ILogService,
 ): Promise<{ parts: IChatMessageImagePart[]; unresolved: number; imageCount: number }> {
-	const { images, unresolved } = await collectAgentRequestImages(request, fileService, logService);
-	const limited = images.slice(0, OCR_MAX_IMAGES);
-	const parts: IChatMessageImagePart[] = [];
-	for (const image of limited) {
-		const mimeType = toChatImageMimeType(image.mimeType);
-		if (!mimeType) {
-			logService.warn(`[Continue][Vision] Unsupported image MIME ${image.mimeType} for ${image.name}`);
-			continue;
-		}
-		let bytes: Uint8Array;
-		try {
-			bytes = decodeBase64(image.base64).buffer;
-		} catch {
-			logService.warn(`[Continue][Vision] Could not decode base64 for ${image.name}`);
-			continue;
-		}
-		parts.push({
-			type: 'image_url',
-			value: { mimeType, data: VSBuffer.wrap(bytes) },
-		});
-	}
-	return { parts, unresolved, imageCount: limited.length };
+	const collected = await collectAgentRequestMediaParts(request, fileService, logService);
+	const imageParts = collected.parts.filter((p): p is IChatMessageImagePart => p.type === 'image_url');
+	return { parts: imageParts, unresolved: collected.unresolved, imageCount: collected.imageCount };
 }
 
 function toChatImageMimeType(mime: string | undefined): ChatImageMimeType | undefined {
@@ -166,6 +208,39 @@ function toChatImageMimeType(mime: string | undefined): ChatImageMimeType | unde
 		case 'image/x-ms-bmp': return ChatImageMimeType.BMP;
 		default: return undefined;
 	}
+}
+
+async function collectAgentRequestMediaItems(
+	request: IChatAgentRequest,
+	fileService: IFileService,
+	logService: ILogService,
+): Promise<{ items: ContinueMediaInput[]; unresolved: number }> {
+	const out: ContinueMediaInput[] = [];
+	let unresolved = 0;
+	const variables = request.variables?.variables ?? [];
+
+	for (const entry of variables) {
+		const isImg = isLikelyImageAttachment(entry);
+		const isVid = isLikelyVideoAttachment(entry);
+		if (!isImg && !isVid) {
+			continue;
+		}
+
+		const resolved = await resolveMediaBytes(entry, fileService, logService, isVid);
+		if (!resolved) {
+			unresolved++;
+			continue;
+		}
+
+		out.push({
+			name: entry.name || (isVid ? `video-${out.length + 1}` : `image-${out.length + 1}`),
+			mimeType: resolved.mimeType,
+			base64: encodeBase64(VSBuffer.wrap(resolved.bytes)),
+			isVideo: isVid || resolved.mimeType.toLowerCase().startsWith('video/'),
+		});
+	}
+
+	return { items: out, unresolved };
 }
 
 async function collectAgentRequestImages(
@@ -182,7 +257,7 @@ async function collectAgentRequestImages(
 			continue;
 		}
 
-		const resolved = await resolveImageBytes(entry, fileService, logService);
+		const resolved = await resolveMediaBytes(entry, fileService, logService, false);
 		if (!resolved) {
 			unresolved++;
 			continue;
@@ -198,7 +273,7 @@ async function collectAgentRequestImages(
 	return { images: out, unresolved };
 }
 
-function isLikelyImageAttachment(entry: IChatRequestVariableEntry): boolean {
+export function isLikelyImageAttachment(entry: IChatRequestVariableEntry): boolean {
 	if (isImageVariableEntry(entry)) {
 		return true;
 	}
@@ -207,12 +282,31 @@ function isLikelyImageAttachment(entry: IChatRequestVariableEntry): boolean {
 	}
 	const uri = entryUri(entry);
 	if (!uri) {
-		return false;
+		return typeof entry.name === 'string' && IMAGE_EXT_RE.test(entry.name);
 	}
 	if (isChatRequestFileEntry(entry) || entry.kind === 'implicit') {
 		return IMAGE_EXT_RE.test(uri.path) || !!getMediaMime(uri.path)?.startsWith('image/');
 	}
 	return false;
+}
+
+export function isLikelyVideoAttachment(entry: IChatRequestVariableEntry): boolean {
+	const entryMime = (entry as { mimeType?: unknown }).mimeType;
+	if (typeof entryMime === 'string' && entryMime.toLowerCase().startsWith('video/')) {
+		return true;
+	}
+	const uri = entryUri(entry);
+	if (!uri) {
+		return typeof entry.name === 'string' && VIDEO_EXT_RE.test(entry.name);
+	}
+	if (isChatRequestFileEntry(entry) || entry.kind === 'implicit') {
+		return VIDEO_EXT_RE.test(uri.path) || !!getMediaMime(uri.path)?.startsWith('video/');
+	}
+	return false;
+}
+
+export function isLikelyMediaAttachment(entry: IChatRequestVariableEntry): boolean {
+	return isLikelyImageAttachment(entry) || isLikelyVideoAttachment(entry);
 }
 
 function entryUri(entry: IChatRequestVariableEntry): URI | undefined {
@@ -229,10 +323,11 @@ function entryUri(entry: IChatRequestVariableEntry): URI | undefined {
 	return URI.isUri(ref) ? ref : undefined;
 }
 
-async function resolveImageBytes(
+async function resolveMediaBytes(
 	entry: IChatRequestVariableEntry,
 	fileService: IFileService,
 	logService: ILogService,
+	preferVideo = false,
 ): Promise<{ bytes: Uint8Array; mimeType: string } | undefined> {
 	let bytes = coerceImageBuffer(entry.value);
 
@@ -254,22 +349,25 @@ async function resolveImageBytes(
 				const file = await fileService.readFile(uri);
 				bytes = file.value.buffer;
 			} catch (err) {
-				logService.warn(`[Continue][OCR] Could not read image URI ${uri.toString()}: ${err instanceof Error ? err.message : String(err)}`);
+				logService.warn(`[Continue][Media] Could not read media URI ${uri.toString()}: ${err instanceof Error ? err.message : String(err)}`);
 			}
 		} else {
-			logService.warn(`[Continue][OCR] Unsupported image URI scheme for ${entry.name}: ${uri.scheme}`);
+			logService.warn(`[Continue][Media] Unsupported media URI scheme for ${entry.name}: ${uri.scheme}`);
 		}
 	}
 
 	if (!bytes || bytes.byteLength === 0) {
-		logService.warn(`[Continue][OCR] No bytes for attachment kind=${entry.kind} name=${entry.name}`);
+		logService.warn(`[Continue][Media] No bytes for attachment kind=${entry.kind} name=${entry.name}`);
 		return undefined;
 	}
 
+	const explicitMime = isImageVariableEntry(entry)
+		? entry.mimeType
+		: (isNotebookOutputVariableEntry(entry) ? entry.mimeType : undefined);
 	const mimeType =
-		(isImageVariableEntry(entry) || isNotebookOutputVariableEntry(entry) ? entry.mimeType : undefined)
+		explicitMime
 		?? (uri ? getMediaMime(uri.path) : undefined)
-		?? 'image/png';
+		?? (preferVideo ? 'video/mp4' : 'image/png');
 
 	return { bytes, mimeType };
 }

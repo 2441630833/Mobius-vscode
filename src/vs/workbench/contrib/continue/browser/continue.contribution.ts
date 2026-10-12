@@ -50,6 +50,7 @@ import { registerContinueMobiusBundledAgentsContribution } from './continueMobiu
 import { registerContinueGameFactory3AWorkflowContribution } from './continueGameFactory3AWorkflow.js';
 import { registerContinueGameStudioWorkflowContribution } from './continueGameStudioWorkflow.js';
 import { registerContinueGodogenWorkflowContribution } from './continueGodogenWorkflow.js';
+import { registerContinueLocalOcrAction, LocalOcrActionViewItemContribution, CONTINUE_LOCAL_OCR_ENABLED_SETTING } from './continueOcrAction.js';
 import './mobiusCommitAction.js';
 import { IWorkspaceTrustEnablementService, IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
@@ -161,6 +162,19 @@ if (isContinuePhysicalAiIde()) {
 				type: 'boolean',
 				default: true,
 				description: 'When enabled, the Agents composer infers Agent, Game, Chip, or PPT from each outgoing message and switches the mode picker before send. Use /agent, /game, /chip, or /ppt at the start of a message to force a mode (/ask and /plan map to Agent).',
+			},
+		},
+	});
+
+	Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+		id: 'continueLocalOcr',
+		title: 'Mobius Local OCR',
+		type: 'object',
+		properties: {
+			[CONTINUE_LOCAL_OCR_ENABLED_SETTING]: {
+				type: 'boolean',
+				default: true,
+				description: 'When enabled, local GLM-OCR ONNX extracts text from attached images before sending to text-only models. Disable via toolbar button or setting to bypass local OCR and pass images and video files directly to multimodal API providers.',
 			},
 		},
 	});
@@ -657,6 +671,7 @@ registerWorkbenchContribution2(PhysicalAiWorkspaceTrustContribution.ID, Physical
 registerWorkbenchContribution2(ContinueAgentsDefaultsContribution.ID, ContinueAgentsDefaultsContribution, WorkbenchPhase.BlockStartup);
 registerWorkbenchContribution2(ContinueStartupContribution.ID, ContinueStartupContribution, WorkbenchPhase.AfterRestored);
 registerWorkbenchContribution2(ContinueLanguageModelContribution.ID, ContinueLanguageModelContribution, WorkbenchPhase.AfterRestored);
+registerWorkbenchContribution2(LocalOcrActionViewItemContribution.ID, LocalOcrActionViewItemContribution, WorkbenchPhase.AfterRestored);
 registerAction2(ReloadContinueLanguageModelsAction);
 registerAction2(FocusContinueChatAction);
 registerAction2(OpenModelProviderSettingsAction);
@@ -665,3 +680,4 @@ registerAction2(DeleteModelProviderAction);
 registerAction2(RsiEvaluateAction);
 registerAction2(RsiApproveAction);
 registerAction2(RsiRollbackAction);
+registerContinueLocalOcrAction();

@@ -207,7 +207,8 @@ export class ContinueLanguageModelProvider extends Disposable implements ILangua
 
 type OpenAIContentPart =
 	| { type: 'text'; text: string }
-	| { type: 'image_url'; image_url: { url: string } };
+	| { type: 'image_url'; image_url: { url: string } }
+	| { type: 'video_url'; video_url: { url: string } };
 
 type OpenAIMessage =
 	| {
@@ -268,13 +269,36 @@ function messagesToOpenAI(messages: IChatMessage[], entry: ContinueModelEntry): 
 					reasoningContent += value;
 				}
 			} else if (part.type === 'image_url') {
-				const mime = part.value.mimeType;
+				const mime = String(part.value.mimeType || 'image/png');
 				const data = part.value.data.buffer;
 				if (data?.byteLength) {
-					imageParts.push({
-						type: 'image_url',
-						image_url: { url: encodeDataUrl(mime, data) },
-					});
+					if (mime.toLowerCase().startsWith('video/')) {
+						imageParts.push({
+							type: 'video_url',
+							video_url: { url: encodeDataUrl(mime, data) },
+						});
+					} else {
+						imageParts.push({
+							type: 'image_url',
+							image_url: { url: encodeDataUrl(mime, data) },
+						});
+					}
+				}
+			} else if (part.type === 'data') {
+				const mime = String(part.mimeType || 'image/png');
+				const data = part.data.buffer;
+				if (data?.byteLength) {
+					if (mime.toLowerCase().startsWith('video/')) {
+						imageParts.push({
+							type: 'video_url',
+							video_url: { url: encodeDataUrl(mime, data) },
+						});
+					} else {
+						imageParts.push({
+							type: 'image_url',
+							image_url: { url: encodeDataUrl(mime, data) },
+						});
+					}
 				}
 			} else if (part.type === 'tool_use') {
 				toolCalls.push({
@@ -301,7 +325,7 @@ function messagesToOpenAI(messages: IChatMessage[], entry: ContinueModelEntry): 
 			continue;
 		}
 
-		// Multimodal content: emit OpenAI-style content array with text + image_url parts.
+		// Multimodal content: emit OpenAI-style content array with text + image_url / video_url parts.
 		const hasImages = imageParts.length > 0;
 		const contentValue: string | OpenAIContentPart[] = hasImages
 			? [

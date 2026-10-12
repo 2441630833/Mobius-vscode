@@ -74,6 +74,17 @@ const VISION_MODEL_PATTERNS: RegExp[] = [
 	/cogvlm/i,
 	/minicpm-?v/i,
 	/deepseek-?vl/i,
+	/multimodal/i,
+	/omni/i,
+	/video/i,
+	/kimi/i,
+	/moonshot/i,
+	/step(?:-|\b)/i,
+	/doubao.*vision/i,
+	/hunyuan.*vision/i,
+	/minimax.*vision/i,
+	/grok.*vision/i,
+	/sensechat/i,
 	/vision/i,
 	/(?:^|[-_])vl(?:[-_]|$)/i,    // explicit -vl- token
 ];
