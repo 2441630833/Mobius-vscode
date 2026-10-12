@@ -189,6 +189,8 @@ export class ChatAgentToolsContribution extends Disposable implements IWorkbench
 			store.add(this._toolsService.registerToolImplementation(runInTerminalToolData.id, this._runInTerminalTool));
 			store.add(this._toolsService.executeToolSet.addTool(runInTerminalToolData));
 			this._runInTerminalToolRegistration.value = store;
+		}).catch(err => {
+			console.error('[Terminal] Failed to register run_in_terminal tool:', err);
 		});
 	}
 }

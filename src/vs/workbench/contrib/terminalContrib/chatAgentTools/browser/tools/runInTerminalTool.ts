@@ -361,12 +361,31 @@ export async function createRunInTerminalToolData(
 	const retryWithAllowNetworkRequestsSetting = configurationService.getValue<boolean>(AgentSandboxSettingId.AgentSandboxRetryWithAllowNetworkRequests) === true;
 
 	const profileFetcher = instantiationService.createInstance(TerminalProfileFetcher);
-	const [shell, os, isSandboxEnabled, isSandboxAllowNetworkEnabled] = await Promise.all([
-		profileFetcher.getCopilotShell(),
-		profileFetcher.osBackend,
-		terminalSandboxService.isEnabled(),
-		terminalSandboxService.isSandboxAllowNetworkEnabled(),
-	]);
+	let shell: string | undefined;
+	let os: OperatingSystem = OS;
+	let isSandboxEnabled = false;
+	let isSandboxAllowNetworkEnabled = false;
+
+	try {
+		const [resolvedShell, resolvedOs, sandboxEnabled, sandboxNetwork] = await Promise.all([
+			profileFetcher.getCopilotShell().catch(() => undefined),
+			profileFetcher.osBackend.catch(() => OS),
+			terminalSandboxService.isEnabled().catch(() => false),
+			terminalSandboxService.isSandboxAllowNetworkEnabled().catch(() => false),
+		]);
+		shell = resolvedShell;
+		os = resolvedOs ?? OS;
+		isSandboxEnabled = !!sandboxEnabled;
+		isSandboxAllowNetworkEnabled = !!sandboxNetwork;
+	} catch {
+		// Retain safe defaults on error
+	}
+
+	if (!shell) {
+		shell = os === OperatingSystem.Windows
+			? 'powershell.exe'
+			: (os === OperatingSystem.Macintosh ? '/bin/zsh' : '/bin/bash');
+	}
 
 	const sandboxingOptions: ISandboxingOptions = (
 		isSandboxEnabled
@@ -3504,7 +3523,7 @@ class RestoredTerminalExecution extends Disposable implements IActiveTerminalExe
 
 export class TerminalProfileFetcher {
 
-	private static readonly _posixShellFallbacks = ['/bin/bash', '/usr/bin/bash', '/bin/sh'];
+	private static readonly _posixShellFallbacks = ['/bin/zsh', '/bin/bash', '/usr/bin/bash', '/bin/sh'];
 
 	readonly osBackend: Promise<OperatingSystem>;
 
@@ -3515,7 +3534,7 @@ export class TerminalProfileFetcher {
 		@IFileService private readonly _fileService: IFileService,
 		@ITerminalLogService private readonly _logService: ITerminalLogService,
 	) {
-		this.osBackend = this._remoteAgentService.getEnvironment().then(remoteEnv => remoteEnv?.os ?? OS);
+		this.osBackend = this._remoteAgentService.getEnvironment().then(remoteEnv => remoteEnv?.os ?? OS).catch(() => OS);
 	}
 
 	async getCopilotProfile(): Promise<ITerminalProfile> {
@@ -3528,10 +3547,27 @@ export class TerminalProfileFetcher {
 		}
 
 		// When setting is null, use the previous behavior
-		const defaultProfile = await this._terminalProfileResolverService.getDefaultProfile({
-			os,
-			remoteAuthority: this._remoteAgentService.getConnection()?.remoteAuthority
-		});
+		let defaultProfile: ITerminalProfile | undefined;
+		try {
+			defaultProfile = await this._terminalProfileResolverService.getDefaultProfile({
+				os,
+				remoteAuthority: this._remoteAgentService.getConnection()?.remoteAuthority
+			});
+		} catch (e) {
+			this._logService.warn('TerminalProfileFetcher: failed to resolve default terminal profile', e);
+		}
+
+		if (!defaultProfile || !defaultProfile.path) {
+			const fallbackPath = os === OperatingSystem.Windows
+				? 'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+				: (os === OperatingSystem.Macintosh ? '/bin/zsh' : '/bin/bash');
+			return {
+				profileName: os === OperatingSystem.Windows ? 'PowerShell' : (os === OperatingSystem.Macintosh ? 'zsh' : 'bash'),
+				path: fallbackPath,
+				icon: undefined,
+				isDefault: true,
+			};
+		}
 
 		// Force pwsh over cmd as cmd doesn't have shell integration
 		if (basename(defaultProfile.path) === 'cmd.exe') {

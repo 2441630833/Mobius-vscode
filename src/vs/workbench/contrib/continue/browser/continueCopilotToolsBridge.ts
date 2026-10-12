@@ -833,7 +833,20 @@ export async function tryInvokeCopilotTool(
 		}
 
 		// Terminal: reuse existing helper (parameter shape differs)
-		if (overlap.toolId === TerminalToolId.RunInTerminal || toolName === 'run_terminal_command' || toolName === 'run_in_terminal') {
+		if (
+			overlap.toolId === TerminalToolId.RunInTerminal ||
+			toolName === 'run_terminal_command' ||
+			toolName === 'run_in_terminal' ||
+			toolName === 'terminal' ||
+			toolName === 'terminal_command' ||
+			toolName === 'bash' ||
+			toolName === 'sh' ||
+			toolName === 'cmd' ||
+			toolName === 'execute_command' ||
+			toolName === 'run_command' ||
+			toolName === 'runCommand' ||
+			toolName === 'runInTerminal'
+		) {
 			const command = coerceTerminalCommandArg(args);
 			const waitForCompletion = args.waitForCompletion !== false && args.mode !== 'async';
 			const result = await executeRunTerminalCommand(
@@ -843,6 +856,7 @@ export async function tryInvokeCopilotTool(
 				command,
 				waitForCompletion,
 				token,
+				commandService,
 			);
 			return { ...result, handled: true };
 		}

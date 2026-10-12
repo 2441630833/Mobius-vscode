@@ -2,9 +2,11 @@
  *  Mobius — delegate Agents-window shell commands to VS Code run_in_terminal tool
  *--------------------------------------------------------------------------------------------*/
 
+import { timeout } from '../../../../base/common/async.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { URI } from '../../../../base/common/uri.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { TerminalToolId } from '../../chat/common/tools/terminalToolIds.js';
 import {
@@ -50,44 +52,83 @@ export async function executeRunTerminalCommand(
 	command: string,
 	waitForCompletion: boolean,
 	token: CancellationToken,
+	commandService?: ICommandService,
 ): Promise<{ ok: boolean; text: string }> {
 	const trimmed = command.trim();
 	if (!trimmed) {
 		return { ok: false, text: 'run_terminal_command requires a non-empty command' };
 	}
 
-	const tool = toolsService.getTool(TerminalToolId.RunInTerminal);
+	let tool = toolsService.getTool(TerminalToolId.RunInTerminal);
 	if (!tool) {
-		logService.warn('[Continue] run_in_terminal tool is not registered');
-		return { ok: false, text: 'Terminal tool is not available in this session' };
+		// Terminal tool might still be resolving its profile asynchronously; poll briefly
+		for (let i = 0; i < 15; i++) {
+			await timeout(100);
+			if (token.isCancellationRequested) {
+				break;
+			}
+			tool = toolsService.getTool(TerminalToolId.RunInTerminal);
+			if (tool) {
+				break;
+			}
+		}
 	}
 
-	const countTokens: CountTokensCallback = async () => 0;
+	if (tool) {
+		const countTokens: CountTokensCallback = async () => 0;
 
-	try {
-		const result = await toolsService.invokeTool({
-			callId: generateUuid(),
-			toolId: TerminalToolId.RunInTerminal,
-			chatRequestId: context.chatRequestId,
-			parameters: {
-				command: trimmed,
-				explanation: 'Mobius Continue Agent shell command',
-				goal: 'Execute user-requested terminal command',
-				mode: waitForCompletion === false ? 'async' : 'sync',
-			},
-			context: {
-				sessionResource: context.sessionResource,
-				workingDirectory: context.workingDirectory,
-			},
-		}, countTokens, token);
+		try {
+			const result = await toolsService.invokeTool({
+				callId: generateUuid(),
+				toolId: TerminalToolId.RunInTerminal,
+				chatRequestId: context.chatRequestId,
+				parameters: {
+					command: trimmed,
+					explanation: 'Mobius Continue Agent shell command',
+					goal: 'Execute user-requested terminal command',
+					mode: waitForCompletion === false ? 'async' : 'sync',
+				},
+				context: {
+					sessionResource: context.sessionResource,
+					workingDirectory: context.workingDirectory,
+				},
+			}, countTokens, token);
 
-		const text = formatToolResult(result);
-		const ok = !result.toolResultError;
-		return { ok, text: text || (ok ? '(command completed with no output)' : 'Terminal command failed') };
-	} catch (err) {
-		logService.warn('[Continue] run_terminal_command failed', err);
-		return { ok: false, text: err instanceof Error ? err.message : String(err) };
+			const text = formatToolResult(result);
+			const ok = !result.toolResultError;
+			return { ok, text: text || (ok ? '(command completed with no output)' : 'Terminal command failed') };
+		} catch (err) {
+			logService.warn('[Continue] run_in_terminal tool invocation failed, attempting fallback', err);
+		}
 	}
+
+	// Fallback path: execute via Continue core tool bridge
+	if (commandService) {
+		try {
+			logService.info('[Continue] Executing terminal command via continue.callBuiltInTool fallback');
+			const result = await commandService.executeCommand<{
+				ok?: boolean;
+				text?: string;
+				errorMessage?: string;
+				contextItems?: Array<{ content?: string }>;
+			}>('continue.callBuiltInTool', {
+				name: 'run_terminal_command',
+				arguments: { command: trimmed },
+				workingDirectory: context.workingDirectory?.toString(),
+			});
+
+			if (result) {
+				const text = result.text ?? result.contextItems?.map(i => i.content).join('\n') ?? result.errorMessage ?? '';
+				const ok = result.ok !== false && !result.errorMessage;
+				return { ok, text: text || (ok ? '(command completed with no output)' : 'Terminal command failed') };
+			}
+		} catch (fallbackErr) {
+			logService.warn('[Continue] continue.callBuiltInTool terminal fallback failed', fallbackErr);
+		}
+	}
+
+	logService.warn('[Continue] run_in_terminal tool is not registered and fallback failed');
+	return { ok: false, text: 'Terminal tool is not available in this session' };
 }
 
 function formatToolResult(result: IToolResult): string {

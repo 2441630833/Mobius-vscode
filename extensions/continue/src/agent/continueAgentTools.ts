@@ -195,6 +195,14 @@ export function formatContextItemsAsText(items: ContextItem[]): string {
 
 /** Whether a tool name should be delegated to Continue core callBuiltInTool. */
 export function isCoreBuiltInTool(toolName: string): boolean {
+  if (
+    toolName === BuiltInToolNames.RunTerminalCommand ||
+    toolName === "run_terminal_command" ||
+    toolName === "run_in_terminal" ||
+    toolName === "terminal"
+  ) {
+    return true;
+  }
   return !WORKBENCH_LOCAL_TOOL_NAMES.has(toolName);
 }
 

@@ -2753,7 +2753,19 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			}
 
 			// Continue fallbacks (when Copilot tool missing or Continue-only tool).
-			if (effectiveName === 'run_terminal_command' || effectiveName === 'run_in_terminal') {
+			if (
+				effectiveName === 'run_terminal_command' ||
+				effectiveName === 'run_in_terminal' ||
+				effectiveName === 'terminal' ||
+				effectiveName === 'terminal_command' ||
+				effectiveName === 'bash' ||
+				effectiveName === 'sh' ||
+				effectiveName === 'cmd' ||
+				effectiveName === 'execute_command' ||
+				effectiveName === 'run_command' ||
+				effectiveName === 'runCommand' ||
+				effectiveName === 'runInTerminal'
+			) {
 				const command = coerceTerminalCommandParam(params) ?? '';
 				const waitForCompletion = params.waitForCompletion !== false && params.mode !== 'async';
 				return executeRunTerminalCommand(
@@ -2763,6 +2775,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					command,
 					waitForCompletion,
 					token,
+					this._commandService,
 				);
 			}
 
@@ -3044,6 +3057,16 @@ function remapCopilotNameToContinueFallback(name: string): string | undefined {
 		case 'get_errors':
 			return 'get_problems';
 		case 'run_in_terminal':
+		case 'run_terminal_command':
+		case 'terminal':
+		case 'terminal_command':
+		case 'bash':
+		case 'sh':
+		case 'cmd':
+		case 'execute_command':
+		case 'run_command':
+		case 'runCommand':
+		case 'runInTerminal':
 			return 'run_terminal_command';
 		case 'read_file':
 			return 'read_file';
