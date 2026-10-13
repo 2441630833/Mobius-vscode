@@ -35,6 +35,7 @@ import { ILifecycleMainService } from '../../lifecycle/electron-main/lifecycleMa
 import { ILogService } from '../../log/common/log.js';
 import { FocusMode } from '../../native/common/native.js';
 import product from '../../product/common/product.js';
+import { isMobiusProduct } from '../../product/common/mobiusAgentsStartup.js';
 import { IProtocolMainService } from '../../protocol/electron-main/protocol.js';
 import { getRemoteAuthority } from '../../remote/common/remoteHosts.js';
 import { IStateService } from '../../state/node/state.js';
@@ -429,6 +430,12 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 			// 1.) focus window we opened files in always with highest priority
 			if (filesOpenedInWindow) {
 				filesOpenedInWindow.focus();
+			}
+
+			// In Mobius, if an agents window was opened, prioritize focusing the agents window
+			else if (isMobiusProduct(product.defaultChatAgent?.extensionId) && usedWindows.some(w => w.config?.isSessionsWindow)) {
+				const agentsWindow = usedWindows.find(w => w.config?.isSessionsWindow);
+				agentsWindow?.focus();
 			}
 
 			// Otherwise, find a good window based on open params
@@ -1064,23 +1071,10 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 	}
 
 	/**
-	 * Mobius uses Continue without sign-in — do not restore the agents-only
-	 * workspace on startup unless the user explicitly launched with `--agents`.
+	 * Do not strip agents-only workspace on session restore: Mobius defaults to Agent view.
 	 */
 	private filterAgentsWindowFromSessionRestore(paths: IPathToOpen[]): IPathToOpen[] {
-		if (product.defaultChatAgent?.extensionId !== 'Continue.continue') {
-			return paths;
-		}
-		if (this.environmentMainService.args['agents']) {
-			return paths;
-		}
-		const agentSessionsWorkspace = this.environmentMainService.agentSessionsWorkspace;
-		return paths.filter(path => {
-			if (!isWorkspacePathToOpen(path)) {
-				return true;
-			}
-			return !isEqual(path.workspace.configPath, agentSessionsWorkspace);
-		});
+		return paths;
 	}
 
 	private getRestoreWindowsSetting(): RestoreWindowsSetting {

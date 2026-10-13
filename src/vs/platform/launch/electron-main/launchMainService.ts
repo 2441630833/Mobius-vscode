@@ -145,9 +145,8 @@ export class LaunchMainService implements ILaunchMainService {
 			await this.windowsMainService.openExtensionDevelopmentHostWindow(args.extensionDevelopmentPath, baseConfig);
 		}
 
-		// Mobius: Windows toast / Start Menu activation often re-launches with empty args
-		// (or without an explicit new-window request). Always prefer focusing the already
-		// open window — never open a fresh IDE/Agents window for that activation.
+		// Mobius: when launched without paths/arguments, always route to Agent view:
+		// focus an already open Agents window, or open a new Agents window.
 		else if (
 			isMobiusProduct(product.defaultChatAgent?.extensionId) &&
 			!args['new-window'] &&
@@ -158,17 +157,12 @@ export class LaunchMainService implements ILaunchMainService {
 			!args.profile &&
 			!args['profile-temp']
 		) {
-			const lastActive = this.windowsMainService.getLastActiveWindow();
-			if (lastActive) {
-				this.windowsMainService.openExistingWindow(lastActive, baseConfig);
-				usedWindows = [lastActive];
-			} else if (shouldDefaultToAgentsWindow(args, product.defaultChatAgent?.extensionId)) {
-				usedWindows = await this.windowsMainService.openAgentsWindow(baseConfig);
+			const agentsWindow = this.windowsMainService.getWindows().find(window => window.config?.isSessionsWindow);
+			if (agentsWindow) {
+				this.windowsMainService.openExistingWindow(agentsWindow, baseConfig);
+				usedWindows = [agentsWindow];
 			} else {
-				usedWindows = await this.windowsMainService.open({
-					...baseConfig,
-					forceEmpty: true
-				});
+				usedWindows = await this.windowsMainService.openAgentsWindow(baseConfig);
 			}
 		}
 

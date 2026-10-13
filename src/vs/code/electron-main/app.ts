@@ -69,7 +69,7 @@ import { METERED_CONNECTION_CHANNEL } from '../../platform/meteredConnection/com
 import { MeteredConnectionChannel } from '../../platform/meteredConnection/electron-main/meteredConnectionChannel.js';
 import { MeteredConnectionMainService } from '../../platform/meteredConnection/electron-main/meteredConnectionMainService.js';
 import { IProductService } from '../../platform/product/common/productService.js';
-import { shouldDefaultToAgentsWindow } from '../../platform/product/common/mobiusAgentsStartup.js';
+import { isMobiusProduct, shouldDefaultToAgentsWindow } from '../../platform/product/common/mobiusAgentsStartup.js';
 import { getRemoteAuthority } from '../../platform/remote/common/remoteHosts.js';
 import { SharedProcess } from '../../platform/sharedProcess/electron-main/sharedProcess.js';
 import { ISignService } from '../../platform/sign/common/sign.js';
@@ -473,6 +473,17 @@ export class CodeApplication extends Disposable {
 		app.on('activate', async (event, hasVisibleWindows) => {
 			this.logService.trace('app#activate');
 
+			// Mobius defaults to Agent view on macOS activation
+			if (isMobiusProduct(this.productService.defaultChatAgent?.extensionId)) {
+				const agentsWindow = this.windowsMainService?.getWindows().find(window => window.config?.isSessionsWindow);
+				if (agentsWindow) {
+					this.windowsMainService?.openExistingWindow(agentsWindow, { context: OpenContext.DOCK, cli: this.environmentMainService.args });
+				} else {
+					await this.windowsMainService?.openAgentsWindow({ context: OpenContext.DOCK, cli: this.environmentMainService.args });
+				}
+				return;
+			}
+
 			// Mac only event: open new window when we get activated
 			if (!hasVisibleWindows) {
 				await this.windowsMainService?.openEmptyWindow({ context: OpenContext.DOCK });
@@ -563,7 +574,11 @@ export class CodeApplication extends Disposable {
 		});
 
 		app.on('new-window-for-tab', async () => {
-			await this.windowsMainService?.openEmptyWindow({ context: OpenContext.DESKTOP }); //macOS native tab "+" button
+			if (isMobiusProduct(this.productService.defaultChatAgent?.extensionId)) {
+				await this.windowsMainService?.openAgentsWindow({ context: OpenContext.DESKTOP, cli: this.environmentMainService.args });
+			} else {
+				await this.windowsMainService?.openEmptyWindow({ context: OpenContext.DESKTOP }); //macOS native tab "+" button
+			}
 		});
 
 		//#region Bootstrap IPC Handlers

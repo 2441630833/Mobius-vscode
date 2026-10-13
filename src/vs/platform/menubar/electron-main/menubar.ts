@@ -19,6 +19,7 @@ import { ILogService } from '../../log/common/log.js';
 import { IMenubarData, IMenubarKeybinding, IMenubarMenu, IMenubarMenuRecentItemAction, isMenubarMenuItemAction, isMenubarMenuItemRecentAction, isMenubarMenuItemSeparator, isMenubarMenuItemSubmenu, MenubarMenuItem } from '../common/menubar.js';
 import { INativeHostMainService } from '../../native/electron-main/nativeHostMainService.js';
 import { IProductService } from '../../product/common/productService.js';
+import { isMobiusProduct } from '../../product/common/mobiusAgentsStartup.js';
 import { IStateService } from '../../state/node/state.js';
 import { ITelemetryService } from '../../telemetry/common/telemetry.js';
 import { IUpdateService, StateType } from '../../update/common/update.js';
@@ -292,7 +293,16 @@ export class Menubar extends Disposable {
 			this.appMenuInstalled = true;
 
 			const dockMenu = new Menu();
-			dockMenu.append(new MenuItem({ label: this.mnemonicLabel(nls.localize({ key: 'miNewWindow', comment: ['&& denotes a mnemonic'] }, "New &&Window")), click: () => this.windowsMainService.openEmptyWindow({ context: OpenContext.DOCK }) }));
+			dockMenu.append(new MenuItem({
+				label: this.mnemonicLabel(nls.localize({ key: 'miNewWindow', comment: ['&& denotes a mnemonic'] }, "New &&Window")),
+				click: () => {
+					if (isMobiusProduct(this.productService.defaultChatAgent?.extensionId)) {
+						this.windowsMainService.openAgentsWindow({ context: OpenContext.DOCK, cli: this.environmentMainService.args });
+					} else {
+						this.windowsMainService.openEmptyWindow({ context: OpenContext.DOCK });
+					}
+				}
+			}));
 
 			app.dock!.setMenu(dockMenu);
 		}
