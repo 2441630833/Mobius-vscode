@@ -1,6 +1,7 @@
 {
 	"nameShort": "Mobius",
 	"nameLong": "Mobius",
+	"mobiusVersion": "1.0.4",
 	"applicationName": "mobius",
 	"dataFolderName": ".mobius",
 	"sharedDataFolderName": ".mobius-shared",
@@ -88,6 +89,22 @@
 				"publisherId": {
 					"publisherId": "5f5636e7-69ed-4afe-b5d6-8d231fb3d3ee",
 					"publisherName": "ms-vscode",
+					"displayName": "Microsoft",
+					"flags": "verified"
+				},
+				"publisherDisplayName": "Microsoft"
+			}
+		},
+		{
+			"name": "ms-ceintl.vscode-language-pack-zh-hans",
+			"version": "1.131.2026090407",
+			"sha256": "0b97f2b719b0c7988bdaff8f3e023c3422feeff0db56379abfaf0c31fe17ef83",
+			"repo": "https://github.com/Microsoft/vscode-loc",
+			"metadata": {
+				"id": "e4ee7751-6514-4731-9cdb-7580ffa9e70b",
+				"publisherId": {
+					"publisherId": "1a629631-030a-4a25-a681-7992cb91b986",
+					"publisherName": "ms-ceintl",
 					"displayName": "Microsoft",
 					"flags": "verified"
 				},

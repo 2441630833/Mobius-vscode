@@ -126,7 +126,7 @@ let nlsConfigurationPromise: Promise<INLSConfiguration> | undefined = undefined;
 // The API might return an empty array on Linux, such as when
 // the 'C' locale is the user's only configured locale.
 // No matter the OS, if the array is empty, default back to 'en'.
-const osLocale = processZhLocale((app.getPreferredSystemLanguages()?.[0] ?? 'en').toLowerCase());
+const osLocale = processZhLocale((app.getPreferredSystemLanguages()?.[0] ?? 'zh-cn').toLowerCase());
 const userLocale = getUserDefinedLocale(argvConfig);
 if (userLocale) {
 	nlsConfigurationPromise = resolveNLSConfiguration({
@@ -147,7 +147,7 @@ if (userLocale) {
 // In that case, use `en` as the Electron locale.
 
 if (process.platform === 'win32' || process.platform === 'linux') {
-	const electronLocale = (!userLocale || userLocale === 'qps-ploc') ? 'en' : userLocale;
+	const electronLocale = (!userLocale || userLocale === 'qps-ploc') ? 'zh-cn' : userLocale;
 	app.commandLine.appendSwitch('lang', electronLocale);
 }
 
@@ -429,7 +429,9 @@ function createDefaultArgvConfigSync(argvConfigPath: string): void {
 			'{',
 			'	// Use software rendering instead of hardware accelerated rendering.',
 			'	// This can help in cases where you see rendering issues in VS Code.',
-			'	// "disable-hardware-acceleration": true',
+			'	// "disable-hardware-acceleration": true,',
+			'	// Default display language for Mobius.',
+			'	"locale": "zh-cn"',
 			'}'
 		];
 
@@ -696,13 +698,13 @@ async function resolveNlsConfiguration(): Promise<INLSConfiguration> {
 	let userLocale = app.getLocale();
 	if (!userLocale) {
 		return {
-			userLocale: 'en',
+			userLocale: 'zh-cn',
 			osLocale,
-			resolvedLanguage: 'en',
+			resolvedLanguage: 'zh-cn',
 			defaultMessagesFile: path.join(import.meta.dirname, 'nls.messages.json'),
 
 			// NLS: below 2 are a relic from old times only used by vscode-nls and deprecated
-			locale: 'en',
+			locale: 'zh-cn',
 			availableLanguages: {}
 		};
 	}
@@ -731,7 +733,7 @@ function getUserDefinedLocale(argvConfig: IArgvConfig): string | undefined {
 		return locale.toLowerCase(); // a directly provided --locale always wins
 	}
 
-	return typeof argvConfig?.locale === 'string' ? argvConfig.locale.toLowerCase() : undefined;
+	return typeof argvConfig?.locale === 'string' ? argvConfig.locale.toLowerCase() : 'zh-cn';
 }
 
 //#endregion

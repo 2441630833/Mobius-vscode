@@ -23,6 +23,7 @@ import {
 	ContinueAgentToolSchema,
 	loadContinueAgentTools,
 } from './continueAgentToolsBridge.js';
+import { isNetworkOnline } from './continueNetworkStatus.js';
 import { executeRunTerminalCommand } from './continueTerminalTool.js';
 
 export const CONTINUE_GET_AGENT_CHAT_RULES = 'continue.getAgentChatRules';
@@ -730,7 +731,11 @@ export async function loadAgentToolSuperset(
 		schemas.map(t => t.function.name).join(', '),
 	);
 
-	return mergeSchemas(schemas);
+	const merged = mergeSchemas(schemas);
+	if (!isNetworkOnline()) {
+		return merged.filter(t => t.function.name !== 'search_web');
+	}
+	return merged;
 }
 
 export type InvokeCopilotToolContext = {

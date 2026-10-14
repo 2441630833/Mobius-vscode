@@ -8,6 +8,7 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { GODOT_TOOL_SCHEMAS } from './continueGodotTools.js';
 import { FPGA_TOOL_SCHEMAS } from './continueFpgaTools.js';
+import { isNetworkOnline, recordNetworkFailure } from './continueNetworkStatus.js';
 
 export const CONTINUE_GET_AGENT_CHAT_TOOLS = 'continue.getAgentChatTools';
 export const CONTINUE_CALL_BUILTIN_TOOL = 'continue.callBuiltInTool';
@@ -395,13 +396,22 @@ export async function loadContinueAgentTools(
 		}
 	}
 
-	const merged = mergeToolSchemas(
-		CORE_SEARCH_TOOL_SCHEMAS,
+	const online = isNetworkOnline();
+	const activeCoreSearchTools = online
+		? CORE_SEARCH_TOOL_SCHEMAS
+		: CORE_SEARCH_TOOL_SCHEMAS.filter(t => t.function.name !== 'search_web');
+
+	let merged = mergeToolSchemas(
+		activeCoreSearchTools,
 		LOCAL_AGENT_TOOL_SCHEMAS,
 		GODOT_TOOL_SCHEMAS,
 		FPGA_TOOL_SCHEMAS,
 		extensionTools ?? [],
 	);
+
+	if (!online) {
+		merged = merged.filter(t => t.function.name !== 'search_web');
+	}
 
 	if (!extensionTools?.length) {
 		logService?.warn(
@@ -425,6 +435,13 @@ export async function invokeContinueBuiltInTool(
 	/** Session working directory — scopes ls/grep/codebase/read to this folder. */
 	workingDirectory?: URI,
 ): Promise<ContinueToolCallResult> {
+	if (toolName === 'search_web' && !isNetworkOnline()) {
+		return {
+			ok: false,
+			text: 'Search web is disabled: no network connection detected. Please answer without web search.',
+			errorMessage: 'Network offline: search_web tool is disabled.',
+		};
+	}
 	try {
 		const result = await commandService.executeCommand<RawToolInvokeResult>(
 			CONTINUE_CALL_BUILTIN_TOOL,
@@ -440,6 +457,10 @@ export async function invokeContinueBuiltInTool(
 		}
 		const items = result.contextItems ?? [];
 		const { uri, kind } = extractFileUri(items);
+		const errorMessage = result.errorMessage;
+		if (errorMessage && /ENOTFOUND|ECONNREFUSED|network|offline|Failed to fetch/i.test(errorMessage) && toolName === 'search_web') {
+			recordNetworkFailure();
+		}
 		return {
 			ok: result.ok !== false && !result.errorMessage,
 			text: result.errorMessage ?? formatContextItems(items),
@@ -448,6 +469,9 @@ export async function invokeContinueBuiltInTool(
 			fileEditKind: kind,
 		};
 	} catch (e) {
+		if (toolName === 'search_web') {
+			recordNetworkFailure();
+		}
 		return {
 			ok: false,
 			text: e instanceof Error ? e.message : String(e),

@@ -24,6 +24,7 @@ import { ContinueSkillFeedbackStore } from './continueSkillFeedback.js';
 import { CCGS_ROOT_FOLDER, isGameModeExplicitlySelected } from './continueGameStudioWorkflow.js';
 import { GF3A_ROOT_FOLDER } from './continueGameFactory3AWorkflow.js';
 import { GODOGEN_ROOT_FOLDER } from './continueGodogenWorkflow.js';
+import { isNetworkOnline } from './continueNetworkStatus.js';
 
 /** Max full SKILL.md bodies injected per turn (compatible set, not conflicting). */
 const MAX_FULL_SKILLS = 3;
@@ -1159,8 +1160,13 @@ export function hasScaffoldProjectIntent(message: string): boolean {
 /**
  * External / up-to-date knowledge questions — must use search_web, not skills or memory.
  * Excludes repo edit/scaffold tasks.
+ * Automatically returns false when network is offline so web search is disabled.
  */
-export function hasWebSearchIntent(message: string): boolean {
+export function hasWebSearchIntent(message: string, options?: { isOnline?: boolean }): boolean {
+	const online = options?.isOnline ?? isNetworkOnline();
+	if (!online) {
+		return false;
+	}
 	if (hasScaffoldProjectIntent(message) || hasDesignUiIntent(message)) {
 		return false;
 	}

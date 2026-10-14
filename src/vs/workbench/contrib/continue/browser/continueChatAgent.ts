@@ -44,6 +44,7 @@ import { ILanguageModelToolsService } from '../../chat/common/tools/languageMode
 import { CONTINUE_EXTENSION_ID, isContinuePhysicalAiIde } from './continueProduct.js';
 import { CONTINUE_LM_VENDOR } from './continueLanguageModelProvider.js';
 import { buildContinueSkillsContext, buildContinueSkillsContextFast, type ContinueSkillsContext, extractSkillRoutingQuery, hasScaffoldProjectIntent, hasWebSearchIntent, loadSkillWarmSnapshot } from './continueSkillsContext.js';
+import { checkNetworkOnline, isNetworkOnline } from './continueNetworkStatus.js';
 import { ContinueSkillEmbeddingIndex } from './continueSkillEmbeddings.js';
 import { classifySkillRoutingOutcome, ContinueSkillFeedbackStore } from './continueSkillFeedback.js';
 import { AgentMemoryStore, ContinueSelfEvolving, TaskExecutionRecorder } from './continueSelfEvolving.js';
@@ -979,7 +980,12 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			}]);
 		}
 
-		const webSearchIntent = hasWebSearchIntent(request.message);
+		const isOnline = await checkNetworkOnline();
+		const rawWebSearchIntent = hasWebSearchIntent(request.message, { isOnline: true });
+		const webSearchIntent = isOnline && rawWebSearchIntent;
+		if (!isOnline && rawWebSearchIntent) {
+			this._logService.info('[Continue] Offline mode: disabling search_web tool and webSearchIntent for this request');
+		}
 		const lightweightTask = isLightweightAgentTask(request.message, {
 			codeChangeIntent,
 			investigateIntent,
@@ -1035,6 +1041,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			visionImageParts,
 			todoListIntent,
 			docEditTask,
+			isOnline,
 		);
 
 		if (!isAgentMode) {
@@ -1044,11 +1051,14 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 
 		const toolStats = { writeSuccess: 0, writeFailed: 0, exploreOnly: false };
 		await this._ensureCopilotToolImplementationsMounted(token);
-		const agentTools = await loadAgentToolSuperset(
+		let agentTools = await loadAgentToolSuperset(
 			this._languageModelToolsService,
 			this._commandService,
 			this._logService,
 		);
+		if (!isOnline) {
+			agentTools = agentTools.filter(t => t.function.name !== 'search_web');
+		}
 		/** Keep looping until the user task is done (edits OR investigation), not mere Q&A. */
 		const untilDoneIntent = (codeChangeIntent || investigateIntent);
 		if (webSearchIntent) {
@@ -2881,6 +2891,12 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			}
 
 			// Remaining Continue core tools (search_web, ls, codebase, …).
+			if (effectiveCall.name === 'search_web' && !isNetworkOnline()) {
+				return {
+					ok: false,
+					text: 'Search web is disabled: no network connection detected. Please answer without web search.',
+				};
+			}
 			const coreParams = reshapeParamsForContinueCore(effectiveCall.name, params);
 			const coreResult = await invokeContinueBuiltInTool(
 				this._commandService,
@@ -4420,7 +4436,8 @@ function buildChatMessages(
 	visionImageParts?: IChatMessagePart[],
 	todoListIntent = false,
 	docEditTask = false,
-	): IChatMessage[] {
+	isOnline = true,
+): IChatMessage[] {
 	const messages: IChatMessage[] = [];
 
 	const systemParts = [executeSystem, skillCatalog, memoriesBlock].filter(Boolean) as string[];
@@ -4451,7 +4468,8 @@ function buildChatMessages(
 	}
 
 	const userParts: string[] = [];
-	const webSearch = hasWebSearchIntent(currentMessage);
+	const rawWebSearch = hasWebSearchIntent(currentMessage, { isOnline: true });
+	const webSearch = isOnline && rawWebSearch;
 	if (skillAttachments.length && !webSearch) {
 		userParts.push(...skillAttachments);
 		userParts.push(
@@ -4461,6 +4479,10 @@ function buildChatMessages(
 	if (webSearch) {
 		userParts.push(
 			'<web-search-override>\nExternal knowledge question. Call search_web ONCE first. You may call fetch_webpage at most once for one official page. Then STOP using tools and write your answer in the user\'s language. Do NOT repeat search_web with rephrased queries — Bing snippets are short; synthesize the best answer from what you have.\n</web-search-override>',
+		);
+	} else if (!isOnline && rawWebSearch) {
+		userParts.push(
+			'<offline-override>\nNetwork is offline: search_web and external web requests are disabled. Answer the user\'s question directly using your existing knowledge or local workspace context. Do NOT attempt to call search_web or fetch webpages.\n</offline-override>',
 		);
 	}
 	if (hasScaffoldProjectIntent(currentMessage)) {

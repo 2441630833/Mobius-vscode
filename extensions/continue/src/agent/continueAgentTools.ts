@@ -133,8 +133,15 @@ export async function getAgentChatTools(
     }
   }
 
+  const isOnline = typeof navigator === "undefined" || navigator.onLine !== false;
   for (const tool of REQUIRED_AGENT_TOOLS) {
+    if (!isOnline && tool.function.name === BuiltInToolNames.SearchWeb) {
+      continue;
+    }
     byName.set(tool.function.name, toOpenAiSchema(serializeTool(tool)));
+  }
+  if (!isOnline) {
+    byName.delete(BuiltInToolNames.SearchWeb);
   }
 
   return [...byName.values()];
@@ -150,6 +157,14 @@ export async function callBuiltInAgentTool(
   contextItems: ContextItem[];
   errorMessage?: string;
 }> {
+  if (name === BuiltInToolNames.SearchWeb && typeof navigator !== "undefined" && !navigator.onLine) {
+    return {
+      ok: false,
+      contextItems: [],
+      errorMessage: "Search web is disabled: no network connection detected.",
+    };
+  }
+
   const toolCall: ToolCall = {
     id: toolCallId ?? uuidv4(),
     type: "function",
