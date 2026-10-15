@@ -8,6 +8,11 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { IChatProgress } from '../../chat/common/chatService/chatService.js';
 
 export const MULTI_AGENT_ENABLED = 'continue.multiAgent.enabled';
+export const MULTI_AGENT_MAX_PARALLEL = 'continue.multiAgent.maxParallelAgents';
+
+export function resolveParallelAgentSetting(value: unknown): number {
+	return typeof value === 'number' && Number.isInteger(value) && value >= 5 && value <= 10 ? value : 10;
+}
 
 export function shouldOrchestrateRequest(options: {
 	enabled: boolean; agentMode: boolean; lightweight: boolean; codeChange: boolean; investigate: boolean;
@@ -17,7 +22,7 @@ export function shouldOrchestrateRequest(options: {
 
 export async function runParallelResearch(
 	commandService: ICommandService,
-	request: { request: string; modelTitle: string; workingDirectory?: string; allowWeb: boolean },
+	request: { request: string; modelTitle: string; workingDirectory?: string; allowWeb: boolean; maxAgents?: number },
 	progress: (parts: IChatProgress[]) => void,
 	token: CancellationToken,
 ): Promise<string | undefined> {
@@ -27,14 +32,17 @@ export async function runParallelResearch(
 		void commandService.executeCommand('continue.cancelAgentOrchestration', id);
 	});
 	try {
-		progress([{ kind: 'markdownContent', content: new MarkdownString('正在安排子智能体并行调研，完成后汇总并继续执行。\n\n') }]);
-		const result = await commandService.executeCommand<{ text: string }>('continue.orchestrateAgents', {
-			...request, id,
+		progress([{ kind: 'markdownContent', content: new MarkdownString('正在评估任务难度、编排专业子智能体；每项任务独立总结后，将统一汇总。\n\n') }]);
+		const result = await commandService.executeCommand<{ text: string; contributionReport?: string }>('continue.orchestrateAgents', {
+			...request, id, maxAgents: resolveParallelAgentSetting(request.maxAgents),
 			sharedContext: `User request: ${request.request.slice(0, 7000)}\nWorking directory: ${request.workingDirectory ?? '(none)'}`,
 		});
 		if (token.isCancellationRequested) { return undefined; }
 		if (!result?.text) { throw new Error('Parallel research returned no result'); }
-		progress([{ kind: 'markdownContent', content: new MarkdownString('子智能体调研已汇总，正在核对结果并继续执行。\n\n') }]);
+		if (result.contributionReport) {
+			progress([{ kind: 'markdownContent', content: new MarkdownString(result.contributionReport + '\n\n') }]);
+		}
+		progress([{ kind: 'markdownContent', content: new MarkdownString('专业子任务与两层总结阶段已结束，主智能体将核对结果、继续实施并验证。\n\n') }]);
 		return result.text;
 	} finally { cancel.dispose(); }
 }

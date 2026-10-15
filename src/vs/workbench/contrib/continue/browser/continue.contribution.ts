@@ -72,6 +72,10 @@ if (isContinuePhysicalAiIde()) {
 				type: 'boolean', default: true,
 				description: localize('continue.multiAgent.enabled', "Plan complex Agent requests with a supervisor and parallel read-only research agents before implementation. Uses the selected model and additional model calls."),
 			},
+			'continue.multiAgent.maxParallelAgents': {
+				type: 'integer', minimum: 5, maximum: 10, default: 10,
+				description: localize('continue.multiAgent.maxParallelAgents', "Maximum simultaneous professional agents. The difficulty assessor chooses a smaller team when appropriate; each task is summarized before a final synthesis."),
+			},
 		},
 	});
 	registerIcon('mobius-mode-agent', Codicon.circleSmall, localize('mobiusModeIcon.agent', "Mobius Agent mode icon"));

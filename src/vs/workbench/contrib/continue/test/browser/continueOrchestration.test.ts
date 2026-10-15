@@ -5,9 +5,23 @@
 import assert from 'assert';
 import { CancellationTokenSource, CancellationToken } from '../../../../../base/common/cancellation.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
-import { runParallelResearch, shouldOrchestrateRequest } from '../../browser/continueOrchestration.js';
+import { resolveParallelAgentSetting, runParallelResearch, shouldOrchestrateRequest } from '../../browser/continueOrchestration.js';
 
 suite('Continue parallel research routing', () => {
+	test('accepts 5-10 as ceilings and defaults invalid settings to 10', () => {
+		for (const value of [5, 6, 10]) { assert.strictEqual(resolveParallelAgentSetting(value), value); }
+		for (const value of [undefined, 4, 11, 5.5, '10']) { assert.strictEqual(resolveParallelAgentSetting(value), 10); }
+	});
+
+	test('shows the deterministic per-specialist report without claiming the main task is complete', async () => {
+		const displayed: string[] = [];
+		const commands = { executeCommand: async () => ({ text: 'findings', contributionReport: 'Specialist A: analysis completed; Specialist B: failed' }) } as unknown as ICommandService;
+		await runParallelResearch(commands, { request: 'research', modelTitle: 'selected', allowWeb: true }, parts => {
+			for (const part of parts) { if (part.kind === 'markdownContent') { displayed.push(part.content.value); } }
+		}, CancellationToken.None);
+		assert.ok(displayed.some(text => text.includes('Specialist A: analysis completed; Specialist B: failed')));
+		assert.ok(displayed.at(-1)?.includes('继续实施并验证'));
+	});
 	test('only complex Agent requests receive preflight research', () => {
 		const complex = { enabled: true, agentMode: true, lightweight: false, codeChange: true, investigate: false };
 		assert.strictEqual(shouldOrchestrateRequest(complex), true);
@@ -21,9 +35,10 @@ suite('Continue parallel research routing', () => {
 		const commands = { executeCommand: async (name: string, args: Record<string, unknown>) => {
 			assert.strictEqual(name, 'continue.orchestrateAgents'); params = args; return { text: 'findings' };
 		} } as unknown as ICommandService;
-		assert.strictEqual(await runParallelResearch(commands, { request: 'research', modelTitle: 'selected', workingDirectory: 'file:///project', allowWeb: false }, () => {}, CancellationToken.None), 'findings');
+		assert.strictEqual(await runParallelResearch(commands, { request: 'research', modelTitle: 'selected', workingDirectory: 'file:///project', allowWeb: false, maxAgents: 5 }, () => {}, CancellationToken.None), 'findings');
 		assert.strictEqual(params?.['modelTitle'], 'selected');
 		assert.strictEqual(params?.['workingDirectory'], 'file:///project');
+		assert.strictEqual(params?.['maxAgents'], 5);
 		assert.ok(String(params?.['sharedContext']).includes('research'));
 	});
 

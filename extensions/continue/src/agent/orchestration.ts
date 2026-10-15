@@ -17,6 +17,7 @@ export interface WorkbenchOrchestrationRequest {
   modelTitle?: string;
   workingDirectory?: string;
   allowWeb?: boolean;
+  maxAgents?: number;
 }
 
 /** Scope IDE reads to this request without mutating the window's global cwd. */
@@ -52,6 +53,7 @@ export async function runWorkbenchOrchestration(
         shared_context: request.sharedContext,
         model_title: request.modelTitle,
         allow_web: request.allowWeb,
+        max_agents: request.maxAgents,
       },
       {
         config,
@@ -63,7 +65,9 @@ export async function runWorkbenchOrchestration(
         fetch: (url, init) => fetchwithRequestOptions(url, init, undefined),
       },
     );
-    return { text: items.map((item) => item.content).join("\n") };
+    const text = items.map((item) => item.content).join("\n");
+    const result = JSON.parse(text) as { contributionReport: string };
+    return { text, contributionReport: result.contributionReport };
   } finally {
     active.delete(request.id);
   }
