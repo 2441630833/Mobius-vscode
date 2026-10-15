@@ -166,7 +166,7 @@
 	"onboardingKeymaps": [
 		{
 			"id": "vscode",
-			"label": "VS Code",
+			"label": "Mobius",
 			"description": "Default keyboard mapping"
 		},
 		{

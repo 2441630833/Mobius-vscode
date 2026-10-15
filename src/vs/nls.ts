@@ -25,6 +25,10 @@ export interface ILocalizedString {
 }
 
 function _format(message: string, args: (string | number | boolean | undefined | null)[]): string {
+	// Language packs (including cached translations) retain upstream product names.
+	// Brand the template before interpolation so user content, paths and URLs in
+	// arguments are preserved exactly as supplied.
+	message = message.replace(/\b(?:Visual Studio Code|VS Code|Code - OSS)\b/g, 'Mobius');
 	let result: string;
 
 	if (args.length === 0) {
