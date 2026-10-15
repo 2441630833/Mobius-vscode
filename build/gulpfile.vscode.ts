@@ -107,8 +107,9 @@ const vscodeResourceIncludes = [
 	'out-build/vs/sessions/prompts/*.prompt.md',
 	'out-build/vs/sessions/skills/**',
 
-	// Mobius bundled custom agents (Plan / Game)
+	// Mobius bundled custom agents and presentation engine
 	'out-build/vs/workbench/contrib/continue/mobius/agents/*.agent.md',
+	'out-build/vs/workbench/contrib/continue/mobius/skills/ppt-master/**',
 
 	// Extensions
 	'out-build/vs/workbench/contrib/extensions/browser/media/{theme-icon.png,language-icon.svg}',

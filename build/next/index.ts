@@ -17,6 +17,7 @@ import { getGitCommitDate } from '../lib/date.ts';
 import product from '../../product.json' with { type: 'json' };
 import packageJson from '../../package.json' with { type: 'json' };
 import { useEsbuildTranspile } from '../buildConfig.ts';
+import { stageMobiusPptMaster } from '../lib/mobiusPptMaster.ts';
 import { isWebExtension, type IScannedBuiltinExtension } from '../lib/extensions.ts';
 
 const globAsync = promisify(glob);
@@ -571,6 +572,7 @@ async function copyAllNonTsFiles(outDir: string, excludeTests: boolean): Promise
 	}));
 
 	console.log(`[resources] Copied ${allFiles.length} files`);
+	await stageMobiusPptMaster(outDir);
 }
 
 /**
@@ -602,6 +604,9 @@ async function copyResources(outDir: string, target: BuildTarget): Promise<void>
 	}
 
 	console.log(`[resources] Copied ${copied} files`);
+	if (target === 'desktop' || target === 'server-web') {
+		await stageMobiusPptMaster(outDir);
+	}
 }
 
 // ============================================================================

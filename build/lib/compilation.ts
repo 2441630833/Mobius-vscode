@@ -22,6 +22,7 @@ import ts from 'typescript';
 import watch from './watch/index.ts';
 import * as tsb from './tsb/index.ts';
 import { createTsgoStream, spawnTsgo } from './tsgo.ts';
+import { stageMobiusPptMaster } from './mobiusPptMaster.ts';
 
 
 import { extractExtensionPointNamesFromFile } from './extractExtensionPoints.ts';
@@ -236,16 +237,19 @@ export function createCompile(src: string, { build, emitError, transpileOnly, pr
 	return pipeline;
 }
 
-export function transpileTask(src: string, out: string, esbuild?: boolean): task.StreamTask {
+export function transpileTask(src: string, out: string, esbuild?: boolean): task.Task {
 
-	const task = () => {
+	const task = async () => {
 
 		const transpile = createCompile(src, { build: false, emitError: true, transpileOnly: { esbuild: !!esbuild }, preserveEnglish: false });
 		const srcPipe = gulp.src(`${src}/**`, { base: `${src}` });
 
-		return srcPipe
+		await util.streamToPromise(srcPipe
 			.pipe(transpile())
-			.pipe(gulp.dest(out));
+			.pipe(gulp.dest(out)));
+		if (src === 'src') {
+			await stageMobiusPptMaster(out);
+		}
 	};
 
 	task.taskName = `transpile-${path.basename(src)}`;
@@ -311,6 +315,9 @@ export function compileTask(src: string, out: string, build: boolean, options: {
 		const typecheck = spawnTsgo(compile.projectPath, { taskName: `compile-${path.basename(src)}`, noEmit: true });
 
 		await Promise.all([emit, typecheck]);
+		if (src === 'src') {
+			await stageMobiusPptMaster(out);
+		}
 		progress.complete();
 	};
 

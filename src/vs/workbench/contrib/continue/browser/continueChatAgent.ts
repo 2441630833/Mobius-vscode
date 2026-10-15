@@ -69,7 +69,7 @@ import { executeRunTerminalCommand } from './continueTerminalTool.js';
 import { executeGodotTool, bootstrapGameModeGodotLivePreview, createGodotAutoPreviewState, createGodotToolHost, ensureGodotPreviewLaunched, gameDevSystemHint, GodotAutoPreviewState, hasGameDevIntent, isGameDevProjectUri, isGodotTool, openGodotLiveEditorIfNeeded, trackGodotToolCall, userRequestedGodotOpen } from './continueGodotTools.js';
 import { bootstrapChipModeDetect, createFpgaToolHost, executeFpgaTool, isFpgaTool } from './continueFpgaTools.js';
 import { chipDesignSystemHint, isChipModeExplicitlySelected } from './continueChipDesign.js';
-import { isPptModeExplicitlySelected, pptModeSystemHint } from './continuePptMode.js';
+import { isPptModeExplicitlySelected, loadPptMasterSkill, pptModeSystemHint } from './continuePptMode.js';
 import {
 	ccgsRelativePath,
 	gameStudioWorkflowSystemHint,
@@ -706,6 +706,15 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		try {
 		const cwd = request.workingDirectory
 			?? this._workspaceService.getWorkspace().folders[0]?.uri;
+		const pptMasterSkill = isPptModeSelected ? await loadPptMasterSkill(this._fileService, this._getAppRoot()) : undefined;
+		if (isPptModeSelected && !pptMasterSkill) {
+			this._logService.error('[Continue][PPT] Bundled PPT Master SKILL.md is missing or unreadable');
+			progress([{
+				kind: 'warning',
+				content: new MarkdownString(localize('continue.pptMasterMissing', "PPT Master is missing from this Mobius installation. Repair or reinstall Mobius to restore the bundled presentation engine, then retry in PPT mode.")),
+			}]);
+			return {};
+		}
 
 		let skillCatalog: string | undefined;
 		let skillAttachments: string[] = [];
@@ -789,7 +798,9 @@ class ContinueChatAgent implements IChatAgentImplementation {
 				agentSystem += `\n\n<fpga-detect ok="${detect.ok}">\n${detect.text}\n</fpga-detect>`;
 			}
 		} else if (isPptModeSelected) {
-			agentSystem += `\n\n<ppt-master>\n${pptModeSystemHint()}\n</ppt-master>`;
+			if (pptMasterSkill) {
+				agentSystem += `\n\n<ppt-master>\n${pptModeSystemHint(pptMasterSkill)}\n</ppt-master>`;
+			}
 		} else if (isGameModeSelected) {
 			const ccgsRel = ccgsRelativePath(resolveCcgsRootUri(cwd, this._workspaceService), this._workspaceService);
 			const gf3aRel = gf3aRelativePath(resolveGameFactory3ARootUri(cwd, this._workspaceService), this._workspaceService);
