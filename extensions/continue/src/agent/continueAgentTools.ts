@@ -6,11 +6,15 @@ import { codebaseTool } from "core/tools/definitions/codebaseTool";
 import { fetchUrlContentTool } from "core/tools/definitions/fetchUrlContent";
 import { grepSearchTool } from "core/tools/definitions/grepSearch";
 import { searchWebTool } from "core/tools/definitions/searchWeb";
+import { orchestrateAgentsTool, listA2aAgentsTool, callA2aAgentTool } from "core/tools/definitions/orchestrateAgents";
 import { serializeTool } from "core/tools/index";
 import { v4 as uuidv4 } from "uuid";
 
 /** Always available to the workbench agent — even if config load is partial. */
 const REQUIRED_AGENT_TOOLS = [
+  orchestrateAgentsTool,
+  listA2aAgentsTool,
+  callA2aAgentTool,
   searchWebTool,
   grepSearchTool,
   fetchUrlContentTool,

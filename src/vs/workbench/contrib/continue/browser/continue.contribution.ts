@@ -65,6 +65,15 @@ import './media/continueMobiusModeIcons.css';
  * unregistered — these keys are inert placeholders (always default off).
  */
 if (isContinuePhysicalAiIde()) {
+	Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+		id: 'continueMultiAgent', title: 'Mobius Multi-Agent', type: 'object',
+		properties: {
+			'continue.multiAgent.enabled': {
+				type: 'boolean', default: true,
+				description: localize('continue.multiAgent.enabled', "Plan complex Agent requests with a supervisor and parallel read-only research agents before implementation. Uses the selected model and additional model calls."),
+			},
+		},
+	});
 	registerIcon('mobius-mode-agent', Codicon.circleSmall, localize('mobiusModeIcon.agent', "Mobius Agent mode icon"));
 	registerIcon('mobius-mode-game', Codicon.game, localize('mobiusModeIcon.game', "Mobius Game mode icon"));
 	registerIcon('mobius-mode-chip', Codicon.chip, localize('mobiusModeIcon.chip', "Mobius Chip mode icon"));
