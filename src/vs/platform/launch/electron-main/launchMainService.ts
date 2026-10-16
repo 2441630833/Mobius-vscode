@@ -145,30 +145,18 @@ export class LaunchMainService implements ILaunchMainService {
 			await this.windowsMainService.openExtensionDevelopmentHostWindow(args.extensionDevelopmentPath, baseConfig);
 		}
 
-		// Mobius: when launched without paths/arguments, always route to Agent view:
-		// focus an already open Agents window, or open a new Agents window.
-		else if (
-			isMobiusProduct(product.defaultChatAgent?.extensionId) &&
-			!args['new-window'] &&
-			!args['agents'] &&
-			!args._.length &&
-			!args['folder-uri'] &&
-			!args['file-uri'] &&
-			!args.profile &&
-			!args['profile-temp']
-		) {
-			const agentsWindow = this.windowsMainService.getWindows().find(window => window.config?.isSessionsWindow);
+		// Use the same default as first launch. --new-window requests a new
+		// Agents window; an ordinary relaunch focuses an existing one.
+		else if (args['agents'] || shouldDefaultToAgentsWindow(args, product.defaultChatAgent?.extensionId)) {
+			const agentsWindow = !args['new-window'] && !args['agents']
+				? this.windowsMainService.getWindows().find(window => window.config?.isSessionsWindow)
+				: undefined;
 			if (agentsWindow) {
 				this.windowsMainService.openExistingWindow(agentsWindow, baseConfig);
 				usedWindows = [agentsWindow];
 			} else {
 				usedWindows = await this.windowsMainService.openAgentsWindow(baseConfig);
 			}
-		}
-
-		// Agents window (explicit --agents, or Mobius default when no paths)
-		else if (args['agents'] || shouldDefaultToAgentsWindow(args, product.defaultChatAgent?.extensionId)) {
-			usedWindows = await this.windowsMainService.openAgentsWindow(baseConfig);
 		}
 
 		// Start without file/folder arguments

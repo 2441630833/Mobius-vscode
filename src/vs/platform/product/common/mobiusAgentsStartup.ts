@@ -2,7 +2,7 @@
  *  Mobius — default Agents window on startup when no workspace paths are provided.
  *--------------------------------------------------------------------------------------------*/
 
-import { NativeParsedArgs } from '../../environment/common/argv.js';
+import type { NativeParsedArgs } from '../../environment/common/argv.js';
 
 const MOBIUS_CHAT_AGENT_EXTENSION_ID = 'Continue.continue';
 
@@ -18,7 +18,7 @@ export function shouldDefaultToAgentsWindow(args: NativeParsedArgs, defaultChatA
 	if (!isMobiusProduct(defaultChatAgentExtensionId)) {
 		return false;
 	}
-	if (args['agents'] || args.extensionDevelopmentPath || args['new-window']) {
+	if (args.extensionDevelopmentPath) {
 		return false;
 	}
 	if (args._.length || args['folder-uri'] || args['file-uri']) {
