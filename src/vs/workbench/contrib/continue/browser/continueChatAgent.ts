@@ -97,6 +97,7 @@ import {
 	isLikelyImageAttachment,
 	isLikelyVideoAttachment,
 } from './continueOcrPreprocessor.js';
+import { isWebSearchEnabled } from './continueWebSearch.js';
 import { CONTINUE_LOCAL_OCR_ENABLED_SETTING } from './continueOcrAction.js';
 import { BUNDLED_ONNX_OCR } from './continueModelConfig.js';
 import { RunInTerminalTool } from '../../terminalContrib/chatAgentTools/browser/tools/runInTerminalTool.js';
@@ -994,7 +995,9 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 
 		const isOnline = await checkNetworkOnline();
 		const rawWebSearchIntent = hasWebSearchIntent(request.message, { isOnline: true });
-		const webSearchIntent = isOnline && rawWebSearchIntent;
+		const webSearchEnabled = isWebSearchEnabled(this._configurationService);
+		const allowWebSearch = isOnline && webSearchEnabled;
+		const webSearchIntent = allowWebSearch && rawWebSearchIntent;
 		if (!isOnline && rawWebSearchIntent) {
 			this._logService.info('[Continue] Offline mode: disabling search_web tool and webSearchIntent for this request');
 		}
@@ -1054,6 +1057,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			todoListIntent,
 			docEditTask,
 			isOnline,
+			webSearchEnabled,
 		);
 
 		if (!isAgentMode) {
@@ -1067,8 +1071,9 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			this._languageModelToolsService,
 			this._commandService,
 			this._logService,
+			this._configurationService,
 		);
-		if (!isOnline) {
+		if (!allowWebSearch) {
 			agentTools = agentTools.filter(t => t.function.name !== 'search_web');
 		}
 		if (shouldOrchestrateRequest({
@@ -1080,7 +1085,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				const findings = await runParallelResearch(this._commandService, {
 					request: request.message,
 					modelTitle: this._languageModelsService.lookupLanguageModel(modelId)?.id ?? modelId,
-					workingDirectory: cwd?.toString(), allowWeb: isOnline,
+					workingDirectory: cwd?.toString(), allowWeb: allowWebSearch,
 					maxAgents: this._configurationService.getValue<number>(MULTI_AGENT_MAX_PARALLEL),
 				}, progress, token);
 				if (token.isCancellationRequested) { return {}; }
@@ -2741,6 +2746,14 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				? { ...call, name: continueName }
 				: call;
 
+			if (effectiveName === 'orchestrate_agents' && !isWebSearchEnabled(this._configurationService)) {
+				params.allow_web = false;
+			}
+
+			if (effectiveName === 'search_web' && !isWebSearchEnabled(this._configurationService)) {
+				return { ok: false, text: 'Web Search is disabled by the user. Answer without web search.' };
+			}
+
 			// Prefer local read_file before Copilot. Copilot invokeTool paints its own
 			// chat row; when prepare/invoke fails (path resolve, etc.) that row stays
 			// red as "Read File failed" even if Continue would have succeeded.
@@ -2943,6 +2956,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				coreParams,
 				call.toolCallId,
 				cwd,
+				this._configurationService,
 			);
 			let editUri: URI | undefined;
 			let editKind: 'create' | 'edit' | undefined;
@@ -4476,6 +4490,7 @@ function buildChatMessages(
 	todoListIntent = false,
 	docEditTask = false,
 	isOnline = true,
+	webSearchEnabled = true,
 ): IChatMessage[] {
 	const messages: IChatMessage[] = [];
 
@@ -4508,14 +4523,18 @@ function buildChatMessages(
 
 	const userParts: string[] = [];
 	const rawWebSearch = hasWebSearchIntent(currentMessage, { isOnline: true });
-	const webSearch = isOnline && rawWebSearch;
+	const webSearch = isOnline && webSearchEnabled && rawWebSearch;
 	if (skillAttachments.length && !webSearch) {
 		userParts.push(...skillAttachments);
 		userParts.push(
 			'<execution-override>\nAgent mode: the user brief is sufficient for a first shippable version. Do NOT ask clarifying questions and NEVER ask for confirmation before editing (forbidden: 请确认 / please confirm / should I proceed). After any list_dir/read_file/grep_search, your NEXT action must be a patch edit tool (replace_string_in_file / multi_replace_string_in_file / insert_edit_into_file) or create_file — not write_file for small edits. Apply changes in the same turn.\n</execution-override>',
 		);
 	}
-	if (webSearch) {
+	if (!webSearchEnabled) {
+		userParts.push(
+			'<web-search-disabled>Web Search is disabled by the user. Do NOT call search_web. Answer using existing knowledge, local context, or URLs supplied by the user.</web-search-disabled>',
+		);
+	} else if (webSearch) {
 		userParts.push(
 			'<web-search-override>\nExternal knowledge question. Call search_web ONCE first. You may call fetch_webpage at most once for one official page. Then STOP using tools and write your answer in the user\'s language. Do NOT repeat search_web with rephrased queries — Bing snippets are short; synthesize the best answer from what you have.\n</web-search-override>',
 		);

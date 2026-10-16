@@ -2,6 +2,8 @@
  *  Mobius — Copilot-preferred tool superset for Continue Agents window
  *--------------------------------------------------------------------------------------------*/
 
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { isWebSearchEnabled } from './continueWebSearch.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { IMarkdownString } from '../../../../base/common/htmlContent.js';
@@ -627,8 +629,9 @@ export async function loadAgentToolSuperset(
 	toolsService: ILanguageModelToolsService,
 	commandService: ICommandService,
 	logService?: ILogService,
+	configurationService?: IConfigurationService,
 ): Promise<readonly ContinueAgentToolSchema[]> {
-	const continueTools = await loadContinueAgentTools(commandService, logService);
+	const continueTools = await loadContinueAgentTools(commandService, logService, configurationService);
 	const continueByName = new Map(continueTools.map(t => [t.function.name, t]));
 
 	const schemas: ContinueAgentToolSchema[] = [];
@@ -732,7 +735,7 @@ export async function loadAgentToolSuperset(
 	);
 
 	const merged = mergeSchemas(schemas);
-	if (!isNetworkOnline()) {
+	if (!isNetworkOnline() || !isWebSearchEnabled(configurationService)) {
 		return merged.filter(t => t.function.name !== 'search_web');
 	}
 	return merged;

@@ -3,6 +3,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { TestConfigurationService } from '../../../../../platform/configuration/test/common/testConfigurationService.js';
+import { isWebSearchEnabled } from '../../browser/continueWebSearch.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { isNetworkOnline, checkNetworkOnline, setNetworkOnlineForTesting, recordNetworkFailure } from '../../browser/continueNetworkStatus.js';
 import { hasWebSearchIntent } from '../../browser/continueSkillsContext.js';
@@ -109,4 +111,68 @@ suite('Continue Network Status & Search Web Gating', () => {
 		assert.strictEqual(result.ok, false);
 		assert.ok(result.text.includes('disabled') || result.text.includes('offline'));
 	});
+	test('Web Search defaults on and follows configuration changes', async () => {
+		const configuration = new TestConfigurationService();
+		assert.strictEqual(isWebSearchEnabled(configuration), true);
+		await configuration.setUserConfiguration('continue.webSearch.enabled', false);
+		assert.strictEqual(isWebSearchEnabled(configuration), false);
+		await configuration.setUserConfiguration('continue.webSearch.enabled', true);
+		assert.strictEqual(isWebSearchEnabled(configuration), true);
+	});
+
+	test('disabled Web Search removes extension tools and superset search but keeps URL fetching', async () => {
+		setNetworkOnlineForTesting(true);
+		const configuration = new TestConfigurationService({ continue: { webSearch: { enabled: false } } });
+		const commands = {
+			executeCommand: async () => [{ type: 'function', function: { name: 'search_web' } }],
+		} as unknown as ICommandService;
+		const tools = {
+			getTool: () => undefined, hasToolImplementation: () => false,
+			getAllToolsIncludingDisabled: () => [],
+		} as unknown as ILanguageModelToolsService;
+		for (const schemas of [
+			await loadContinueAgentTools(commands, undefined, configuration),
+			await loadAgentToolSuperset(tools, commands, undefined, configuration),
+		]) {
+			assert.ok(!schemas.some(t => t.function.name === 'search_web'));
+			assert.ok(schemas.some(t => t.function.name === 'fetch_webpage'));
+		}
+		await configuration.setUserConfiguration('continue.webSearch.enabled', true);
+		assert.ok((await loadAgentToolSuperset(tools, commands, undefined, configuration))
+			.some(t => t.function.name === 'search_web'));
+	});
+
+	test('pending search is blocked after toggling off and resumes after toggling on', async () => {
+		setNetworkOnlineForTesting(true);
+		const configuration = new TestConfigurationService();
+		let executions = 0;
+		const commands = {
+			executeCommand: async () => { executions++; return { ok: true, contextItems: [] }; },
+		} as unknown as ICommandService;
+		const search = () => invokeContinueBuiltInTool(commands, 'search_web', { query: 'latest release' }, 'pending', undefined, configuration);
+		assert.strictEqual((await search()).ok, true);
+		await configuration.setUserConfiguration('continue.webSearch.enabled', false);
+		assert.strictEqual((await search()).ok, false);
+		assert.strictEqual(executions, 1);
+		assert.strictEqual((await invokeContinueBuiltInTool(commands, 'fetch_webpage', { url: 'https://example.com' }, 'url', undefined, configuration)).ok, true);
+		await configuration.setUserConfiguration('continue.webSearch.enabled', true);
+		assert.strictEqual((await search()).ok, true);
+		assert.strictEqual(executions, 3);
+	});
+
+	test('parallel research cannot override disabled Web Search', async () => {
+		const configuration = new TestConfigurationService({ continue: { webSearch: { enabled: false } } });
+		let forwarded: Record<string, unknown> | undefined;
+		const commands = {
+			executeCommand: async (_id: string, payload: { arguments: Record<string, unknown> }) => {
+				forwarded = payload.arguments;
+				return { ok: true, contextItems: [] };
+			},
+		} as unknown as ICommandService;
+		const args = { request: 'Research current releases', allow_web: true };
+		await invokeContinueBuiltInTool(commands, 'orchestrate_agents', args, 'research', undefined, configuration);
+		assert.strictEqual(forwarded?.allow_web, false);
+		assert.strictEqual(args.allow_web, true);
+	});
+
 });

@@ -79,8 +79,8 @@
 	display: none !important;
 }
 
-/* Local OCR toolbar toggle button */
-.monaco-workbench :is(.chat-input-toolbar, .chat-execute-toolbar) .chat-local-ocr-button {
+/* Composer permission toggle buttons */
+.monaco-workbench :is(.chat-input-toolbar, .chat-execute-toolbar) :is(.chat-local-ocr-button, .chat-web-search-button) {
 	display: inline-flex;
 	align-items: center;
 	flex-shrink: 0;
@@ -88,7 +88,7 @@
 	transition: background-color 0.15s ease, opacity 0.15s ease;
 }
 
-.monaco-workbench :is(.chat-input-toolbar, .chat-execute-toolbar) .action-label.chat-local-ocr-button {
+.monaco-workbench :is(.chat-input-toolbar, .chat-execute-toolbar) .action-label:is(.chat-local-ocr-button, .chat-web-search-button) {
 	display: inline-flex;
 	align-items: center;
 	/* Override the shared codicon width so the icon and label occupy their full toolbar slot. */
@@ -103,14 +103,14 @@
 	cursor: pointer;
 }
 
-.monaco-workbench :is(.chat-input-toolbar, .chat-execute-toolbar) .action-label.chat-local-ocr-button.checked {
+.monaco-workbench :is(.chat-input-toolbar, .chat-execute-toolbar) .action-label:is(.chat-local-ocr-button, .chat-web-search-button).checked {
 	background-color: var(--vscode-badge-background, #007acc);
 	color: var(--vscode-badge-foreground, #ffffff);
 	border-color: transparent;
 	font-weight: 600;
 }
 
-.monaco-workbench :is(.chat-input-toolbar, .chat-execute-toolbar) .action-label.chat-local-ocr-button.disabled-mode {
+.monaco-workbench :is(.chat-input-toolbar, .chat-execute-toolbar) .action-label:is(.chat-local-ocr-button, .chat-web-search-button).disabled-mode {
 	opacity: 0.65;
 	background-color: transparent;
 	color: var(--vscode-descriptionForeground, #888888);

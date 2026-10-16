@@ -50,6 +50,8 @@ import { registerContinueMobiusBundledAgentsContribution } from './continueMobiu
 import { registerContinueGameFactory3AWorkflowContribution } from './continueGameFactory3AWorkflow.js';
 import { registerContinueGameStudioWorkflowContribution } from './continueGameStudioWorkflow.js';
 import { registerContinueGodogenWorkflowContribution } from './continueGodogenWorkflow.js';
+import { registerContinueWebSearchAction, WebSearchActionViewItemContribution } from './continueWebSearchAction.js';
+import { CONTINUE_WEB_SEARCH_ENABLED_SETTING } from './continueWebSearch.js';
 import { registerContinueLocalOcrAction, LocalOcrActionViewItemContribution, CONTINUE_LOCAL_OCR_ENABLED_SETTING } from './continueOcrAction.js';
 import './mobiusCommitAction.js';
 import { IWorkspaceTrustEnablementService, IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
@@ -184,6 +186,11 @@ if (isContinuePhysicalAiIde()) {
 		title: 'Mobius Local OCR',
 		type: 'object',
 		properties: {
+			[CONTINUE_WEB_SEARCH_ENABLED_SETTING]: {
+				type: 'boolean',
+				default: true,
+				description: 'Allow the agent to search the web. Toggle Web Search in the chat input toolbar to enable or disable search calls.',
+			},
 			[CONTINUE_LOCAL_OCR_ENABLED_SETTING]: {
 				type: 'boolean',
 				default: true,
@@ -685,6 +692,7 @@ registerWorkbenchContribution2(ContinueAgentsDefaultsContribution.ID, ContinueAg
 registerWorkbenchContribution2(ContinueStartupContribution.ID, ContinueStartupContribution, WorkbenchPhase.AfterRestored);
 registerWorkbenchContribution2(ContinueLanguageModelContribution.ID, ContinueLanguageModelContribution, WorkbenchPhase.AfterRestored);
 registerWorkbenchContribution2(LocalOcrActionViewItemContribution.ID, LocalOcrActionViewItemContribution, WorkbenchPhase.AfterRestored);
+registerWorkbenchContribution2(WebSearchActionViewItemContribution.ID, WebSearchActionViewItemContribution, WorkbenchPhase.AfterRestored);
 registerAction2(ReloadContinueLanguageModelsAction);
 registerAction2(FocusContinueChatAction);
 registerAction2(OpenModelProviderSettingsAction);
@@ -694,3 +702,4 @@ registerAction2(RsiEvaluateAction);
 registerAction2(RsiApproveAction);
 registerAction2(RsiRollbackAction);
 registerContinueLocalOcrAction();
+registerContinueWebSearchAction();

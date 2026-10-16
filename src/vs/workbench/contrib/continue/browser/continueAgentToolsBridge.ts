@@ -2,6 +2,8 @@
  *  Mobius — bridge VS Code Chat Agent tool calls to Continue core (extension host)
  *--------------------------------------------------------------------------------------------*/
 
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { isWebSearchEnabled } from './continueWebSearch.js';
 import { timeout } from '../../../../base/common/async.js';
 import { URI } from '../../../../base/common/uri.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
@@ -372,6 +374,7 @@ function extractFileUri(items: RawContextItem[]): { uri?: string; kind?: 'create
 export async function loadContinueAgentTools(
 	commandService: ICommandService,
 	logService?: ILogService,
+	configurationService?: IConfigurationService,
 ): Promise<readonly ContinueAgentToolSchema[]> {
 	let extensionTools: ContinueAgentToolSchema[] | undefined;
 
@@ -396,7 +399,7 @@ export async function loadContinueAgentTools(
 		}
 	}
 
-	const online = isNetworkOnline();
+	const online = isNetworkOnline() && isWebSearchEnabled(configurationService);
 	const activeCoreSearchTools = online
 		? CORE_SEARCH_TOOL_SCHEMAS
 		: CORE_SEARCH_TOOL_SCHEMAS.filter(t => t.function.name !== 'search_web');
@@ -434,7 +437,14 @@ export async function invokeContinueBuiltInTool(
 	toolCallId: string,
 	/** Session working directory — scopes ls/grep/codebase/read to this folder. */
 	workingDirectory?: URI,
+	configurationService?: IConfigurationService,
 ): Promise<ContinueToolCallResult> {
+	if (toolName === 'orchestrate_agents' && !isWebSearchEnabled(configurationService)) {
+		args = { ...args, allow_web: false };
+	}
+	if (toolName === 'search_web' && !isWebSearchEnabled(configurationService)) {
+		return { ok: false, text: 'Web Search is disabled by the user. Answer without web search.' };
+	}
 	if (toolName === 'search_web' && !isNetworkOnline()) {
 		return {
 			ok: false,
@@ -496,7 +506,14 @@ export async function invokeContinueClientEditTool(
 	toolCallId: string,
 	/** Session working directory — scopes relative edit paths to this folder. */
 	workingDirectory?: URI,
+	configurationService?: IConfigurationService,
 ): Promise<ContinueToolCallResult> {
+	if (toolName === 'orchestrate_agents' && !isWebSearchEnabled(configurationService)) {
+		args = { ...args, allow_web: false };
+	}
+	if (toolName === 'search_web' && !isWebSearchEnabled(configurationService)) {
+		return { ok: false, text: 'Web Search is disabled by the user. Answer without web search.' };
+	}
 	try {
 		const result = await commandService.executeCommand<RawClientEditResult>(
 			CONTINUE_APPLY_CLIENT_EDIT_TOOL,
