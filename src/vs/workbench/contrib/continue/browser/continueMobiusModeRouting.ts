@@ -6,10 +6,8 @@ import { MarkdownString } from '../../../../base/common/htmlContent.js';
 import { localize } from '../../../../nls.js';
 import { URI } from '../../../../base/common/uri.js';
 import { ChatMode, IChatMode, IChatModeService, IChatModes } from '../../chat/common/chatModes.js';
-import { hasChipDesignIntent } from './continueChipDesign.js';
-import { hasGameDevIntent } from './continueGodotTools.js';
-import { hasPptIntent } from './continuePptMode.js';
 import { isMobiusAgentMode, isMobiusChipMode, isMobiusGameMode, isMobiusPptMode } from './continueMobiusModeIcons.js';
+import { semanticRouter } from './continueSemanticRouter.js';
 
 export { getMobiusChatModeIcon } from './continueMobiusModeIcons.js';
 
@@ -177,16 +175,10 @@ export function inferMobiusModeFromPrompt(message: string): IMobiusModeInference
 		return { mode: 'agent', reason: 'slash-override' };
 	}
 
-	if (hasChipDesignIntent(text)) {
-		return { mode: 'chip', reason: 'chip-design-keywords' };
-	}
-
-	if (hasPptIntent(text)) {
-		return { mode: 'ppt', reason: 'ppt-keywords' };
-	}
-
-	if (hasGameDevIntent(text)) {
-		return { mode: 'game', reason: 'game-dev-keywords' };
+	// 2. High-accuracy semantic routing (hybrid vector similarity + lexical + anti-pattern guardrails)
+	const semanticMatch = semanticRouter.route(text);
+	if (semanticMatch.mode !== 'agent') {
+		return { mode: semanticMatch.mode, reason: semanticMatch.reason };
 	}
 
 	if (AGENT_SIGNAL.test(text)) {

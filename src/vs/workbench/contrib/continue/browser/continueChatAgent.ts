@@ -67,10 +67,10 @@ import {
 	unsupportedCopilotToolRecovery,
 } from './continueCopilotToolsBridge.js';
 import { executeRunTerminalCommand } from './continueTerminalTool.js';
-import { executeGodotTool, bootstrapGameModeGodotLivePreview, createGodotAutoPreviewState, createGodotToolHost, ensureGodotPreviewLaunched, gameDevSystemHint, GodotAutoPreviewState, hasGameDevIntent, isGameDevProjectUri, isGodotTool, openGodotLiveEditorIfNeeded, trackGodotToolCall, userRequestedGodotOpen } from './continueGodotTools.js';
+import { executeGodotTool, bootstrapGameModeGodotLivePreview, createGodotAutoPreviewState, createGodotToolHost, ensureGodotPreviewLaunched, gameDevSystemHint, GodotAutoPreviewState, isGameDevProjectUri, isGodotTool, openGodotLiveEditorIfNeeded, trackGodotToolCall, userRequestedGodotOpen } from './continueGodotTools.js';
 import { bootstrapChipModeDetect, createFpgaToolHost, executeFpgaTool, isFpgaTool } from './continueFpgaTools.js';
-import { chipDesignSystemHint, hasChipDesignIntent, isChipModeExplicitlySelected } from './continueChipDesign.js';
-import { hasPptIntent, isPptModeExplicitlySelected, loadPptMasterSkill, pptModeSystemHint } from './continuePptMode.js';
+import { chipDesignSystemHint, isChipModeExplicitlySelected } from './continueChipDesign.js';
+import { isPptModeExplicitlySelected, loadPptMasterSkill, pptModeSystemHint } from './continuePptMode.js';
 import { inferMobiusModeFromPrompt } from './continueMobiusModeRouting.js';
 import {
 	ccgsRelativePath,
@@ -697,9 +697,9 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		const isPptModeSelected = isPptModeExplicitlySelected(request);
 		const isGameModeSelected = isGameModeExplicitlySelected(request);
 
-		const isPptMode = isPptModeSelected || routedMode === 'ppt' || hasPptIntent(request.message);
-		const isChipMode = !isPptMode && (isChipModeSelected || routedMode === 'chip' || hasChipDesignIntent(request.message));
-		const isGameMode = !isPptMode && !isChipMode && (isGameModeSelected || routedMode === 'game' || hasGameDevIntent(request.message));
+		const isPptMode = isPptModeSelected || routedMode === 'ppt';
+		const isChipMode = !isPptMode && (isChipModeSelected || routedMode === 'chip');
+		const isGameMode = !isPptMode && !isChipMode && (isGameModeSelected || routedMode === 'game');
 
 		if (modeInference && modeInference.mode !== 'agent') {
 			this._logService.info(
