@@ -7,17 +7,37 @@ import { observableValue } from '../../../../../base/common/observable.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { ChatMode, IChatMode } from '../../../chat/common/chatModes.js';
 import { ChatModeKind } from '../../../chat/common/constants.js';
-import { getMobiusModePickerDetailLine, inferMobiusModeFromPrompt } from '../../browser/continueMobiusModeRouting.js';
+import { getMobiusChatModes, getMobiusModePickerDetailLine, inferMobiusModeFromPrompt, normalizeMobiusChatMode } from '../../browser/continueMobiusModeRouting.js';
 import { isMobiusAgentMode, isMobiusPptMode } from '../../browser/continueMobiusModeIcons.js';
 
 suite('MobiusModeRouting', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
 
-	test('builtin Agent is recognized and has a subtitle', () => {
+	test('getMobiusChatModes returns only default Agent mode', () => {
+		const modes = getMobiusChatModes();
+		assert.strictEqual(modes.length, 1);
+		assert.strictEqual(modes[0], ChatMode.Agent);
+	});
+
+	test('normalizeMobiusChatMode maps specialized modes to Agent', () => {
+		const dummyPptMode = {
+			id: 'Continue.continue.ppt',
+			name: observableValue('name', 'PPT'),
+		} as unknown as IChatMode;
+		assert.strictEqual(normalizeMobiusChatMode(dummyPptMode), ChatMode.Agent);
+
+		const dummyGameMode = {
+			id: 'Continue.continue.game',
+			name: observableValue('name', 'Game'),
+		} as unknown as IChatMode;
+		assert.strictEqual(normalizeMobiusChatMode(dummyGameMode), ChatMode.Agent);
+	});
+
+	test('builtin Agent is recognized and has a unified smart routing subtitle', () => {
 		assert.strictEqual(isMobiusAgentMode(ChatMode.Agent), true);
 		const detail = getMobiusModePickerDetailLine(ChatMode.Agent);
-		assert.strictEqual(detail, 'General coding · no auto Godot');
+		assert.strictEqual(detail, 'Unified agent · smart routing');
 	});
 
 	test('PPT mode is recognized and has a subtitle', () => {

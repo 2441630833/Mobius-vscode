@@ -69,8 +69,9 @@ import {
 import { executeRunTerminalCommand } from './continueTerminalTool.js';
 import { executeGodotTool, bootstrapGameModeGodotLivePreview, createGodotAutoPreviewState, createGodotToolHost, ensureGodotPreviewLaunched, gameDevSystemHint, GodotAutoPreviewState, hasGameDevIntent, isGameDevProjectUri, isGodotTool, openGodotLiveEditorIfNeeded, trackGodotToolCall, userRequestedGodotOpen } from './continueGodotTools.js';
 import { bootstrapChipModeDetect, createFpgaToolHost, executeFpgaTool, isFpgaTool } from './continueFpgaTools.js';
-import { chipDesignSystemHint, isChipModeExplicitlySelected } from './continueChipDesign.js';
-import { isPptModeExplicitlySelected, loadPptMasterSkill, pptModeSystemHint } from './continuePptMode.js';
+import { chipDesignSystemHint, hasChipDesignIntent, isChipModeExplicitlySelected } from './continueChipDesign.js';
+import { hasPptIntent, isPptModeExplicitlySelected, loadPptMasterSkill, pptModeSystemHint } from './continuePptMode.js';
+import { inferMobiusModeFromPrompt } from './continueMobiusModeRouting.js';
 import {
 	ccgsRelativePath,
 	gameStudioWorkflowSystemHint,
@@ -689,18 +690,32 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			`[Continue] Agent using model '${modelId}' (requested: ${request.userSelectedModelId ?? 'none'})`,
 		);
 
+		const modeInference = inferMobiusModeFromPrompt(request.message);
+		const routedMode = modeInference?.mode;
+
 		const isChipModeSelected = isChipModeExplicitlySelected(request);
 		const isPptModeSelected = isPptModeExplicitlySelected(request);
 		const isGameModeSelected = isGameModeExplicitlySelected(request);
-		const isGameMode = !isChipModeSelected && !isPptModeSelected && (isGameModeSelected || hasGameDevIntent(request.message));
+
+		const isPptMode = isPptModeSelected || routedMode === 'ppt' || hasPptIntent(request.message);
+		const isChipMode = !isPptMode && (isChipModeSelected || routedMode === 'chip' || hasChipDesignIntent(request.message));
+		const isGameMode = !isPptMode && !isChipMode && (isGameModeSelected || routedMode === 'game' || hasGameDevIntent(request.message));
+
+		if (modeInference && modeInference.mode !== 'agent') {
+			this._logService.info(
+				`[Continue] Auto-routed agent mode to '${modeInference.mode}' (${modeInference.reason})`,
+			);
+		}
+
 		const isAgentMode = request.agentId === CONTINUE_AGENT_IDS.agent
 			|| request.agentId === CONTINUE_AGENT_IDS.game
 			|| request.agentId === CONTINUE_AGENT_IDS.chip
 			|| request.agentId === CONTINUE_AGENT_IDS.ppt
-			|| isChipModeSelected
-			|| isPptModeSelected;
+			|| isChipMode
+			|| isPptMode
+			|| isGameMode;
 		const docEditTask = isDocumentationEditTask(request.message);
-		const codeChangeIntent = hasCodeChangeIntent(request.message) || isExecuteNowMessage(request.message) || isGameMode || isChipModeSelected || isPptModeSelected;
+		const codeChangeIntent = hasCodeChangeIntent(request.message) || isExecuteNowMessage(request.message) || isGameMode || isChipMode || isPptMode;
 		const investigateIntent = docEditTask ? false : hasInvestigateIntent(request.message);
 		const releaseIndexingPause = isAgentMode
 			? acquireIndexingPause(this._commandService, this._logService)
@@ -708,8 +723,8 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		try {
 		const cwd = request.workingDirectory
 			?? this._workspaceService.getWorkspace().folders[0]?.uri;
-		const pptMasterSkill = isPptModeSelected ? await loadPptMasterSkill(this._fileService, this._getAppRoot()) : undefined;
-		if (isPptModeSelected && !pptMasterSkill) {
+		const pptMasterSkill = isPptMode ? await loadPptMasterSkill(this._fileService, this._getAppRoot()) : undefined;
+		if (isPptMode && !pptMasterSkill) {
 			this._logService.error('[Continue][PPT] Bundled PPT Master SKILL.md is missing or unreadable');
 			progress([{
 				kind: 'warning',
@@ -726,7 +741,12 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			skillCatalog = skillsContext.systemText || undefined;
 			skillAttachments = [...skillsContext.attachmentTexts];
 			routedSkillNames = [...skillsContext.routedSkillNames];
-			if (isGameModeSelected) {
+			if (isPptMode && pptMasterSkill) {
+				if (!routedSkillNames.includes('ppt-master')) {
+					routedSkillNames.unshift('ppt-master');
+				}
+			}
+			if (isGameModeSelected || isGameMode) {
 				const ccgsRoot = resolveCcgsRootUri(cwd, this._workspaceService);
 				const gf3aRoot = resolveGameFactory3ARootUri(cwd, this._workspaceService);
 				const godogenRoot = resolveGodogenRootUri(cwd, this._workspaceService);
@@ -777,7 +797,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		if (isAgentMode && modeBody) {
 			agentSystem += `\n\n<mode-instructions name="${request.modeInstructions?.name ?? ''}">\n${modeBody}\n</mode-instructions>`;
 		}
-		if (isChipModeSelected) {
+		if (isChipMode) {
 			agentSystem += `\n\n<chip-design>\n${chipDesignSystemHint()}\n</chip-design>`;
 			if (cwd) {
 				const detect = await bootstrapChipModeDetect(
@@ -799,19 +819,17 @@ class ContinueChatAgent implements IChatAgentImplementation {
 				}]);
 				agentSystem += `\n\n<fpga-detect ok="${detect.ok}">\n${detect.text}\n</fpga-detect>`;
 			}
-		} else if (isPptModeSelected) {
+		} else if (isPptMode) {
 			if (pptMasterSkill) {
 				agentSystem += `\n\n<ppt-master>\n${pptModeSystemHint(pptMasterSkill)}\n</ppt-master>`;
 			}
-		} else if (isGameModeSelected) {
+		} else if (isGameModeSelected || isGameMode) {
 			const ccgsRel = ccgsRelativePath(resolveCcgsRootUri(cwd, this._workspaceService), this._workspaceService);
 			const gf3aRel = gf3aRelativePath(resolveGameFactory3ARootUri(cwd, this._workspaceService), this._workspaceService);
 			const godogenRel = godogenRelativePath(resolveGodogenRootUri(cwd, this._workspaceService), this._workspaceService);
 			agentSystem += `\n\n<game-studio-workflow>\n${gameStudioWorkflowSystemHint(ccgsRel)}\n</game-studio-workflow>`;
 			agentSystem += `\n\n<game-factory-3a>\n${gameFactory3AWorkflowSystemHint(gf3aRel)}\n</game-factory-3a>`;
 			agentSystem += `\n\n<godogen>\n${godogenWorkflowSystemHint(godogenRel)}\n</godogen>`;
-			agentSystem += `\n\n<game-dev>\n${gameDevSystemHint()}\n</game-dev>`;
-		} else if (isGameMode) {
 			agentSystem += `\n\n<game-dev>\n${gameDevSystemHint()}\n</game-dev>`;
 		}
 		if (docEditTask && isAgentMode) {
@@ -1005,15 +1023,15 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			codeChangeIntent,
 			investigateIntent,
 			isGameMode,
-			isChipMode: isChipModeSelected,
-			isPptMode: isPptModeSelected,
+			isChipMode,
+			isPptMode,
 		}) || docEditTask;
 		const todoListIntent = !lightweightTask && shouldUseTodoList(request.message, {
 			codeChangeIntent,
 			investigateIntent,
 			isGameMode,
-			isChipMode: isChipModeSelected,
-			isPptMode: isPptModeSelected,
+			isChipMode,
+			isPptMode,
 			webSearchIntent,
 		});
 		const maxCompletionVerifyNudges = lightweightTask

@@ -2,7 +2,6 @@
  *  Mobius — infer Agent / Game / Chip from the user's prompt
  *--------------------------------------------------------------------------------------------*/
 
-import { coalesce } from '../../../../base/common/arrays.js';
 import { MarkdownString } from '../../../../base/common/htmlContent.js';
 import { localize } from '../../../../nls.js';
 import { URI } from '../../../../base/common/uri.js';
@@ -16,14 +15,9 @@ export { getMobiusChatModeIcon } from './continueMobiusModeIcons.js';
 
 export const MOBIUS_AUTO_MODE_ROUTING_KEY = 'mobius.autoModeRouting.enabled';
 
-/** Fixed Agent / Game / Chip list for Mobius mode pickers. */
-export function getMobiusChatModes(modes: IChatModes): IChatMode[] {
-	return coalesce([
-		ChatMode.Agent,
-		modes.findModeByName('Game'),
-		modes.findModeByName('Chip'),
-		modes.findModeByName('PPT'),
-	]);
+/** Single default Agent mode for Mobius mode pickers. Agent mode intelligently auto-routes PPT, Game, Chip, and general coding. */
+export function getMobiusChatModes(_modes?: IChatModes): IChatMode[] {
+	return [ChatMode.Agent];
 }
 
 /** Flyout when hovering a mode in the Mobius mode picker. */
@@ -60,7 +54,7 @@ export function getMobiusModePickerHoverContent(mode: IChatMode): MarkdownString
 		return new MarkdownString(
 			localize(
 				'mobius.modeHover.agent',
-				"**Agent** — general software development.\n\n- Edit files, terminal, search, todos, multi-step tasks\n- Does **not** auto-open Godot\n\n_Use **Game** for `game-dev/` with live Godot preview. Use **Chip** for FPGA sampling. Use **PPT** for presentations._",
+				"**Agent** — unified intelligent agent with automatic mode routing.\n\n- General software development, refactoring, and multi-step tasks\n- Intelligently auto-routes PPT generation (powered by ppt-master), Game dev (Godot), and Chip design (FPGA)\n- Use slash commands `/agent`, `/ppt`, `/game`, `/chip` or plain language intent to direct tasks",
 			),
 			{ isTrusted: true },
 		);
@@ -71,6 +65,9 @@ export function getMobiusModePickerHoverContent(mode: IChatMode): MarkdownString
 
 /** Short second line under the mode name in the picker list. */
 export function getMobiusModePickerDetailLine(mode: IChatMode): string | undefined {
+	if (isMobiusAgentMode(mode)) {
+		return localize('mobius.modeDetail.agent', "Unified agent · smart routing");
+	}
 	if (isMobiusGameMode(mode)) {
 		return localize('mobius.modeDetail.game', "Make games · live preview");
 	}
@@ -80,16 +77,13 @@ export function getMobiusModePickerDetailLine(mode: IChatMode): string | undefin
 	if (isMobiusPptMode(mode)) {
 		return localize('mobius.modeDetail.ppt', "Make presentations · slide design");
 	}
-	if (isMobiusAgentMode(mode)) {
-		return localize('mobius.modeDetail.agent', "General coding · no auto Godot");
-	}
 	const description = mode.description.get()?.trim();
 	return description || undefined;
 }
 
-const MOBIUS_LEGACY_MODE_NAMES = new Set(['ask', 'plan', 'edit']);
+const MOBIUS_LEGACY_MODE_NAMES = new Set(['ask', 'plan', 'edit', 'game', 'chip', 'ppt']);
 
-/** Map retired Ask/Plan/Edit picker entries to Agent for old sessions. */
+/** Map retired or specialized picker entries to Agent for old sessions. */
 export function normalizeMobiusChatMode(mode: IChatMode | undefined): IChatMode {
 	if (!mode) {
 		return ChatMode.Agent;

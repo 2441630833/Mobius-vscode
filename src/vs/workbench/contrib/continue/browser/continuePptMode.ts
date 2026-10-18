@@ -9,7 +9,11 @@ import { IFileService } from '../../../../platform/files/common/files.js';
 import { IChatAgentRequest } from '../../chat/common/participants/chatAgents.js';
 
 export function hasPptIntent(message: string): boolean {
-	return /\b(ppt|pptx|powerpoint|slides|slide\s*deck|presentation|pitch\s*deck|keynote)\b|演示文稿|幻灯片|做ppt|生成ppt|制作ppt|演讲稿|课件制作/i.test(message);
+	const text = message.trim();
+	return /^\/ppt\b/i.test(text)
+		|| /\b(ppt|pptx|powerpoint|slides|slide\s*deck|presentation|pitch\s*deck|keynote)\b/i.test(text)
+		|| /(生成|制作|导出|做|设计|写).{0,16}(pptx?|幻灯片|演示|deck|课件)/i.test(text)
+		|| /(演示文稿|幻灯片|演讲稿|课件制作)/i.test(text);
 }
 
 export function isPptModeName(name: string | undefined): boolean {
