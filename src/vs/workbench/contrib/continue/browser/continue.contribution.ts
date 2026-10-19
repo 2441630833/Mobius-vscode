@@ -193,8 +193,8 @@ if (isContinuePhysicalAiIde()) {
 			},
 			[CONTINUE_LOCAL_OCR_ENABLED_SETTING]: {
 				type: 'boolean',
-				default: true,
-				description: 'When enabled, local GLM-OCR ONNX extracts text from attached images before sending to text-only models. Disable via toolbar button or setting to bypass local OCR and pass images and video files directly to multimodal API providers.',
+				default: false,
+				description: 'Extract text from images locally for text-only models. Off by default; attaching images to a model without vision support prompts to enable local OCR. Multimodal models receive images directly.',
 			},
 		},
 	});

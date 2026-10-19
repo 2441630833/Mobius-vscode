@@ -21,7 +21,8 @@ import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { ChatContextKeys } from '../../chat/common/actions/chatContextKeys.js';
 import { ChatAgentLocation } from '../../chat/common/constants.js';
 
-export const CONTINUE_LOCAL_OCR_ENABLED_SETTING = 'continue.localOcr.enabled';
+import { CONTINUE_LOCAL_OCR_ENABLED_SETTING } from './continueOcrConsent.js';
+export { CONTINUE_LOCAL_OCR_ENABLED_SETTING } from './continueOcrConsent.js';
 export const TOGGLE_LOCAL_OCR_COMMAND_ID = 'continue.toggleLocalOcr';
 
 export class ToggleLocalOcrAction extends Action2 {
@@ -36,11 +37,11 @@ export class ToggleLocalOcrAction extends Action2 {
 			f1: true,
 			precondition: ChatContextKeys.enabled,
 			toggled: {
-				condition: ContextKeyExpr.notEquals(`config.${CONTINUE_LOCAL_OCR_ENABLED_SETTING}`, false),
+				condition: ContextKeyExpr.equals(`config.${CONTINUE_LOCAL_OCR_ENABLED_SETTING}`, true),
 				title: localize('continue.localOcr.enabledTitle', "Local OCR: On"),
 				tooltip: localize('continue.localOcr.enabledTooltip', "Local OCR is enabled (GLM-OCR ONNX). Click to disable and send media directly to multimodal API providers."),
 			},
-			tooltip: localize('continue.localOcr.disabledTooltip', "Local OCR is disabled. Images and video files will be sent directly to the model API provider. Click to enable local OCR."),
+			tooltip: localize('continue.localOcr.disabledTooltip', "Local OCR is off. Images go directly to multimodal models; text-only models will ask to enable OCR. Click to enable."),
 			menu: [
 				{
 					id: MenuId.ChatInput,
@@ -71,7 +72,7 @@ export class ToggleLocalOcrAction extends Action2 {
 		const configurationService = accessor.get(IConfigurationService);
 		const notificationService = accessor.get(INotificationService);
 
-		const current = configurationService.getValue<boolean>(CONTINUE_LOCAL_OCR_ENABLED_SETTING) ?? true;
+		const current = configurationService.getValue<boolean>(CONTINUE_LOCAL_OCR_ENABLED_SETTING) ?? false;
 		const next = !current;
 
 		await configurationService.updateValue(CONTINUE_LOCAL_OCR_ENABLED_SETTING, next, ConfigurationTarget.USER);
@@ -84,7 +85,7 @@ export class ToggleLocalOcrAction extends Action2 {
 		} else {
 			notificationService.info(localize(
 				'continue.localOcr.disabledNotice',
-				"Local OCR disabled: images and video files will be sent directly to multimodal API providers.",
+				"Local OCR disabled. Image requests to text-only models will ask before enabling it.",
 			));
 		}
 	}
@@ -135,7 +136,7 @@ export class LocalOcrButtonActionViewItem extends MenuEntryActionViewItem {
 
 	protected override updateLabel(): void {
 		if (this.label) {
-			const enabled = this.configurationService.getValue<boolean>(CONTINUE_LOCAL_OCR_ENABLED_SETTING) ?? true;
+			const enabled = this.configurationService.getValue<boolean>(CONTINUE_LOCAL_OCR_ENABLED_SETTING) ?? false;
 			this.label.textContent = enabled
 				? localize('continue.localOcr.onLabel', "OCR On")
 				: localize('continue.localOcr.offLabel', "OCR Off");
@@ -143,21 +144,21 @@ export class LocalOcrButtonActionViewItem extends MenuEntryActionViewItem {
 	}
 
 	private _updateOcrState(): void {
-		const enabled = this.configurationService.getValue<boolean>(CONTINUE_LOCAL_OCR_ENABLED_SETTING) ?? true;
+		const enabled = this.configurationService.getValue<boolean>(CONTINUE_LOCAL_OCR_ENABLED_SETTING) ?? false;
 		this.updateLabel();
 		if (this.label) {
 			this.label.classList.toggle('checked', enabled);
 			this.label.classList.toggle('disabled-mode', !enabled);
 			this.label.title = enabled
 				? localize('continue.localOcr.enabledTooltip', "Local OCR is enabled (GLM-OCR ONNX). Click to disable and send media directly to multimodal API providers.")
-				: localize('continue.localOcr.disabledTooltip', "Local OCR is disabled. Images and video files will be sent directly to the model API provider. Click to enable local OCR.");
+				: localize('continue.localOcr.disabledTooltip', "Local OCR is off. Images go directly to multimodal models; text-only models will ask to enable OCR. Click to enable.");
 		}
 		if (this.element) {
 			this.element.classList.toggle('checked', enabled);
 			this.element.classList.toggle('disabled-mode', !enabled);
 			this.element.title = enabled
 				? localize('continue.localOcr.enabledTooltip', "Local OCR is enabled (GLM-OCR ONNX). Click to disable and send media directly to multimodal API providers.")
-				: localize('continue.localOcr.disabledTooltip', "Local OCR is disabled. Images and video files will be sent directly to the model API provider. Click to enable local OCR.");
+				: localize('continue.localOcr.disabledTooltip', "Local OCR is off. Images go directly to multimodal models; text-only models will ask to enable OCR. Click to enable.");
 		}
 	}
 }

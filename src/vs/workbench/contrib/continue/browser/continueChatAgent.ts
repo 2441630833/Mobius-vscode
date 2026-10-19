@@ -10,6 +10,8 @@ import { URI } from '../../../../base/common/uri.js';
 import { ExtensionIdentifier } from '../../../../platform/extensions/common/extensions.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
+import { confirmLocalOcrForImages } from './continueOcrConsent.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IMarkerService, MarkerSeverity } from '../../../../platform/markers/common/markers.js';
@@ -99,7 +101,6 @@ import {
 	isLikelyVideoAttachment,
 } from './continueOcrPreprocessor.js';
 import { isWebSearchEnabled } from './continueWebSearch.js';
-import { CONTINUE_LOCAL_OCR_ENABLED_SETTING } from './continueOcrAction.js';
 import { BUNDLED_ONNX_OCR } from './continueModelConfig.js';
 import { RunInTerminalTool } from '../../terminalContrib/chatAgentTools/browser/tools/runInTerminalTool.js';
 
@@ -622,6 +623,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		private readonly _textFileService: ITextFileService,
 		private readonly _environmentService: IWorkbenchEnvironmentService,
 		storageService: IStorageService,
+		private readonly _dialogService: IDialogService,
 	) {
 				this._skillEmbeddingIndex = new ContinueSkillEmbeddingIndex(
 			this._fileService,
@@ -846,42 +848,21 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			const maybeVideos = attached.filter(v => isLikelyVideoAttachment(v));
 			const maybeMedia = [...maybeImages, ...maybeVideos];
 
-			const localOcrEnabled = this._configurationService.getValue<boolean>(CONTINUE_LOCAL_OCR_ENABLED_SETTING) ?? true;
 			const modelMeta = this._languageModelsService.lookupLanguageModel(modelId);
 			const supportsVision = modelMeta?.capabilities?.vision === true;
+			if (!supportsVision && maybeVideos.length > 0) {
+				progress([{ kind: 'warning', content: new MarkdownString(localize('continue.ocr.videoUnsupported', "This model does not declare vision support. Local OCR cannot process videos. Select a compatible multimodal model and resend.")) }]);
+				return {};
+			}
+			if (!await confirmLocalOcrForImages(maybeImages.length, supportsVision, modelMeta?.family ?? modelId, this._configurationService, this._dialogService, token)) {
+				if (!token.isCancellationRequested) {
+					progress([{ kind: 'warning', content: new MarkdownString(localize('continue.ocr.declined', "Image request cancelled. Enable local OCR or select a multimodal model before resending.")) }]);
+				}
+				return {};
+			}
 
 			if (maybeMedia.length) {
-				if (!localOcrEnabled) {
-					// User explicitly disabled local OCR -> direct passthrough of images and videos to cloud API provider
-					progress([{
-						kind: 'markdownContent',
-						content: new MarkdownString(
-							localize(
-								'continue.ocrDisabledPassthrough',
-								"Local OCR is disabled — sending {0} media file(s) directly to `{1}`.",
-								maybeMedia.length,
-								modelMeta?.family ?? modelId,
-							),
-						),
-					}]);
-					const collected = await collectAgentRequestMediaParts(
-						request,
-						this._fileService,
-						this._logService,
-					);
-					visionImageParts = collected.parts;
-					if (collected.unresolved > 0 && collected.parts.length === 0) {
-						progress([{
-							kind: 'warning',
-							content: new MarkdownString(
-								localize(
-									'continue.mediaUnresolved',
-									"Found media attachment(s) but could not read file bytes.",
-								),
-							),
-						}]);
-					}
-				} else if (supportsVision) {
+				if (supportsVision) {
 					// Model natively declares vision support -> direct passthrough
 					progress([{
 						kind: 'markdownContent',
@@ -912,17 +893,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 						}]);
 					}
 				} else {
-					// Local OCR is enabled AND model does not declare native vision support:
-					// Any video attachments cannot be OCR'd locally; pass them as direct multimodal parts
-					if (maybeVideos.length > 0) {
-						const collected = await collectAgentRequestMediaParts(
-							request,
-							this._fileService,
-							this._logService,
-						);
-						visionImageParts = collected.parts.filter(p => p.type === 'data' && (p as { mimeType?: string }).mimeType?.startsWith('video/'));
-					}
-
+					// Text-only models reach OCR only after opt-in above.
 					if (maybeImages.length > 0) {
 						progress([{
 							kind: 'markdownContent',
@@ -4643,6 +4614,7 @@ class ContinueChatAgentContribution extends Disposable implements IWorkbenchCont
 			@ITextFileService textFileService: ITextFileService,
 			@IWorkbenchEnvironmentService environmentService: IWorkbenchEnvironmentService,
 			@IStorageService storageService: IStorageService,
+			@IDialogService dialogService: IDialogService,
 		) {
 			super();
 
@@ -4661,6 +4633,7 @@ class ContinueChatAgentContribution extends Disposable implements IWorkbenchCont
 				textFileService,
 				environmentService,
 				storageService,
+				dialogService,
 			);
 		const registrations: Array<{
 			id: string;
