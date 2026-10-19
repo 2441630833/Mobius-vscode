@@ -137,7 +137,7 @@ export class WebSearchButtonActionViewItem extends MenuEntryActionViewItem {
 		if (this.label) {
 			const enabled = this.configurationService.getValue<boolean>(CONTINUE_WEB_SEARCH_ENABLED_SETTING) ?? true;
 			this.label.textContent = enabled
-				? localize('continue.webSearch.onLabel', "Web Search")
+				? localize('continue.webSearch.onLabel', "Web Search On")
 				: localize('continue.webSearch.offLabel', "Web Search Off");
 		}
 	}

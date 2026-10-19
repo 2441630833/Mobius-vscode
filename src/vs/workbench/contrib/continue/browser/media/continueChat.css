@@ -85,7 +85,7 @@
 	align-items: center;
 	flex-shrink: 0;
 	border-radius: 4px;
-	transition: background-color 0.15s ease, opacity 0.15s ease;
+	transition: background-color 0.15s ease, opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
 .monaco-workbench :is(.chat-input-toolbar, .chat-execute-toolbar) .action-label:is(.chat-local-ocr-button, .chat-web-search-button) {
@@ -101,18 +101,25 @@
 	border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.25));
 	border-radius: 4px;
 	cursor: pointer;
+	background-color: transparent;
+	color: var(--vscode-foreground, #cccccc);
+}
+
+.monaco-workbench :is(.chat-input-toolbar, .chat-execute-toolbar) .action-label:is(.chat-local-ocr-button, .chat-web-search-button):hover {
+	background-color: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
 }
 
 .monaco-workbench :is(.chat-input-toolbar, .chat-execute-toolbar) .action-label:is(.chat-local-ocr-button, .chat-web-search-button).checked {
-	background-color: var(--vscode-badge-background, #007acc);
-	color: var(--vscode-badge-foreground, #ffffff);
-	border-color: transparent;
-	font-weight: 600;
+	background-color: transparent;
+	color: var(--vscode-foreground, #cccccc);
+	border-color: var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.45));
+	font-weight: 500;
 }
 
 .monaco-workbench :is(.chat-input-toolbar, .chat-execute-toolbar) .action-label:is(.chat-local-ocr-button, .chat-web-search-button).disabled-mode {
-	opacity: 0.65;
+	opacity: 0.55;
 	background-color: transparent;
 	color: var(--vscode-descriptionForeground, #888888);
+	border-color: var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.18));
 }
 

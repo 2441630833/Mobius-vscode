@@ -136,7 +136,9 @@ export class LocalOcrButtonActionViewItem extends MenuEntryActionViewItem {
 	protected override updateLabel(): void {
 		if (this.label) {
 			const enabled = this.configurationService.getValue<boolean>(CONTINUE_LOCAL_OCR_ENABLED_SETTING) ?? true;
-			this.label.textContent = enabled ? 'OCR' : 'OCR Off';
+			this.label.textContent = enabled
+				? localize('continue.localOcr.onLabel', "OCR On")
+				: localize('continue.localOcr.offLabel', "OCR Off");
 		}
 	}
 
