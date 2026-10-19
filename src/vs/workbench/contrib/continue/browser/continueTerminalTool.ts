@@ -58,6 +58,9 @@ export async function executeRunTerminalCommand(
 	if (!trimmed) {
 		return { ok: false, text: 'run_terminal_command requires a non-empty command' };
 	}
+	if (token.isCancellationRequested) {
+		return { ok: false, text: 'Terminal command cancelled' };
+	}
 
 	let tool = toolsService.getTool(TerminalToolId.RunInTerminal);
 	if (!tool) {
@@ -74,6 +77,10 @@ export async function executeRunTerminalCommand(
 		}
 	}
 
+	if (token.isCancellationRequested) {
+		return { ok: false, text: 'Terminal command cancelled' };
+	}
+
 	if (tool) {
 		const countTokens: CountTokensCallback = async () => 0;
 
@@ -87,6 +94,10 @@ export async function executeRunTerminalCommand(
 					explanation: 'Mobius Continue Agent shell command',
 					goal: 'Execute user-requested terminal command',
 					mode: waitForCompletion === false ? 'async' : 'sync',
+					// Sync otherwise waits indefinitely for shell completion events.
+					// Use the native timeout so it returns output + terminal ID while
+					// keeping long builds alive; never retry a timed-out command.
+					timeout: waitForCompletion === false ? 10_000 : 60_000,
 				},
 				context: {
 					sessionResource: context.sessionResource,
@@ -98,6 +109,9 @@ export async function executeRunTerminalCommand(
 			const ok = !result.toolResultError;
 			return { ok, text: text || (ok ? '(command completed with no output)' : 'Terminal command failed') };
 		} catch (err) {
+			if (token.isCancellationRequested) {
+				return { ok: false, text: 'Terminal command cancelled' };
+			}
 			logService.warn('[Continue] run_in_terminal tool invocation failed, attempting fallback', err);
 		}
 	}
@@ -113,7 +127,7 @@ export async function executeRunTerminalCommand(
 				contextItems?: Array<{ content?: string }>;
 			}>('continue.callBuiltInTool', {
 				name: 'run_terminal_command',
-				arguments: { command: trimmed },
+				arguments: { command: trimmed, waitForCompletion },
 				workingDirectory: context.workingDirectory?.toString(),
 			});
 
