@@ -9,7 +9,9 @@ import { removeTrailingPathSeparator } from '../../../../base/common/resources.j
 import { URI } from '../../../../base/common/uri.js';
 import { IUriIdentityService } from '../../../../platform/uriIdentity/common/uriIdentity.js';
 import { Workspace, WorkspaceFolder, IWorkspace, IWorkspaceContextService, IWorkspaceFoldersChangeEvent, IWorkspaceFoldersWillChangeEvent, IWorkspaceIdentifier, ISingleFolderWorkspaceIdentifier, IWorkspaceFolder, WorkbenchState } from '../../../../platform/workspace/common/workspace.js';
-import { IWorkspaceFolderCreationData } from '../../../../platform/workspaces/common/workspaces.js';
+import { IFileService } from '../../../../platform/files/common/files.js';
+import { VSBuffer } from '../../../../base/common/buffer.js';
+import { IStoredWorkspaceFolder, IWorkspaceFolderCreationData, getStoredWorkspaceFolder, toWorkspaceFolders } from '../../../../platform/workspaces/common/workspaces.js';
 import { getWorkspaceIdentifier } from '../../../../platform/workspaces/common/workspaceIdentifier.js';
 import { IWorkspaceEditingService } from '../../../../workbench/services/workspaces/common/workspaceEditing.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
@@ -36,9 +38,34 @@ export class SessionsWorkspaceContextService extends Disposable implements IWork
 	constructor(
 		workspaceIdentifier: IWorkspaceIdentifier,
 		private readonly uriIdentityService: IUriIdentityService,
+		private readonly fileService?: IFileService,
 	) {
 		super();
 		this.workspace = new Workspace(workspaceIdentifier.id, [], false, workspaceIdentifier.configPath, uri => uriIdentityService.extUri.ignorePathCasing(uri), localize('agentsWindow', "Agents Window"));
+	}
+
+	public async initialize(): Promise<void> {
+		if (!this.fileService || !this.workspace.configuration) {
+			return;
+		}
+		try {
+			const exists = await this.fileService.exists(this.workspace.configuration);
+			if (!exists) {
+				return;
+			}
+			const content = (await this.fileService.readFile(this.workspace.configuration)).value.toString();
+			const parsed = JSON.parse(content);
+			if (Array.isArray(parsed.folders) && parsed.folders.length > 0) {
+				const storedFolders: IStoredWorkspaceFolder[] = parsed.folders;
+				const folders = toWorkspaceFolders(storedFolders, this.workspace.configuration, this.uriIdentityService.extUri);
+				if (folders.length > 0) {
+					const workspaceIdentifier = getWorkspaceIdentifier(this.workspace.configuration);
+					this.workspace = new Workspace(workspaceIdentifier.id, folders, false, workspaceIdentifier.configPath, uri => this.uriIdentityService.extUri.ignorePathCasing(uri), this.workspace.name);
+				}
+			}
+		} catch {
+			// Ignore read / parse errors
+		}
 	}
 
 	getCompleteWorkspace(): Promise<IWorkspace> {
@@ -161,6 +188,26 @@ export class SessionsWorkspaceContextService extends Disposable implements IWork
 		const workspaceIdentifier = getWorkspaceIdentifier(this.workspace.configuration!);
 		const workspace = new Workspace(workspaceIdentifier.id, newFolders, false, workspaceIdentifier.configPath, uri => this.uriIdentityService.extUri.ignorePathCasing(uri), this.workspace.name);
 		this.workspace.update(workspace);
+
+		// Persist folders to workspace configuration file if available
+		if (this.fileService && this.workspace.configuration) {
+			try {
+				let existingData: Record<string, unknown> = {};
+				try {
+					const content = (await this.fileService.readFile(this.workspace.configuration)).value.toString();
+					existingData = JSON.parse(content);
+				} catch {
+					// Fall back to empty object
+				}
+				const workspaceConfigFolder = this.uriIdentityService.extUri.dirname(this.workspace.configuration);
+				existingData.folders = newFolders.map(folder =>
+					getStoredWorkspaceFolder(folder.uri, false, folder.name, workspaceConfigFolder, this.uriIdentityService.extUri)
+				);
+				await this.fileService.writeFile(this.workspace.configuration, VSBuffer.fromString(JSON.stringify(existingData, null, '\t')));
+			} catch {
+				// Ignore write failure
+			}
+		}
 
 		// Fire did change event
 		this._onDidChangeWorkspaceFolders.fire(changes);

@@ -69,6 +69,7 @@ import {
 	unsupportedCopilotToolRecovery,
 } from './continueCopilotToolsBridge.js';
 import { executeRunTerminalCommand } from './continueTerminalTool.js';
+import { normalizeToolArguments, resolveToolPath, toolPathArgument } from './continueToolPaths.js';
 import { executeGodotTool, bootstrapGameModeGodotLivePreview, createGodotAutoPreviewState, createGodotToolHost, ensureGodotPreviewLaunched, gameDevSystemHint, GodotAutoPreviewState, isGameDevProjectUri, isGodotTool, openGodotLiveEditorIfNeeded, trackGodotToolCall, userRequestedGodotOpen } from './continueGodotTools.js';
 import { bootstrapChipModeDetect, createFpgaToolHost, executeFpgaTool, isFpgaTool } from './continueFpgaTools.js';
 import { chipDesignSystemHint, isChipModeExplicitlySelected } from './continueChipDesign.js';
@@ -2726,7 +2727,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		godotAutoPreview?: GodotAutoPreviewState,
 	): Promise<{ ok: boolean; text: string; editUri?: URI; editKind?: 'create' | 'edit' }> {
 		try {
-			const params = (call.parameters ?? {}) as Record<string, unknown>;
+			const params = normalizeToolArguments(call.parameters);
 
 			// Map Copilot model names → Continue fallback names when Copilot tool is absent.
 			const continueName = remapCopilotNameToContinueFallback(call.name);
@@ -2976,13 +2977,18 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				text: 'read_file requires filepath (or filePath / path). Example: {"filepath":"src/index.html"}',
 			};
 		}
-		const uri = resolveWorkspacePath(cwd, pathParam);
 		try {
+			const uri = resolveWorkspacePath(cwd, pathParam);
 			if (!(await this._fileService.exists(uri))) {
 				return {
 					ok: false,
 					text: `File "${pathParam}" does not exist at ${uri.fsPath}. List the directory first and use a path that exists.`,
 				};
+			}
+			const stat = await this._fileService.resolve(uri);
+			if (stat.isDirectory) {
+				const children = (stat.children ?? []).slice(0, 40).map(child => `${child.name}${child.isDirectory ? '/' : ''}`).join('\n');
+				return { ok: false, text: `"${uri.toString()}" is a directory. Use list_dir, or read a specific file inside it.\n${children}` };
 			}
 			const content = (await this._fileService.readFile(uri)).value.toString();
 			const startLine = typeof params.startLine === 'number' ? params.startLine
@@ -3003,7 +3009,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				: text;
 			return { ok: true, text: capped };
 		} catch (err) {
-			this._logService.warn('[Continue] local read_file failed', uri.fsPath, err);
+			this._logService.warn('[Continue] local read_file failed', pathParam, err);
 			return {
 				ok: false,
 				text: err instanceof Error ? err.message : String(err),
@@ -3251,8 +3257,7 @@ function reshapeParamsForContinueCore(
 
 /** Some models put paths in `command` / `query` instead of filePath. */
 function coerceToolPathParam(params: Record<string, unknown>): string | undefined {
-	const direct = [params.filepath, params.filePath, params.path]
-		.find((v): v is string => typeof v === 'string' && v.trim().length > 0);
+	const direct = toolPathArgument(params);
 	if (direct) {
 		return direct.trim();
 	}
@@ -3385,14 +3390,7 @@ function findMojibakeInEditParams(params: Record<string, unknown>): string | und
 }
 
 function resolveWorkspacePath(cwd: URI | undefined, relPath: string): URI {
-	if (/^[a-zA-Z]:[\\/]/.test(relPath) || relPath.startsWith('/') || relPath.startsWith('\\')) {
-		return URI.file(relPath);
-	}
-	if (!cwd) {
-		return URI.file(relPath);
-	}
-	const cleaned = relPath.replace(/\\/g, '/').replace(/^\.\//, '');
-	return URI.joinPath(cwd, cleaned);
+	return resolveToolPath(cwd, relPath);
 }
 
 /**

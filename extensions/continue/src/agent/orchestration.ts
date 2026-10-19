@@ -43,7 +43,10 @@ export async function runWorkbenchOrchestration(
   try {
     const { config } = await configHandler.loadConfig();
     controller.signal.throwIfAborted();
-    const llm = config?.selectedModelByRole.chat;
+    // Workbench sessions select a model independently of Continue's sidebar.
+    // A configured chat model is sufficient; the core adapter resolves the
+    // explicit modelTitle and rejects unknown models before making requests.
+    const llm = config?.selectedModelByRole.chat ?? config?.modelsByRole.chat[0];
     if (!config || !llm) {
       throw new Error("No Continue chat model configured");
     }

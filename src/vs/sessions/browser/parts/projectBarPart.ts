@@ -41,6 +41,7 @@ import { AgenticParts } from './parts.js';
 
 const HOVER_GROUP_ID = 'projectbar';
 const PROJECT_BAR_FOLDERS_KEY = 'workbench.agentsession.projectbar.folders';
+const PROJECT_BAR_SELECTED_KEY = 'workbench.agentsession.projectbar.selected';
 
 type ProjectBarEntryDisplayType = 'letter' | 'icon';
 
@@ -150,7 +151,8 @@ export class ProjectBarPart extends Part {
 	}
 
 	private loadEntriesFromStorage(): void {
-		const raw = this.storageService.get(PROJECT_BAR_FOLDERS_KEY, StorageScope.WORKSPACE);
+		const raw = this.storageService.get(PROJECT_BAR_FOLDERS_KEY, StorageScope.PROFILE)
+			?? this.storageService.get(PROJECT_BAR_FOLDERS_KEY, StorageScope.WORKSPACE);
 		if (raw) {
 			try {
 				const data: (string | IProjectBarEntryData)[] = JSON.parse(raw);
@@ -176,9 +178,27 @@ export class ProjectBarPart extends Part {
 			this.entries = [];
 		}
 
-		// The selected folder is always the first workspace folder
+		// The selected folder is either the current workspace folder or the saved selected folder,
+		// falling back to the first available project entry.
 		const currentFolders = this.workspaceContextService.getWorkspace().folders;
-		this._selectedFolderUri = currentFolders.length > 0 ? currentFolders[0].uri : undefined;
+		const savedSelected = this.storageService.get(PROJECT_BAR_SELECTED_KEY, StorageScope.PROFILE)
+			?? this.storageService.get(PROJECT_BAR_SELECTED_KEY, StorageScope.WORKSPACE);
+
+		if (currentFolders.length > 0) {
+			this._selectedFolderUri = currentFolders[0].uri;
+			if (!this.entries.some(e => e.uri.toString() === this._selectedFolderUri!.toString())) {
+				this.entries.unshift({ uri: this._selectedFolderUri, name: basename(this._selectedFolderUri), displayType: 'letter' });
+				this.saveEntriesToStorage();
+			}
+		} else if (savedSelected && this.entries.some(e => e.uri.toString() === savedSelected)) {
+			this._selectedFolderUri = URI.parse(savedSelected);
+			this.applySelectedFolder();
+		} else if (this.entries.length > 0) {
+			this._selectedFolderUri = this.entries[0].uri;
+			this.applySelectedFolder();
+		} else {
+			this._selectedFolderUri = undefined;
+		}
 	}
 
 	private saveEntriesToStorage(): void {
@@ -187,7 +207,17 @@ export class ProjectBarPart extends Part {
 			displayType: e.displayType,
 			iconId: e.iconId
 		}));
-		this.storageService.store(PROJECT_BAR_FOLDERS_KEY, JSON.stringify(data), StorageScope.WORKSPACE, StorageTarget.MACHINE);
+		const raw = JSON.stringify(data);
+		this.storageService.store(PROJECT_BAR_FOLDERS_KEY, raw, StorageScope.PROFILE, StorageTarget.MACHINE);
+		this.storageService.store(PROJECT_BAR_FOLDERS_KEY, raw, StorageScope.WORKSPACE, StorageTarget.MACHINE);
+		if (this._selectedFolderUri) {
+			const selUriStr = this._selectedFolderUri.toString();
+			this.storageService.store(PROJECT_BAR_SELECTED_KEY, selUriStr, StorageScope.PROFILE, StorageTarget.MACHINE);
+			this.storageService.store(PROJECT_BAR_SELECTED_KEY, selUriStr, StorageScope.WORKSPACE, StorageTarget.MACHINE);
+		} else {
+			this.storageService.remove(PROJECT_BAR_SELECTED_KEY, StorageScope.PROFILE);
+			this.storageService.remove(PROJECT_BAR_SELECTED_KEY, StorageScope.WORKSPACE);
+		}
 	}
 
 	private addFolderEntry(uri: URI): void {
@@ -318,7 +348,11 @@ export class ProjectBarPart extends Part {
 		}
 
 		// Auto-select first entry if available and none selected
-		if (this.entries.length > 0 && this._selectedFolderUri) {
+		if (this.entries.length > 0) {
+			if (!this._selectedFolderUri) {
+				this._selectedFolderUri = this.entries[0].uri;
+				this.applySelectedFolder();
+			}
 			this._onDidSelectWorkspace.fire(this._selectedFolderUri);
 		}
 	}

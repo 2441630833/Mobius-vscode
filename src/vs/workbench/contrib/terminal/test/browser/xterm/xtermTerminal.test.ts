@@ -109,6 +109,52 @@ suite('XtermTerminal', () => {
 		strictEqual(xterm.raw.rows, 30);
 	});
 
+	suite('resize cursor reflow', () => {
+		for (const prompt of ['PS C:\\Users\\mi\\Documents\\slide> ', 'PS C:\\Users\\mi\\Documents\\中文幻灯片> ']) {
+			test(`preserves the input cursor when revealing a terminal with prompt ${prompt}`, async () => {
+				xterm.raw.options.reflowCursorLine = true;
+				await write(prompt);
+				const cursorX = xterm.raw.buffer.active.cursorX;
+				xterm.resize(22, 30);
+				deepStrictEqual(
+					[xterm.raw.buffer.active.cursorX, xterm.raw.buffer.active.cursorY],
+					[cursorX % 22, Math.floor(cursorX / 22)]
+				);
+				xterm.resize(120, 30);
+				await write('echo');
+				deepStrictEqual(
+					{ line: xterm.raw.buffer.active.getLine(0)?.translateToString(true), cursorX: xterm.raw.buffer.active.cursorX, cursorY: xterm.raw.buffer.active.cursorY },
+					{ line: `${prompt}echo`, cursorX: cursorX + 4, cursorY: 0 }
+				);
+			});
+		}
+
+		test('accounts for a wide character wrapping past an unused cell', async () => {
+			xterm.raw.options.reflowCursorLine = true;
+			await write('123456789中> ');
+			xterm.resize(10, 30);
+			deepStrictEqual([xterm.raw.buffer.active.cursorX, xterm.raw.buffer.active.cursorY], [4, 1]);
+			xterm.resize(80, 30);
+			await write('x');
+			strictEqual(xterm.raw.buffer.active.getLine(0)?.translateToString(true), '123456789中> x');
+		});
+
+		test('preserves an editing cursor in the middle of a wrapped line', async () => {
+			xterm.raw.options.reflowCursorLine = true;
+			await write('previous output\r\n' + 'a'.repeat(60) + '\x1b[20D');
+			xterm.resize(22, 30);
+			xterm.resize(120, 30);
+			deepStrictEqual([xterm.raw.buffer.active.cursorX, xterm.raw.buffer.active.cursorY], [40, 1]);
+		});
+
+		test('does not restore the normal buffer cursor in the alternate buffer', async () => {
+			xterm.raw.options.reflowCursorLine = true;
+			await write('\x1b[?1049h' + 'a'.repeat(40));
+			xterm.resize(22, 30);
+			deepStrictEqual([xterm.raw.buffer.active.cursorX, xterm.raw.buffer.active.cursorY], [21, 0]);
+		});
+	});
+
 	suite('getContentsAsText', () => {
 		test('should return all buffer contents when no markers provided', async () => {
 			await write('line 1\r\nline 2\r\nline 3\r\nline 4\r\nline 5');

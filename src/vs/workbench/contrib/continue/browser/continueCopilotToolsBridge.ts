@@ -8,6 +8,7 @@ import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { IMarkdownString } from '../../../../base/common/htmlContent.js';
 import { URI } from '../../../../base/common/uri.js';
+import { toolPathArgument } from './continueToolPaths.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { TerminalToolId } from '../../chat/common/tools/terminalToolIds.js';
@@ -193,7 +194,7 @@ function pickPath(args: Record<string, unknown>, keys: string[]): unknown {
 
 /** Local Qwen often emits `command: 'read_file path="…"'` instead of filePath. */
 function coercePathArg(args: Record<string, unknown>): unknown {
-	const direct = pickPath(args, ['filePath', 'filepath', 'path']);
+	const direct = toolPathArgument(args);
 	if (direct) {
 		return direct;
 	}

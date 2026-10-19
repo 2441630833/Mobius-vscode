@@ -8,6 +8,13 @@ import { IBufferCell } from '@xterm/xterm';
 export type XtermAttributes = Omit<IBufferCell, 'getWidth' | 'getChars' | 'getCode'> & { clone?(): XtermAttributes };
 
 export interface IXtermCore {
+	_bufferService: {
+		buffer: {
+			x: number;
+			y: number;
+		};
+	};
+
 	viewport?: {
 		readonly scrollBarWidth: number;
 		_innerRefresh(): void;

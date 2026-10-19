@@ -74,6 +74,15 @@ function getFullBufferLineAsString(lineIndex: number, buffer: IBuffer): { lineDa
 	return { lineData, lineIndex };
 }
 
+function getWrappedLineColumnCount(buffer: IBuffer, lineIndex: number, columns: number): number {
+	const lastCell = buffer.getLine(lineIndex)?.getCell(columns - 1);
+	// A wide character can leave an unused cell before wrapping to the next row.
+	if (lastCell?.getCode() === 0 && lastCell.getWidth() === 1 && buffer.getLine(lineIndex + 1)?.getCell(0)?.getWidth() === 2) {
+		return columns - 1;
+	}
+	return columns;
+}
+
 export interface IXtermTerminalOptions {
 	/** The columns to initialize the terminal with. */
 	cols: number;
@@ -541,7 +550,48 @@ export class XtermTerminal extends Disposable implements IXtermTerminal, IDetach
 
 	resize(columns: number, rows: number): void {
 		this._logService.debug('resizing', columns, rows);
-		this.raw.resize(columns, rows);
+		const buffer = this.raw.buffer.active;
+		if (!this.raw.options.reflowCursorLine || buffer !== this.raw.buffer.normal || columns === this.raw.cols) {
+			this.raw.resize(columns, rows);
+			return;
+		}
+
+		// xterm reflows the cursor's text but leaves its column clamped to the old row.
+		// This is especially visible when an Agents Window terminal is first revealed.
+		const cursorLine = buffer.baseY + buffer.cursorY;
+		let startLine = cursorLine;
+		while (startLine > 0 && buffer.getLine(startLine)?.isWrapped) {
+			startLine--;
+		}
+		let cursorOffset = buffer.cursorX;
+		for (let line = startLine; line < cursorLine; line++) {
+			cursorOffset += getWrappedLineColumnCount(buffer, line, this.raw.cols);
+		}
+		const startMarker = this.raw.registerMarker(startLine - cursorLine);
+		try {
+			this.raw.resize(columns, rows);
+			if (!startMarker || startMarker.isDisposed) {
+				return;
+			}
+			let line = startMarker.line;
+			while (buffer.getLine(line + 1)?.isWrapped) {
+				const columnCount = getWrappedLineColumnCount(buffer, line, this.raw.cols);
+				if (cursorOffset < columnCount) {
+					break;
+				}
+				cursorOffset -= columnCount;
+				line++;
+			}
+			const cursorY = line - buffer.baseY;
+			if (cursorY >= 0 && cursorY < this.raw.rows) {
+				// Restore synchronously, before the PTY resize can produce cursor reports or
+				// new output. An asynchronous VT write would race with that shell output.
+				this._core._bufferService.buffer.x = Math.min(cursorOffset, this.raw.cols);
+				this._core._bufferService.buffer.y = cursorY;
+			}
+		} finally {
+			startMarker?.dispose();
+		}
 	}
 
 	updateLogLevel(): void {

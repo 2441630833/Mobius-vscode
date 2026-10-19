@@ -52,7 +52,8 @@ export class SessionsBrowserMain extends BrowserMain {
 
 		// Workspace — use a stable synthetic workspace identifier for agents
 		const workspaceIdentifier = getWorkspaceIdentifier(environmentService.agentSessionsWorkspace);
-		const workspaceContextService = new SessionsWorkspaceContextService(workspaceIdentifier, uriIdentityService);
+		const workspaceContextService = new SessionsWorkspaceContextService(workspaceIdentifier, uriIdentityService, fileService);
+		await workspaceContextService.initialize();
 
 		serviceCollection.set(IWorkspaceContextService, workspaceContextService);
 		serviceCollection.set(IWorkspaceEditingService, workspaceContextService);

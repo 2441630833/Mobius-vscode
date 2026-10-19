@@ -163,12 +163,13 @@ export class ContinueLanguageModelProvider extends Disposable implements ILangua
 		const requestContext = context;
 		const stream = new AsyncIterableObject<IChatResponsePart | IChatResponsePart[]>(async emitter => {
 			let buffer = '';
+			const decoder = new TextDecoder();
 			const toolAcc = new Map<number, { id: string; name: string; arguments: string }>();
 			const contentParser = createStreamContentParser();
 			await new Promise<void>((resolve, reject) => {
 				listenStream(requestContext.stream, {
 					onData: (chunk: VSBuffer) => {
-						buffer += chunk.toString();
+						buffer += decoder.decode(chunk.buffer, { stream: true });
 						const parsed = parseOpenAIStreamBuffer(buffer, toolAcc, contentParser);
 						buffer = parsed.rest;
 						for (const part of parsed.parts) {
@@ -177,7 +178,7 @@ export class ContinueLanguageModelProvider extends Disposable implements ILangua
 					},
 					onError: reject,
 					onEnd: () => {
-						const parsed = parseOpenAIStreamBuffer(buffer + '\n', toolAcc, contentParser);
+						const parsed = parseOpenAIStreamBuffer(buffer + decoder.decode() + '\n', toolAcc, contentParser);
 						for (const part of parsed.parts) {
 							emitter.emitOne(part);
 						}
