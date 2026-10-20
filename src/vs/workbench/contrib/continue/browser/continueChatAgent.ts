@@ -170,9 +170,10 @@ const MODEL_CONTEXT_CHAR_BUDGET = 200_000;
  * stuck, not progressing: the call is deterministic, so re-running it cannot
  * produce new information. Fires on the 3rd identical turn.
  */
-const MAX_IDENTICAL_TOOL_REPEATS = 2;
+const MAX_IDENTICAL_TOOL_REPEATS = 5;
 /** Consecutive turns that only rewrite an unchanged todo list before we stop the loop. */
-const MAX_NO_PROGRESS_CONTROL_TURNS = 2;
+const MAX_NO_PROGRESS_CONTROL_TURNS = 5;
+const MAX_TODO_LIST_FORCE_NUDGES = 2;
 /**
  * Hard cap on consecutive tool_choice='required' turns with zero writes.
  * `required` forbids a plain-text answer, so a model that only wants to *explain*
@@ -199,6 +200,10 @@ const VOLATILE_TOOL_NAMES = new Set([
 	'get_problems',
 	'vscode_askQuestions',
 	'vscode_ask_questions',
+	'manage_todo_list',
+	'todo',
+	'todos',
+	'manageTodoList',
 ]);
 
 const PATCH_EDIT_TOOLS = new Set([
@@ -277,6 +282,9 @@ Do not stop after a single terminal/read call. Forbidden: asking the user to con
 const TODO_LIST_FORCE_NUDGE =
 	`You must call manage_todo_list NOW before other tools. Split the user's request into 3–7 actionable items in their language, mark the first item in-progress, then continue the work. Do NOT narrate the plan only in chat text.`;
 
+const TODO_LOOP_CONTINUE_NUDGE =
+	`Todo list update acknowledged. Do NOT call manage_todo_list again right now. Proceed IMMEDIATELY to execute the task using terminal or edit tools (e.g. run_in_terminal, read_file, replace_string_in_file, write_file).`;
+
 /**
  * Injected right before the stuck-loop breaker disables tools. The model has
  * already been re-issuing the same tool call with the same arguments, so spell
@@ -312,6 +320,7 @@ const NUDGE_ECHO_SIGNATURES: readonly string[] = [
 	'Your previous turn ONLY NARRATED a tool call',
 	'Investigation is incomplete. Continue NOW with tools',
 	'You must call manage_todo_list NOW before other tools',
+	'Todo list update acknowledged.', 
 	'A workspace search timed out or failed.',
 	'A tool just failed because it is unavailable in Continue Agent',
 	'The previous model response failed (provider/stream error).',
@@ -1135,6 +1144,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		/** Consecutive control-only (todo) turns that changed nothing. */
 		let noProgressControlTurns = 0;
 		let lastControlTodosJson = '';
+		let todoListForceNudges = 0;
 		const editedUris = new Set<string>();
 		const godotAutoPreview = isGameMode ? createGodotAutoPreviewState() : undefined;
 		const taskRecorder = new TaskExecutionRecorder();
@@ -1497,16 +1507,21 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					needsInitialTodoList
 					&& this._chatTodoListService.getTodos(request.sessionResource).length === 0
 				) {
-					messages = [
-						...messages,
-						...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : []),
-						{
-							role: ChatMessageRole.User,
-							content: [{ type: 'text', value: TODO_LIST_FORCE_NUDGE }],
-						},
-					];
-					forceRequiredTools = true;
-					continue;
+					if (todoListForceNudges < MAX_TODO_LIST_FORCE_NUDGES) {
+						todoListForceNudges++;
+						messages = [
+							...messages,
+							...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : []),
+							{
+								role: ChatMessageRole.User,
+								content: [{ type: 'text', value: TODO_LIST_FORCE_NUDGE }],
+							},
+						];
+						forceRequiredTools = true;
+						continue;
+					} else {
+						needsInitialTodoList = false;
+					}
 				}
 
 				// Model dumped XML/prose tool markup, or narrated "executing now" without tool_calls.
@@ -1894,13 +1909,29 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				lastControlTodosJson = controlTodosJson;
 			}
 
-			if (
-				identicalToolRepeats >= MAX_IDENTICAL_TOOL_REPEATS
-				|| (controlOnlyTurn && noProgressControlTurns >= MAX_NO_PROGRESS_CONTROL_TURNS)
-			) {
+			// If the model is repeatedly calling manage_todo_list without changing anything,
+			// steer it toward executing the task with tools instead of aborting the session.
+			if (controlOnlyTurn && noProgressControlTurns >= MAX_NO_PROGRESS_CONTROL_TURNS) {
+				this._logService.warn(
+					`[Continue] Todo-list control loop detected without progress (turns=${noProgressControlTurns}) — nudging agent to execute task directly`,
+				);
+				noProgressControlTurns = 0;
+				needsInitialTodoList = false;
+				forceRequiredTools = false;
+				messages = [
+					...messages,
+					{
+						role: ChatMessageRole.User,
+						content: [{ type: 'text', value: TODO_LOOP_CONTINUE_NUDGE }],
+					},
+				];
+				continue;
+			}
+
+			if (identicalToolRepeats >= MAX_IDENTICAL_TOOL_REPEATS) {
 				const stuckToolName = toolUses[0]?.name ?? 'tools';
 				this._logService.warn(
-					`[Continue] Stuck tool loop detected (identical=${identicalToolRepeats}, no-progress-control=${noProgressControlTurns}, tool=${stuckToolName}) — disabling tools and forcing the final answer`,
+					`[Continue] Stuck tool loop detected (identical=${identicalToolRepeats}, tool=${stuckToolName}) — disabling tools and forcing the final answer`,
 				);
 				progress([{
 					kind: 'warning',
@@ -3872,8 +3903,9 @@ function shouldUseTodoList(
 }
 
 function isManageTodoListTool(toolName: string): boolean {
-	const normalized = remapCopilotNameToContinueFallback(toolName) ?? toolName;
-	return normalized === 'manage_todo_list' || normalized === 'todo' || normalized === 'todos';
+	const fallback = remapCopilotNameToContinueFallback(toolName) ?? toolName;
+	const normalized = (fallback || '').toLowerCase().trim().replace(/[-_]/g, '');
+	return normalized === 'managetodolist' || normalized === 'todo' || normalized === 'todos' || normalized === 'todolist' || normalized === 'managetodos';
 }
 
 /**

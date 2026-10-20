@@ -10,7 +10,7 @@ import { URI } from '../../../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../../base/test/common/utils.js';
 import { NullLogService } from '../../../../../../../platform/log/common/log.js';
 import { NullTelemetryService } from '../../../../../../../platform/telemetry/common/telemetryUtils.js';
-import { createManageTodoListToolData, ManageTodoListTool } from '../../../../common/tools/builtinTools/manageTodoListTool.js';
+import { createManageTodoListToolData, ManageTodoListTool, normalizeTodoListArgs } from '../../../../common/tools/builtinTools/manageTodoListTool.js';
 import { IChatTodo, IChatTodoListService } from '../../../../common/tools/chatTodoListService.js';
 import { IToolData, ToolInvocationPresentation } from '../../../../common/tools/languageModelToolsService.js';
 import { IJSONSchema } from '../../../../../../../base/common/jsonSchema.js';
@@ -143,5 +143,48 @@ suite('ManageTodoListTool prepareToolInvocation', () => {
 		}, CancellationToken.None);
 
 		assert.strictEqual(result, undefined);
+	});
+});
+
+
+suite('ManageTodoListTool normalizeTodoListArgs', () => {
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('normalizes todos alias with string id and in_progress status', () => {
+		const result = normalizeTodoListArgs({
+			todos: [
+				{ id: '1', task: 'First step', status: 'in_progress' },
+				{ id: '2', title: 'Second step', status: 'completed' },
+			]
+		});
+		assert.strictEqual(result.operation, 'write');
+		assert.ok(result.todoList);
+		assert.strictEqual(result.todoList.length, 2);
+		assert.strictEqual(result.todoList[0].id, 1);
+		assert.strictEqual(result.todoList[0].title, 'First step');
+		assert.strictEqual(result.todoList[0].status, 'in-progress');
+		assert.strictEqual(result.todoList[1].id, 2);
+		assert.strictEqual(result.todoList[1].title, 'Second step');
+		assert.strictEqual(result.todoList[1].status, 'completed');
+	});
+
+	test('normalizes stringified JSON parameter', () => {
+		const raw = JSON.stringify({
+			tasks: ['Task Alpha', 'Task Beta']
+		});
+		const result = normalizeTodoListArgs(raw);
+		assert.strictEqual(result.operation, 'write');
+		assert.ok(result.todoList);
+		assert.strictEqual(result.todoList.length, 2);
+		assert.strictEqual(result.todoList[0].id, 1);
+		assert.strictEqual(result.todoList[0].title, 'Task Alpha');
+		assert.strictEqual(result.todoList[0].status, 'not-started');
+		assert.strictEqual(result.todoList[1].id, 2);
+		assert.strictEqual(result.todoList[1].title, 'Task Beta');
+	});
+
+	test('normalizes explicit read operation', () => {
+		const result = normalizeTodoListArgs({ operation: 'read' });
+		assert.strictEqual(result.operation, 'read');
 	});
 });

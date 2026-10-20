@@ -12,6 +12,7 @@ import { toolPathArgument } from './continueToolPaths.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { TerminalToolId } from '../../chat/common/tools/terminalToolIds.js';
+import { normalizeTodoListArgs } from '../../chat/common/tools/builtinTools/manageTodoListTool.js';
 import {
 	CountTokensCallback,
 	ILanguageModelToolsService,
@@ -963,7 +964,11 @@ export async function tryInvokeCopilotTool(
 		}
 	}
 
-	return invokeByToolId(toolsService, logService, toolId, args, context, token, toolName);
+	const effectiveArgs = toolId === 'manage_todo_list'
+		? (normalizeTodoListArgs(args) as unknown as Record<string, unknown>)
+		: args;
+
+	return invokeByToolId(toolsService, logService, toolId, effectiveArgs, context, token, toolName);
 }
 
 async function tryEnsureCopilotToolsMounted(
@@ -1046,6 +1051,12 @@ function resolveToolIdForModelName(
 	toolsService: ILanguageModelToolsService,
 	modelName: string,
 ): string | undefined {
+	const normalized = (modelName || '').toLowerCase().trim().replace(/[-_]/g, '');
+	if (normalized === 'managetodolist' || normalized === 'todo' || normalized === 'todos' || normalized === 'todolist' || normalized === 'managetodos') {
+		if (toolsService.getTool('manage_todo_list')) {
+			return 'manage_todo_list';
+		}
+	}
 	for (const [id, name] of Object.entries(COPILOT_ONLY_MODEL_NAMES)) {
 		if (name === modelName && toolsService.getTool(id)) {
 			return id;

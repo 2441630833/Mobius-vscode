@@ -74,15 +74,108 @@ export function createManageTodoListToolData(): IToolData {
 
 export const ManageTodoListToolData: IToolData = createManageTodoListToolData();
 
-interface IManageTodoListToolInputParams {
+export interface IManageTodoListToolInputParams {
 	operation?: 'write' | 'read'; // Optional, defaults to 'write'
-	todoList: Array<{
+	todoList?: Array<{
 		id: number;
 		title: string;
 		status: 'not-started' | 'in-progress' | 'completed';
 	}>;
 	// used for todo read only
 	chatSessionResource?: string;
+}
+
+export function normalizeTodoListArgs(raw: unknown): IManageTodoListToolInputParams {
+	if (!raw) {
+		return { operation: 'read' };
+	}
+	let parsed: any = raw;
+	if (typeof raw === 'string') {
+		const trimmed = raw.trim();
+		if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+			try {
+				parsed = JSON.parse(trimmed);
+			} catch {
+				// not json
+			}
+		}
+	}
+
+	if (Array.isArray(parsed)) {
+		parsed = { todoList: parsed };
+	}
+
+	if (typeof parsed !== 'object' || parsed === null) {
+		return { operation: 'read' };
+	}
+
+	if (parsed.parameters && typeof parsed.parameters === 'object') {
+		parsed = parsed.parameters;
+	} else if (parsed.args && typeof parsed.args === 'object') {
+		parsed = parsed.args;
+	}
+
+	const opRaw = String(parsed.operation ?? parsed.action ?? parsed.op ?? parsed.type ?? '').toLowerCase().trim();
+	const isExplicitRead = opRaw === 'read' || opRaw === 'get' || opRaw === 'fetch';
+
+	let rawItems = parsed.todoList ?? parsed.todo_list ?? parsed.todos ?? parsed.items ?? parsed.tasks ?? parsed.list ?? parsed.plan ?? parsed.steps;
+	if (typeof rawItems === 'string') {
+		const trimmed = rawItems.trim();
+		if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+			try {
+				rawItems = JSON.parse(trimmed);
+			} catch {
+				// ignore
+			}
+		}
+	}
+
+	if (rawItems && !Array.isArray(rawItems) && typeof rawItems === 'object') {
+		rawItems = [rawItems];
+	}
+
+	let todoList: IManageTodoListToolInputParams['todoList'] | undefined;
+	if (Array.isArray(rawItems)) {
+		todoList = rawItems.map((item, index) => {
+			if (typeof item === 'string') {
+				return {
+					id: index + 1,
+					title: item.trim(),
+					status: 'not-started' as const,
+				};
+			}
+			const idNum = typeof item?.id === 'number'
+				? item.id
+				: parseInt(String(item?.id ?? index + 1), 10);
+			const safeId = Number.isFinite(idNum) ? idNum : index + 1;
+
+			const title = String(
+				item?.title ?? item?.task ?? item?.text ?? item?.name ?? item?.description ?? item?.content ?? `Task ${safeId}`
+			).trim();
+
+			const rawStatus = String(item?.status ?? item?.state ?? '').toLowerCase().trim();
+			let status: 'not-started' | 'in-progress' | 'completed' = 'not-started';
+			if (/^(done|completed|complete|finished|success|closed)$/i.test(rawStatus)) {
+				status = 'completed';
+			} else if (/^(in[_-]?progress|running|active|doing|started|working)$/i.test(rawStatus)) {
+				status = 'in-progress';
+			}
+
+			return {
+				id: safeId,
+				title: title || `Task ${safeId}`,
+				status,
+			};
+		});
+	}
+
+	const hasListField = parsed.todoList !== undefined || parsed.todo_list !== undefined || parsed.todos !== undefined || parsed.items !== undefined || parsed.tasks !== undefined;
+	const operation: 'write' | 'read' = isExplicitRead || (!todoList && !hasListField) ? 'read' : 'write';
+	return {
+		operation,
+		todoList: todoList ?? (hasListField ? [] : undefined),
+		chatSessionResource: typeof parsed.chatSessionResource === 'string' ? parsed.chatSessionResource : undefined,
+	};
 }
 
 export class ManageTodoListTool extends Disposable implements IToolImpl {
@@ -97,7 +190,7 @@ export class ManageTodoListTool extends Disposable implements IToolImpl {
 
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	async invoke(invocation: IToolInvocation, _countTokens: any, _progress: any, _token: CancellationToken): Promise<IToolResult> {
-		const args = invocation.parameters as IManageTodoListToolInputParams;
+		const args = normalizeTodoListArgs(invocation.parameters);
 		let chatSessionResource = invocation.context?.sessionResource;
 		if (!chatSessionResource && args.operation === 'read' && args.chatSessionResource) {
 			try {
@@ -136,7 +229,7 @@ export class ManageTodoListTool extends Disposable implements IToolImpl {
 	}
 
 	async prepareToolInvocation(context: IToolInvocationPreparationContext, _token: CancellationToken): Promise<IPreparedToolInvocation | undefined> {
-		const args = context.parameters as IManageTodoListToolInputParams;
+		const args = normalizeTodoListArgs(context.parameters);
 		const chatSessionResource = context.chatSessionResource;
 		if (!chatSessionResource) {
 			return undefined;
@@ -172,7 +265,7 @@ export class ManageTodoListTool extends Disposable implements IToolImpl {
 		};
 	}
 
-	private generatePastTenseMessage(currentTodos: IChatTodo[], newTodos: IManageTodoListToolInputParams['todoList']): string {
+	private generatePastTenseMessage(currentTodos: IChatTodo[], newTodos: NonNullable<IManageTodoListToolInputParams['todoList']>): string {
 		// If no current todos and we're adding new ones, this is creating new ones.
 		// When both lists are empty (a no-op write), fall through to the default
 		// "Updated todo list" message rather than showing "Created 0 todos".
@@ -261,7 +354,8 @@ export class ManageTodoListTool extends Disposable implements IToolImpl {
 				content: [{
 					kind: 'text',
 					value: 'Error: todoList is required for write operation'
-				}]
+				}],
+				toolResultError: true
 			};
 		}
 
@@ -303,7 +397,7 @@ export class ManageTodoListTool extends Disposable implements IToolImpl {
 		return {
 			content: [{
 				kind: 'text',
-				value: `Successfully wrote todo list${warnings.length ? '\n\n' + warnings.join('\n') : ''}`
+				value: `Successfully updated todo list (${todoList.length} items: ${statusCounts.completedCount} completed, ${statusCounts.inProgressCount} in-progress, ${statusCounts.notStartedCount} not-started).`
 			}],
 			toolMetadata: {
 				warnings: warnings
