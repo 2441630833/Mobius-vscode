@@ -28,7 +28,7 @@ import { HoverStyle } from '../../../../../../base/browser/ui/hover/hover.js';
 import { ILanguageModelToolsService } from '../../../common/tools/languageModelToolsService.js';
 import { isEqual } from '../../../../../../base/common/resources.js';
 import { autorun } from '../../../../../../base/common/observable.js';
-import { buildPhrasePool, defaultThinkingMessages, formatWorkingElapsed, maybePickFunWorkingMessage } from './chatThinkingContentPart.js';
+import { buildPhrasePool, defaultThinkingMessages, formatWorkingElapsed } from './chatThinkingContentPart.js';
 
 export class ChatProgressContentPart extends Disposable implements IChatContentPart {
 	public readonly domNode: HTMLElement;
@@ -241,11 +241,8 @@ function pickWorkingLabel(elementId: string, configurationService: IConfiguratio
 		return existing.label;
 	}
 
-	const fun = maybePickFunWorkingMessage(configurationService);
-	const label = fun ?? (() => {
-		const pool = buildPhrasePool(defaultThinkingMessages, configurationService);
-		return pool[Math.floor(Math.random() * pool.length)];
-	})();
+	const pool = buildPhrasePool(defaultThinkingMessages, configurationService);
+	const label = pool[Math.floor(Math.random() * pool.length)];
 	lastPickedWorkingLabelByElement.set(elementId, { label, pickedAt: now });
 	return label;
 }

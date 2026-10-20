@@ -57,6 +57,15 @@ export function pptModeSystemHint(skill: PptMasterSkill): string {
 - The contents of ${JSON.stringify(`${skillDir}/SKILL.md`)} are loaded below. Follow its mandatory load order and selected workflow.
 - Resolve every relative workflow, reference, template, and script path against SKILL_DIR. Expand the concrete absolute path in each tool call; quote paths in terminal commands.
 - Never look for the engine in the user's presentation workspace. Keep generated presentations in that workspace, not in SKILL_DIR.
+- Resource map (absolute paths; do not rediscover with shell searches):
+  Routing: ${JSON.stringify(`${skillDir}/workflows/routing.md`)}
+  Quick profile, only when the selected route calls for it: ${JSON.stringify(`${skillDir}/workflows/profiles/quick-generate.md`)}
+  SVG checker: ${JSON.stringify(`${skillDir}/scripts/svg_quality_checker.py`)}
+  PPTX exporter: ${JSON.stringify(`${skillDir}/scripts/svg_to_pptx.py`)}
+- Preparation must advance toward the requested slides: read the selected workflow once, check its required dependencies once, then author the slides and export. Do not repeatedly inspect engine source or run --help after the interface is known. Only investigate a specific missing prerequisite or reported failure.
+- For truncated documentation use read_file with an absolute filepath and startLine/endLine (or read_file_range); request only the missing section. Do not switch to grep/sed merely to reread the same file, and never guess line numbers beyond the document.
+- Use the verified Python interpreter consistently. Reuse an existing working virtual environment; install only dependencies reported missing. Never run bare ls scripts from the presentation workspace.
+- A terminal tool returning does not prove command success. Check exit status/output. If it reports waiting for input or a background terminal, do not send another command into that terminal; inspect or cancel it by its exact returned ID. Correct a failed command once; if the same failure persists, report the concrete blocker instead of repeating preparation indefinitely.
 - Do NOT open Godot.
 
 <ppt-master-skill>

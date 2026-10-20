@@ -2267,11 +2267,16 @@ export class RunInTerminalTool extends Disposable implements IToolImpl {
 				if (raceResult.type === 'inputNeeded') {
 					// Output monitor detected the terminal is waiting for input.
 					// Return output to the agent so it can provide input via
-					// send_to_terminal. The terminal stays foreground so it is
-					// reused by subsequent run_in_terminal calls in this session.
+					// send_to_terminal. Detach it from command reuse: another shell
+					// command must not become input to a pending prompt/quoted string.
 					this._logService.debug(`RunInTerminalTool: Output monitor detected input needed in foreground terminal, returning output to agent`);
 					error = 'inputNeeded';
 					didInputNeeded = true;
+					isBackgroundExecution = true;
+					toolTerminal.isBackground = true;
+					toolSpecificData.didContinueInBackground = true;
+					this._sessionTerminalAssociations.delete(chatSessionResource);
+					await this._associateProcessIdWithSession(toolTerminal.instance, chatSessionResource, termId, toolTerminal.shellIntegrationQuality, true);
 					// Read output directly from the execution rather than from pollingResult,
 					// because the output monitor may not have set pollingResult yet at this point
 					// (it is written in the finally block after onDidFinishCommand).
@@ -3165,6 +3170,13 @@ export class RunInTerminalTool extends Disposable implements IToolImpl {
 			// When the output monitor detects the terminal is waiting for input,
 			// send a steering message so the agent handles it via send_to_terminal.
 			store.add(outputMonitor.onDidDetectInputNeeded(() => {
+				// Keep explicit input by terminal ID available, but exclude the
+				// pending prompt from reuse by unrelated shell commands.
+				const associated = this._sessionTerminalAssociations.get(chatSessionResource);
+				if (associated?.instance === terminalInstance) {
+					associated.isBackground = true;
+					this._sessionTerminalAssociations.delete(chatSessionResource);
+				}
 				if (userIsReplyingDirectly) {
 					this._logService.debug(`RunInTerminalTool: Suppressing input-needed notification for terminal ${termId} because user is replying directly`);
 					return;

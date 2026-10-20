@@ -207,22 +207,6 @@ const toolMessages = [
 	localize('chat.thinking.tool.5', 'Evaluating'),
 ];
 
-/** Easter-egg loading messages, used ~1 in {@link FUN_WORKING_MESSAGE_RATE} picks. */
-const funWorkingMessages = [
-	// Generic
-	localize('chat.working.fun.1', "Bribing the hamster"),
-	localize('chat.working.fun.2', "Reticulating splines"),
-	localize('chat.working.fun.3', "Untangling the spaghetti"),
-	localize('chat.working.fun.4', "Communing with the codebase"),
-
-	// Minecraft
-	localize('chat.working.fun.minecraft.1', "Mining diamonds"),
-
-	// Microsoft
-	localize('chat.working.fun.ms.1', "Summoning Clippy"),
-];
-
-const FUN_WORKING_MESSAGE_RATE = 50;
 const WORKING_PHRASE_ROTATE_MS = 4000;
 const WORKING_ELAPSED_TICK_MS = 1000;
 
@@ -251,18 +235,6 @@ function getCustomThinkingPhrases(configurationService: IConfigurationService): 
 		customPhrases,
 		replaceDefaults: config?.mode === 'replace' && customPhrases.length > 0,
 	};
-}
-
-/** Returns an easter-egg message ~1 in {@link FUN_WORKING_MESSAGE_RATE}, else `undefined`. */
-export function maybePickFunWorkingMessage(configurationService: IConfigurationService, random = Math.random): string | undefined {
-	if (getCustomThinkingPhrases(configurationService).replaceDefaults) {
-		return undefined;
-	}
-
-	if (Math.floor(random() * FUN_WORKING_MESSAGE_RATE) === 0) {
-		return funWorkingMessages[Math.floor(random() * funWorkingMessages.length)];
-	}
-	return undefined;
 }
 
 /**
@@ -348,11 +320,6 @@ export class ChatThinkingContentPart extends ChatCollapsibleContentPart implemen
 	get aggregatedDiff(): IEditSessionDiffStats { return this._aggregatedDiff; }
 
 	private getRandomWorkingMessage(category: WorkingMessageCategory = WorkingMessageCategory.Tool): string {
-		const fun = maybePickFunWorkingMessage(this.configurationService);
-		if (fun) {
-			return fun;
-		}
-
 		let pool = this.availableMessagesByCategory.get(category);
 		if (!pool || pool.length === 0) {
 			let defaults: string[];

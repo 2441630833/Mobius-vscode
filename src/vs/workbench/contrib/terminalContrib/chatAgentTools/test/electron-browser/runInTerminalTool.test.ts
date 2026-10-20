@@ -3029,7 +3029,7 @@ suite('RunInTerminalTool', () => {
 		strictEqual(capturedSteeringRequests.length, 1, 'Expected a new notification once the prompt output changes');
 	});
 
-	test('should preserve session terminal association after inputNeeded so fg terminal is reused', () => {
+	test('should detach input-waiting terminal from reuse while preserving its active execution', () => {
 		const termId = 'test-input-cleanup-term';
 		const sessionResource = LocalChatSessionUri.forSession('test-input-cleanup-session');
 		stubSessionLastRequest({ isComplete: false });
@@ -3080,17 +3080,15 @@ suite('RunInTerminalTool', () => {
 		inputNeededEmitter.fire();
 		strictEqual(capturedSteeringRequests.length, 1, 'Should send steering request for input needed');
 
-		// The key assertion: fg terminal association is preserved (not deleted)
-		ok(runInTerminalTool.sessionTerminalAssociations.has(sessionResource), 'Session terminal association should be preserved for fg reuse');
-		strictEqual(runInTerminalTool.sessionTerminalAssociations.get(sessionResource)!.isBackground, false, 'Terminal should remain foreground');
+		ok(!runInTerminalTool.sessionTerminalAssociations.has(sessionResource), 'New commands must not enter the pending prompt');
+		ok((runInTerminalTool.constructor as unknown as { _activeExecutions: Map<string, unknown> })._activeExecutions.has(termId), 'Explicit terminal input must remain available');
 
-		// After command finishes, the fg association still persists
+		// Completion must not restore a stale session association.
 		commandFinishedEmitter.fire({ exitCode: 0 });
 		strictEqual(capturedSteeringRequests.length, 2, 'Should send a completion steering request');
 		ok(capturedSteeringRequests[1].message.includes('command completed.'), 'Successful completion should be reported without qualification');
 		ok(!capturedSteeringRequests[1].message.includes('exit code 0'), 'Successful completion should not print exit code 0 to chat');
-		ok(runInTerminalTool.sessionTerminalAssociations.has(sessionResource), 'Session terminal association should still be preserved after command finishes');
-		strictEqual(runInTerminalTool.sessionTerminalAssociations.get(sessionResource)!.isBackground, false, 'Terminal should still be foreground after command finishes');
+		ok(!runInTerminalTool.sessionTerminalAssociations.has(sessionResource));
 	});
 
 	suite('auto approve warning acceptance mechanism', () => {

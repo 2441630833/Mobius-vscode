@@ -13,7 +13,7 @@ import { mainWindow } from '../../../../../../../base/browser/window.js';
 import { workbenchInstantiationService } from '../../../../../../test/browser/workbenchTestServices.js';
 import { IConfigurationService } from '../../../../../../../platform/configuration/common/configuration.js';
 import { TestConfigurationService } from '../../../../../../../platform/configuration/test/common/testConfigurationService.js';
-import { ChatThinkingContentPart, maybePickFunWorkingMessage } from '../../../../browser/widget/chatContentParts/chatThinkingContentPart.js';
+import { ChatThinkingContentPart, buildPhrasePool } from '../../../../browser/widget/chatContentParts/chatThinkingContentPart.js';
 import { IChatMarkdownContent, IChatThinkingPart, IChatToolInvocation, IChatToolInvocationSerialized } from '../../../../common/chatService/chatService.js';
 import { IChatContentPartRenderContext, InlineTextModelCollection } from '../../../../browser/widget/chatContentParts/chatContentParts.js';
 import { IChatRendererContent, IChatResponseViewModel } from '../../../../common/model/chatViewModel.js';
@@ -132,13 +132,13 @@ suite('ChatThinkingContentPart', () => {
 		disposables.dispose();
 	});
 
-	test('replace thinking phrases suppresses fun default phrases', () => {
+	test('replace thinking phrases suppresses default phrases', () => {
 		mockConfigurationService.setUserConfiguration(ChatConfiguration.ThinkingPhrases, {
 			mode: 'replace',
 			phrases: ['Custom phrase'],
 		});
 
-		assert.strictEqual(maybePickFunWorkingMessage(mockConfigurationService, () => 0), undefined);
+		assert.deepStrictEqual(buildPhrasePool(['Working'], mockConfigurationService), ['Custom phrase']);
 	});
 
 	suite('ThinkingDisplayMode.Collapsed', () => {
