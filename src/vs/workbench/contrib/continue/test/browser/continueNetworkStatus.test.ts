@@ -8,7 +8,7 @@ import { isWebSearchEnabled } from '../../browser/continueWebSearch.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { isNetworkOnline, checkNetworkOnline, setNetworkOnlineForTesting, recordNetworkFailure } from '../../browser/continueNetworkStatus.js';
 import { hasWebSearchIntent } from '../../browser/continueSkillsContext.js';
-import { loadContinueAgentTools, invokeContinueBuiltInTool } from '../../browser/continueAgentToolsBridge.js';
+import { loadContinueAgentTools, invokeContinueBuiltInTool, invokeContinueClientEditTool } from '../../browser/continueAgentToolsBridge.js';
 import { loadAgentToolSuperset } from '../../browser/continueCopilotToolsBridge.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { ILanguageModelToolsService } from '../../../chat/common/tools/languageModelToolsService.js';
@@ -160,19 +160,36 @@ suite('Continue Network Status & Search Web Gating', () => {
 		assert.strictEqual(executions, 3);
 	});
 
-	test('parallel research cannot override disabled Web Search', async () => {
-		const configuration = new TestConfigurationService({ continue: { webSearch: { enabled: false } } });
-		let forwarded: Record<string, unknown> | undefined;
-		const commands = {
-			executeCommand: async (_id: string, payload: { arguments: Record<string, unknown> }) => {
-				forwarded = payload.arguments;
-				return { ok: true, contextItems: [] };
-			},
-		} as unknown as ICommandService;
-		const args = { request: 'Research current releases', allow_web: true };
-		await invokeContinueBuiltInTool(commands, 'orchestrate_agents', args, 'research', undefined, configuration);
-		assert.strictEqual(forwarded?.allow_web, false);
-		assert.strictEqual(args.allow_web, true);
+	test('retired parallel research and restored aliases never execute through either bridge', async () => {
+		let executions = 0;
+		const commands = { executeCommand: async () => { executions++; return { ok: true, contextItems: [] }; } } as unknown as ICommandService;
+		for (const name of ['orchestrate_agents', 'orchestrateAgents', 'continue.orchestrateAgents', 'continue_orchestrate_agents', 'list_a2a_agents', 'call_a2a_agent']) {
+			for (const invoke of [invokeContinueBuiltInTool, invokeContinueClientEditTool]) {
+				const result = await invoke(commands, name, { request: 'Research' }, 'restored');
+				assert.strictEqual(result.ok, false);
+				assert.ok(result.text.includes('Continue the original task directly'));
+			}
+		}
+		assert.strictEqual(executions, 0);
+		assert.strictEqual((await invokeContinueBuiltInTool(commands, 'read_file', { filepath: 'src/app.ts' }, 'read')).ok, true);
+		assert.strictEqual(executions, 1);
+	});
+
+	test('parallel research is absent from extension and native tool catalogs, even with old settings enabled', async () => {
+		setNetworkOnlineForTesting(true);
+		const configuration = new TestConfigurationService({ continue: { multiAgent: { enabled: true } } });
+		const commands = { executeCommand: async () => [
+			{ type: 'function', function: { name: 'orchestrate_agents' } },
+			{ type: 'function', function: { name: 'read_file' } },
+		] } as unknown as ICommandService;
+		const tools = {
+			getTool: () => undefined, hasToolImplementation: () => false,
+			getAllToolsIncludingDisabled: () => [{ id: 'continue.orchestrateAgents', modelDescription: 'Old orchestration tool', inputSchema: { type: 'object' } }],
+		} as unknown as ILanguageModelToolsService;
+		for (const schemas of [await loadContinueAgentTools(commands, undefined, configuration), await loadAgentToolSuperset(tools, commands, undefined, configuration)]) {
+			assert.ok(!schemas.some(t => /orchestrat/i.test(t.function.name)));
+			assert.ok(schemas.some(t => ['read_file', 'readFile'].includes(t.function.name)));
+		}
 	});
 
 });

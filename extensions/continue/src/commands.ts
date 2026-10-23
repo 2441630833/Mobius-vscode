@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/naming-convention */
 import * as fs from "node:fs";
-import { runWorkbenchOrchestration, cancelWorkbenchOrchestration, WorkbenchOrchestrationRequest } from "./agent/orchestration";
 
 import { ContextMenuConfig, ILLM, ModelInstaller } from "core";
 import { CompletionProvider } from "core/autocomplete/CompletionProvider";
@@ -955,10 +954,6 @@ const getCommandsMap: (
 
     /** Workbench Chat Agent: list OpenAI tool schemas (grep, web search, codebase, …). */
     "continue.getAgentChatTools": async () => getAgentChatTools(configHandler),
-
-    "continue.orchestrateAgents": (request: WorkbenchOrchestrationRequest) =>
-      runWorkbenchOrchestration(request, configHandler, ide),
-    "continue.cancelAgentOrchestration": (id: string) => cancelWorkbenchOrchestration(id),
 
     /** Workbench Chat Agent: Continue rules text for Agents window system prompt. */
     "continue.getAgentChatRules": async (request?: { userMessage?: string }) =>

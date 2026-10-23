@@ -26,6 +26,7 @@ import {
 import {
 	ContinueAgentToolSchema,
 	loadContinueAgentTools,
+	isRetiredOrchestrationTool,
 } from './continueAgentToolsBridge.js';
 import { isNetworkOnline } from './continueNetworkStatus.js';
 import { executeRunTerminalCommand } from './continueTerminalTool.js';
@@ -79,6 +80,9 @@ export const CONTINUE_AGENT_UNSUPPORTED_COPILOT_TOOLS = new Set<string>([
 ]);
 
 export function isUnsupportedContinueAgentTool(nameOrId: string): boolean {
+	if (isRetiredOrchestrationTool(nameOrId)) {
+		return true;
+	}
 	const raw = nameOrId.trim();
 	if (!raw) {
 		return false;

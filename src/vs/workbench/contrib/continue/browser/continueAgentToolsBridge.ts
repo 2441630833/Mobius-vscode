@@ -16,6 +16,13 @@ export const CONTINUE_GET_AGENT_CHAT_TOOLS = 'continue.getAgentChatTools';
 export const CONTINUE_CALL_BUILTIN_TOOL = 'continue.callBuiltInTool';
 export const CONTINUE_APPLY_CLIENT_EDIT_TOOL = 'continue.applyClientEditTool';
 
+export const RETIRED_ORCHESTRATION_MESSAGE = 'Parallel research has been removed from the workbench Agent. Continue the original task directly with the available tools; do not retry delegation.';
+
+/** Includes old aliases that may remain in restored chat histories. */
+export function isRetiredOrchestrationTool(name: string): boolean {
+	return /^(?:continue[._])?(?:orchestrate_?agents|list_?a2a_?agents|call_?a2a_?agent)$/i.test(name.trim());
+}
+
 export type ContinueAgentToolSchema = {
 	readonly type: 'function';
 	readonly function: {
@@ -415,6 +422,7 @@ export async function loadContinueAgentTools(
 	if (!online) {
 		merged = merged.filter(t => t.function.name !== 'search_web');
 	}
+	merged = merged.filter(t => !isRetiredOrchestrationTool(t.function.name));
 
 	if (!extensionTools?.length) {
 		logService?.warn(
@@ -439,8 +447,8 @@ export async function invokeContinueBuiltInTool(
 	workingDirectory?: URI,
 	configurationService?: IConfigurationService,
 ): Promise<ContinueToolCallResult> {
-	if (toolName === 'orchestrate_agents' && !isWebSearchEnabled(configurationService)) {
-		args = { ...args, allow_web: false };
+	if (isRetiredOrchestrationTool(toolName)) {
+		return { ok: false, text: RETIRED_ORCHESTRATION_MESSAGE };
 	}
 	if (toolName === 'search_web' && !isWebSearchEnabled(configurationService)) {
 		return { ok: false, text: 'Web Search is disabled by the user. Answer without web search.' };
@@ -508,8 +516,8 @@ export async function invokeContinueClientEditTool(
 	workingDirectory?: URI,
 	configurationService?: IConfigurationService,
 ): Promise<ContinueToolCallResult> {
-	if (toolName === 'orchestrate_agents' && !isWebSearchEnabled(configurationService)) {
-		args = { ...args, allow_web: false };
+	if (isRetiredOrchestrationTool(toolName)) {
+		return { ok: false, text: RETIRED_ORCHESTRATION_MESSAGE };
 	}
 	if (toolName === 'search_web' && !isWebSearchEnabled(configurationService)) {
 		return { ok: false, text: 'Web Search is disabled by the user. Answer without web search.' };
