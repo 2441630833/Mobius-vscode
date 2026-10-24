@@ -105,4 +105,22 @@ suite('MobiusModeRouting', () => {
 		const resultTheory = inferMobiusModeFromPrompt('解释一下FPGA和GPU在算力架构上的核心差异与原理');
 		assert.strictEqual(resultTheory?.mode ?? 'agent', 'agent');
 	});
+
+	test('inferMobiusModeFromPrompt ensures general dev, git, and service operations stay in agent mode', () => {
+		// User screenshot case: git pull + service start must NEVER route to chip
+		const resultGitPullService = inferMobiusModeFromPrompt('git pull the latest code and 启动服务');
+		assert.strictEqual(resultGitPullService?.mode, 'agent');
+
+		const resultGitPull = inferMobiusModeFromPrompt('git pull origin main');
+		assert.strictEqual(resultGitPull?.mode, 'agent');
+
+		const resultPullStart = inferMobiusModeFromPrompt('拉取最新代码并启动本地服务');
+		assert.strictEqual(resultPullStart?.mode, 'agent');
+
+		const resultStartBackend = inferMobiusModeFromPrompt('帮我启动一下后端服务');
+		assert.strictEqual(resultStartBackend?.mode, 'agent');
+
+		const resultNpmTest = inferMobiusModeFromPrompt('运行测试用例 npm test');
+		assert.strictEqual(resultNpmTest?.mode, 'agent');
+	});
 });

@@ -25,12 +25,14 @@ interface IRouteDefinition {
 	readonly lexicalPatterns: readonly RegExp[];
 	readonly antiPatterns?: readonly RegExp[];
 	readonly threshold: number;
+	readonly requiresLexical?: boolean;
 }
 
 const PPT_ROUTE: IRouteDefinition = {
 	mode: 'ppt',
 	reason: 'semantic-ppt-route',
 	threshold: 0.50,
+	requiresLexical: false,
 	lexicalPatterns: [
 		/^\/ppt\b/i,
 		/\b(ppt|pptx|powerpoint|slide\s*deck|pitch\s*deck|keynote)\b/i,
@@ -43,6 +45,7 @@ const PPT_ROUTE: IRouteDefinition = {
 		/(css|html|react|vue|web|网页|轮播|组件).{0,10}(slide|幻灯片|卡片轮播)/i,
 		/(slide|幻灯片|卡片轮播).{0,10}(css|html|react|vue|web|网页|轮播|组件|动效)/i,
 		/\bpython-pptx\b/i,
+		/\b(git\s+pull|git\s+push|git\s+commit|npm\s+run|启动服务)\b/i,
 	],
 	utterances: [
 		'制作一份关于人工智能发展历程的PPT',
@@ -75,6 +78,7 @@ const GAME_ROUTE: IRouteDefinition = {
 	mode: 'game',
 	reason: 'semantic-game-route',
 	threshold: 0.50,
+	requiresLexical: true,
 	lexicalPatterns: [
 		/^\/game\b/i,
 		/\bgodot\b/i,
@@ -85,6 +89,7 @@ const GAME_ROUTE: IRouteDefinition = {
 	antiPatterns: [
 		/(架构解析|源码分析|引擎原理|对比|区别).{0,10}(godot|unity|unreal)/i,
 		/(godot|unity|unreal).{0,10}(架构解析|源码分析|引擎原理|对比|区别)/i,
+		/\b(git\s+pull|git\s+push|git\s+commit|git\s+checkout|npm\s+run|启动服务|运行服务|部署)\b/i,
 	],
 	utterances: [
 		'在game-dev里用Godot给游戏加个跳跃和下蹲动作控制',
@@ -108,6 +113,7 @@ const CHIP_ROUTE: IRouteDefinition = {
 	mode: 'chip',
 	reason: 'semantic-chip-route',
 	threshold: 0.50,
+	requiresLexical: true,
 	lexicalPatterns: [
 		/^\/chip\b/i,
 		/\bchip[\s-]?design\b/i,
@@ -119,6 +125,7 @@ const CHIP_ROUTE: IRouteDefinition = {
 		/(解释|介绍|什么是|科普|对比|区别|论文|理论).{0,20}(fpga|asic|gpu|chip|芯片)/i,
 		/(fpga|asic|gpu|chip|芯片).{0,20}(解释|介绍|什么是|科普|对比|区别|差异|原理|架构对比|论文|理论)/i,
 		/\b(explain|difference|what is|overview of)\b.{0,20}\b(fpga|asic|gpu)\b/i,
+		/\b(git\s+pull|git\s+push|git\s+commit|git\s+checkout|npm\s+run|启动服务|运行服务|部署)\b/i,
 	],
 	utterances: [
 		'在chip-design里检查FPGA物理采样器工具链并执行fpga_detect',
@@ -249,17 +256,23 @@ class SemanticRouteIndex {
 			}
 
 			// Hybrid scoring:
-			// 1. If lexical keyword matched without anti-pattern, establish high baseline (0.70)
-			//    and boost further with semantic alignment.
-			// 2. If no lexical keyword matched, semantic similarity >= 0.25 (calibrated for 384d n-gram space)
-			//    indicates strong semantic intent and scales up to 0.50 ~ 1.00.
+			// 1. If route requires explicit lexical keywords (e.g. Chip, Game hardware/engine modes),
+			//    and none matched, never route via pure semantic similarity.
+			if (route.requiresLexical && lexicalScore === 0) {
+				continue;
+			}
+
+			// 2. Compute composite score:
+			//    - If lexical keyword matched without anti-pattern, baseline 0.70 + semantic alignment up to 1.0.
+			//    - If no lexical keyword matched (allowed only for unconstrained routes like PPT),
+			//      require real semantic similarity without artificial doubling.
 			let compositeScore = 0;
 			if (lexicalScore > 0) {
-				compositeScore = Math.max(lexicalScore, 0.70 + 0.30 * Math.min(1.0, semanticScore / 0.5));
-			} else if (semanticScore >= 0.25) {
-				compositeScore = Math.min(1.0, semanticScore * 2.0);
-			} else {
+				compositeScore = Math.max(lexicalScore, 0.70 + 0.30 * Math.min(1.0, Math.max(0, semanticScore) / 0.5));
+			} else if (semanticScore >= route.threshold) {
 				compositeScore = semanticScore;
+			} else {
+				compositeScore = 0;
 			}
 
 			if (compositeScore >= route.threshold && compositeScore > bestScore) {

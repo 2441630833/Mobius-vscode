@@ -110,6 +110,7 @@ const MOBIUS_MODE_SWITCH_REASON_LABELS: Record<string, string> = {
 	'chip-design-keywords': localize('mobius.modeSwitchReason.chip', "chip design task"),
 	'ppt-keywords': localize('mobius.modeSwitchReason.ppt', "presentation task"),
 	'implementation-keywords': localize('mobius.modeSwitchReason.agent', "implementation task"),
+	'general-dev-signal': localize('mobius.modeSwitchReason.dev', "development task"),
 	'slash-override': localize('mobius.modeSwitchReason.slash', "slash command"),
 };
 
@@ -152,6 +153,10 @@ export const MOBIUS_MODE_TEST_PROMPTS: Readonly<Record<MobiusRoutableMode, { zh:
 
 const SLASH_OVERRIDE = /^\/(agent|game|chip|ppt|ask|plan)\b(?:\s|$)/i;
 
+const GENERAL_DEV_SIGNAL = /\b(git|pull|push|commit|checkout|branch|merge|npm|yarn|pnpm|pip|docker|run|start|serve|server|build|test|clean|install)\b|启动.{0,10}(服务|本地|项目|系统|应用)|运行.{0,10}(服务|本地|项目|测试)|拉取.{0,10}代码|提交.{0,10}代码|合并.{0,10}分支/i;
+
+const EXPLICIT_SPECIALIZED_SIGNAL = /\b(fpga|verilog|rtl|arty\s*a7|openfpgaloader|yosys|openxc7|verilator|godot|ppt|pptx|powerpoint|slide\s*deck|pitch\s*deck|keynote)\b|芯片|演示文稿|幻灯片|胶片/i;
+
 const AGENT_SIGNAL = /\b(implement|fix|add|create|refactor|patch|commit|update|change|modify|write|build|scaffold|migrate|rename|delete|remove|run tests|apply)\b|实现|修复|添加|修改|重构|直接改|帮我改|创建文件|写代码/i;
 
 export function inferMobiusModeFromPrompt(message: string): IMobiusModeInference | undefined {
@@ -175,7 +180,14 @@ export function inferMobiusModeFromPrompt(message: string): IMobiusModeInference
 		return { mode: 'agent', reason: 'slash-override' };
 	}
 
-	// 2. High-accuracy semantic routing (hybrid vector similarity + lexical + anti-pattern guardrails)
+	// 2. General dev / engineering fast-path:
+	// General DevOps, git, or service startup without explicit hardware/game/ppt keywords
+	// immediately routes to default Agent mode (80% default rule).
+	if (GENERAL_DEV_SIGNAL.test(text) && !EXPLICIT_SPECIALIZED_SIGNAL.test(text)) {
+		return { mode: 'agent', reason: 'general-dev-signal' };
+	}
+
+	// 3. High-accuracy semantic routing (hybrid vector similarity + lexical + anti-pattern guardrails)
 	const semanticMatch = semanticRouter.route(text);
 	if (semanticMatch.mode !== 'agent') {
 		return { mode: semanticMatch.mode, reason: semanticMatch.reason };

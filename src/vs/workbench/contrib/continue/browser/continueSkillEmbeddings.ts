@@ -379,14 +379,26 @@ export function cosineSimilarity(a: readonly number[], b: readonly number[]): nu
 	return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
+const EMBED_STOPWORDS = new Set([
+	'a', 'an', 'the', 'and', 'or', 'but', 'if', 'then', 'else', 'with', 'for', 'to', 'from',
+	'in', 'on', 'at', 'by', 'of', 'as', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+	'have', 'has', 'had', 'do', 'does', 'did', 'can', 'could', 'should', 'would', 'will',
+	'this', 'that', 'these', 'those', 'it', 'its', 'they', 'them', 'their', 'we', 'us', 'our',
+	'you', 'your', 'my', 'me',
+	'的', '了', '和', '是', '在', '我', '有', '这', '个', '也', '就', '并', '与', '及', '向', '把', '到', '等'
+]);
+
 function tokenizeForEmbed(text: string): string[] {
 	const lower = text.toLowerCase();
 	const tokens: string[] = [];
-	const words = lower.split(/[^\p{L}\p{N}_]+/u).filter(t => t.length > 1);
+	const words = lower.split(/[^\p{L}\p{N}_]+/u).filter(t => t.length > 1 && !EMBED_STOPWORDS.has(t));
 	tokens.push(...words);
 	const compact = lower.replace(/\s+/g, '');
 	for (let i = 0; i < compact.length - 2; i++) {
-		tokens.push(compact.slice(i, i + 3));
+		const tri = compact.slice(i, i + 3);
+		if (!EMBED_STOPWORDS.has(tri)) {
+			tokens.push(tri);
+		}
 	}
 	return tokens;
 }
