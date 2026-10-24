@@ -73,7 +73,7 @@ import { executeRunTerminalCommand } from './continueTerminalTool.js';
 import { normalizeToolArguments, resolveToolPath, toolPathArgument } from './continueToolPaths.js';
 import { executeGodotTool, bootstrapGameModeGodotLivePreview, createGodotAutoPreviewState, createGodotToolHost, ensureGodotPreviewLaunched, gameDevSystemHint, GodotAutoPreviewState, isGameDevProjectUri, isGodotTool, openGodotLiveEditorIfNeeded, trackGodotToolCall, userRequestedGodotOpen } from './continueGodotTools.js';
 import { bootstrapChipModeDetect, createFpgaToolHost, executeFpgaTool, isFpgaTool } from './continueFpgaTools.js';
-import { executeEccPreflight, executeEccTool, isEccTool, resolveEccRootUri } from './continueEccWorkflow.js';
+import { executeEccPreflight, executeEccTool, findEccRootUri, isEccTool, resolveEccRootUri } from './continueEccWorkflow.js';
 import { chipDesignSystemHint, isChipModeExplicitlySelected } from './continueChipDesign.js';
 import { isPptModeExplicitlySelected, loadPptMasterSkill, pptModeSystemHint } from './continuePptMode.js';
 import { inferMobiusModeFromPrompt } from './continueMobiusModeRouting.js';
@@ -815,7 +815,8 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		let routedSkillNames: string[] = [];
 		let eccPreflightResult: import('./continueEccWorkflow.js').EccPreflightResult | undefined;
 		if (isAgentMode) {
-			const eccRoot = resolveEccRootUri(cwd, this._workspaceService);
+			const eccRoot = await findEccRootUri(this._fileService, cwd, this._workspaceService, this._getAppRoot())
+				?? resolveEccRootUri(cwd, this._workspaceService, this._getAppRoot());
 			if (eccRoot) {
 				eccPreflightResult = await executeEccPreflight(
 					eccRoot,
@@ -825,6 +826,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 					this._logService,
 					token,
 					this._commandService,
+					this._fileService,
 				);
 				if (eccPreflightResult.summary) {
 					progress([{
@@ -2853,7 +2855,8 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 
 			if (isEccTool(effectiveName)) {
 				return executeEccTool(
-					{ fileService: this._fileService, workspaceService: this._workspaceService },
+					{ fileService: this._fileService, workspaceService: this._workspaceService, appRoot: this._getAppRoot() },
+
 					this._languageModelToolsService,
 					this._logService,
 					{ sessionResource, workingDirectory: cwd, chatRequestId },

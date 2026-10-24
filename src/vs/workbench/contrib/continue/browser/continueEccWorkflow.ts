@@ -14,30 +14,141 @@ import { PromptsType } from '../../chat/common/promptSyntax/promptTypes.js';
 import { IPromptsService, IPromptFileResource } from '../../chat/common/promptSyntax/service/promptsService.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IWorkbenchContribution, WorkbenchPhase, registerWorkbenchContribution2 } from '../../../common/contributions.js';
+import { IWorkbenchEnvironmentService } from '../../../services/environment/common/environmentService.js';
 import { ILanguageModelToolsService } from '../../chat/common/tools/languageModelToolsService.js';
 import { CONTINUE_EXTENSION_IDENTIFIER } from './continueProduct.js';
 import type { ContinueAgentToolSchema } from './continueAgentToolsBridge.js';
 import { executeRunTerminalCommand, TerminalCommandContext } from './continueTerminalTool.js';
 
 export const ECC_ROOT_FOLDER = 'ECC';
+export const PACKAGED_ECC_FOLDER = 'mobius-ecc';
 
 const mobiusBundledExtension = {
 	identifier: CONTINUE_EXTENSION_IDENTIFIER,
 	enabledApiProposals: ['chatParticipantPrivate'],
 } as unknown as IExtensionDescription;
 
+export function collectEccCandidates(
+	cwd: URI | undefined,
+	workspaceService: IWorkspaceContextService,
+	appRoot?: string,
+): URI[] {
+	const candidates: URI[] = [];
+
+	// 1. Packaged desktop IDE: sibling of resources/app (appRoot)
+	if (appRoot) {
+		const appRootUri = URI.file(appRoot);
+		candidates.push(URI.joinPath(appRootUri, '..', PACKAGED_ECC_FOLDER));
+		candidates.push(URI.joinPath(appRootUri, '..', '..', 'resources', PACKAGED_ECC_FOLDER));
+		for (let depth = 0; depth < 6; depth++) {
+			let cur = appRootUri;
+			for (let i = 0; i < depth; i++) {
+				cur = URI.joinPath(cur, '..');
+			}
+			candidates.push(URI.joinPath(cur, ECC_ROOT_FOLDER));
+			candidates.push(URI.joinPath(cur, 'resources', PACKAGED_ECC_FOLDER));
+		}
+	}
+
+	// 2. Workspace folders
+	const folders = workspaceService.getWorkspace().folders;
+	for (const folder of folders) {
+		candidates.push(URI.joinPath(folder.uri, ECC_ROOT_FOLDER));
+		candidates.push(URI.joinPath(folder.uri, 'resources', PACKAGED_ECC_FOLDER));
+		let cur = folder.uri;
+		for (let depth = 0; depth < 6; depth++) {
+			candidates.push(URI.joinPath(cur, ECC_ROOT_FOLDER));
+			candidates.push(URI.joinPath(cur, 'resources', PACKAGED_ECC_FOLDER));
+			const parent = URI.joinPath(cur, '..');
+			if (parent.fsPath === cur.fsPath) {
+				break;
+			}
+			cur = parent;
+		}
+	}
+
+	// 3. Current working directory
+	if (cwd) {
+		candidates.push(URI.joinPath(cwd, ECC_ROOT_FOLDER));
+		candidates.push(URI.joinPath(cwd, 'resources', PACKAGED_ECC_FOLDER));
+	}
+
+	return candidates;
+}
+
 export function resolveEccRootUri(
 	cwd: URI | undefined,
 	workspaceService: IWorkspaceContextService,
+	appRoot?: string,
 ): URI | undefined {
-	const folders = workspaceService.getWorkspace().folders;
-	if (folders.length) {
-		return URI.joinPath(folders[0].uri, ECC_ROOT_FOLDER);
-	}
-	if (cwd) {
-		return URI.joinPath(cwd, ECC_ROOT_FOLDER);
+	const candidates = collectEccCandidates(cwd, workspaceService, appRoot);
+	return candidates[0];
+}
+
+export async function findEccRootUri(
+	fileService: IFileService,
+	cwd: URI | undefined,
+	workspaceService: IWorkspaceContextService,
+	appRoot?: string,
+): Promise<URI | undefined> {
+	const candidates = collectEccCandidates(cwd, workspaceService, appRoot);
+	for (const candidate of candidates) {
+		try {
+			const marker = URI.joinPath(candidate, 'package.json');
+			if (await fileService.exists(marker)) {
+				return candidate;
+			}
+		} catch {
+			// ignore and continue
+		}
 	}
 	return undefined;
+}
+
+export async function resolveEccPreflightScriptUri(
+	eccRoot: URI,
+	fileService?: IFileService,
+): Promise<URI> {
+	const candidates = [
+		URI.joinPath(eccRoot, 'scripts', 'ecc-agent-preflight.js'),
+		URI.joinPath(eccRoot, '..', 'scripts', 'ecc-agent-preflight.js'),
+		URI.joinPath(eccRoot, '..', '..', 'scripts', 'ecc-agent-preflight.js'),
+	];
+	if (fileService) {
+		for (const c of candidates) {
+			try {
+				if (await fileService.exists(c)) {
+					return c;
+				}
+			} catch {
+				// continue search
+			}
+		}
+	}
+	return candidates[0];
+}
+
+export async function resolveEccCliScriptUri(
+	eccRoot: URI,
+	fileService?: IFileService,
+): Promise<URI> {
+	const candidates = [
+		URI.joinPath(eccRoot, 'scripts', 'ecc-cli.js'),
+		URI.joinPath(eccRoot, '..', 'scripts', 'ecc-cli.js'),
+		URI.joinPath(eccRoot, '..', '..', 'scripts', 'ecc-cli.js'),
+	];
+	if (fileService) {
+		for (const c of candidates) {
+			try {
+				if (await fileService.exists(c)) {
+					return c;
+				}
+			} catch {
+				// continue search
+			}
+		}
+	}
+	return candidates[0];
 }
 
 export function quotePs(text: string): string {
@@ -63,6 +174,7 @@ export async function executeEccPreflight(
 	logService: ILogService,
 	token: CancellationToken,
 	commandService?: ICommandService,
+	fileService?: IFileService,
 ): Promise<EccPreflightResult> {
 	if (!eccRoot) {
 		return {
@@ -75,8 +187,7 @@ export async function executeEccPreflight(
 	}
 
 	const prompt = request.message.trim();
-	const scriptRelPath = 'scripts/ecc-agent-preflight.js';
-	const preflightScriptUri = URI.joinPath(eccRoot, '..', scriptRelPath);
+	const preflightScriptUri = await resolveEccPreflightScriptUri(eccRoot, fileService);
 
 	const terminalContext: TerminalCommandContext = {
 		sessionResource: request.sessionResource,
@@ -148,23 +259,24 @@ export function isEccTool(name: string): boolean {
 	return ECC_TOOL_NAMES.has(name);
 }
 
-export const ECC_TOOL_SCHEMAS: readonly ContinueAgentToolSchema[] = [
+export const ECC_TOOL_SCHEMAS: ContinueAgentToolSchema[] = [
 	{
 		type: 'function',
 		function: {
 			name: 'ecc_run',
-			description: 'Run ECC (Everything Claude Code) harness commands such as doctor, status, profile, consult, security-ioc-scan, memory, or audit.',
+			description:
+				'Execute an ECC CLI command (e.g. "status", "test", "analyze", "rules", "plan") to run workflows or check repository health.',
 			parameters: {
 				type: 'object',
 				properties: {
 					command: {
 						type: 'string',
-						description: 'The ECC subcommand to execute (e.g. status, doctor, consult, security-ioc-scan, profile).',
+						description: 'Subcommand to run (e.g. status, analyze, review, test).',
 					},
 					args: {
 						type: 'array',
+						description: 'Optional arguments array to pass to the ECC CLI.',
 						items: { type: 'string' },
-						description: 'Optional arguments to pass to the ECC command.',
 					},
 				},
 				required: ['command'],
@@ -175,13 +287,14 @@ export const ECC_TOOL_SCHEMAS: readonly ContinueAgentToolSchema[] = [
 		type: 'function',
 		function: {
 			name: 'ecc_consult',
-			description: 'Consult the ECC engineering knowledgebase and component catalog for recommended skills, rules, and best practices tailored to a query.',
+			description:
+				'Query ECC for recommended skills, rules, agent profiles, or workflow principles based on a task or prompt query.',
 			parameters: {
 				type: 'object',
 				properties: {
 					query: {
 						type: 'string',
-						description: 'The engineering task, framework, or architecture topic to consult about.',
+						description: 'The engineering question, task description, or technology to consult on.',
 					},
 				},
 				required: ['query'],
@@ -192,7 +305,8 @@ export const ECC_TOOL_SCHEMAS: readonly ContinueAgentToolSchema[] = [
 		type: 'function',
 		function: {
 			name: 'ecc_skill',
-			description: 'Read the full guide, instructions, and rules of a specialized ECC skill (e.g. agent-architecture-audit, security, backend-patterns, tdd, git-workflow).',
+			description:
+				'Read the full definition and instructions of an ECC skill (e.g. "tdd-workflow", "security-audit", "docker-expert") by name.',
 			parameters: {
 				type: 'object',
 				properties: {
@@ -207,9 +321,12 @@ export const ECC_TOOL_SCHEMAS: readonly ContinueAgentToolSchema[] = [
 	},
 ];
 
+export const ECC_BRIDGE_TOOL_DEFINITIONS = ECC_TOOL_SCHEMAS;
+
 export interface EccToolHost {
 	readonly fileService: IFileService;
 	readonly workspaceService: IWorkspaceContextService;
+	readonly appRoot?: string;
 }
 
 export async function executeEccTool(
@@ -221,7 +338,8 @@ export async function executeEccTool(
 	args: Record<string, unknown>,
 	token: CancellationToken,
 ): Promise<{ ok: boolean; text: string }> {
-	const eccRoot = resolveEccRootUri(context.workingDirectory, host.workspaceService);
+	const eccRoot = await findEccRootUri(host.fileService, context.workingDirectory, host.workspaceService, host.appRoot)
+		?? resolveEccRootUri(context.workingDirectory, host.workspaceService, host.appRoot);
 	if (!eccRoot) {
 		return { ok: false, text: 'ECC submodule not found in workspace' };
 	}
@@ -245,7 +363,7 @@ export async function executeEccTool(
 
 	if (toolName === 'ecc_consult') {
 		const query = typeof args.query === 'string' ? args.query.trim() : '';
-		const scriptUri = URI.joinPath(eccRoot, '..', 'scripts', 'ecc-agent-preflight.js');
+		const scriptUri = await resolveEccPreflightScriptUri(eccRoot, host.fileService);
 		const cmd = `node ${quotePs(scriptUri.fsPath)} --json "${query.replace(/["'`$\\]/g, ' ')}"`;
 		return executeRunTerminalCommand(toolsService, logService, context, cmd, true, token);
 	}
@@ -255,7 +373,7 @@ export async function executeEccTool(
 	const extraArgs = Array.isArray(args.args)
 		? args.args.map(a => quotePs(String(a))).join(' ')
 		: '';
-	const cliScriptUri = URI.joinPath(eccRoot, '..', 'scripts', 'ecc-cli.js');
+	const cliScriptUri = await resolveEccCliScriptUri(eccRoot, host.fileService);
 	const cmd = `node ${quotePs(cliScriptUri.fsPath)} ${quotePs(subcmd)} ${extraArgs}`.trim();
 	logService.info(`[Continue][ECC] Executing command: ${cmd}`);
 	return executeRunTerminalCommand(toolsService, logService, context, cmd, true, token);
@@ -320,9 +438,12 @@ class ContinueEccWorkflowContribution extends Disposable implements IWorkbenchCo
 		@IPromptsService promptsService: IPromptsService,
 		@IFileService private readonly fileService: IFileService,
 		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
+		@IWorkbenchEnvironmentService private readonly environmentService: IWorkbenchEnvironmentService,
 		@ILogService private readonly logService: ILogService,
 	) {
 		super();
+
+		const appRoot = (this.environmentService as { appRoot?: string }).appRoot;
 
 		// Register ECC Skills
 		this._register(promptsService.registerPromptFileProvider(
@@ -330,9 +451,11 @@ class ContinueEccWorkflowContribution extends Disposable implements IWorkbenchCo
 			PromptsType.skill,
 			{
 				providePromptFiles: async (_context, token: CancellationToken) => {
-					const eccRoot = resolveEccRootUri(
+					const eccRoot = await findEccRootUri(
+						this.fileService,
 						this.workspaceContextService.getWorkspace().folders[0]?.uri,
 						this.workspaceContextService,
+						appRoot,
 					);
 					if (!eccRoot) {
 						return [];
@@ -365,9 +488,11 @@ class ContinueEccWorkflowContribution extends Disposable implements IWorkbenchCo
 			PromptsType.agent,
 			{
 				providePromptFiles: async (_context, token: CancellationToken) => {
-					const eccRoot = resolveEccRootUri(
+					const eccRoot = await findEccRootUri(
+						this.fileService,
 						this.workspaceContextService.getWorkspace().folders[0]?.uri,
 						this.workspaceContextService,
+						appRoot,
 					);
 					if (!eccRoot) {
 						return [];

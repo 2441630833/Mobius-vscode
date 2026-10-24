@@ -10,11 +10,14 @@ import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { ILanguageModelToolsService } from '../../../chat/common/tools/languageModelToolsService.js';
 import {
+	collectEccCandidates,
 	ECC_ROOT_FOLDER,
-	ECC_TOOL_SCHEMAS,
+	ECC_BRIDGE_TOOL_DEFINITIONS,
 	executeEccPreflight,
 	executeEccTool,
+	findEccRootUri,
 	isEccTool,
+	PACKAGED_ECC_FOLDER,
 	quotePs,
 	resolveEccRootUri,
 } from '../../browser/continueEccWorkflow.js';
@@ -53,8 +56,8 @@ suite('ContinueEccWorkflow', () => {
 		assert.strictEqual(isEccTool('fpga_detect'), false);
 	});
 
-	test('ECC_TOOL_SCHEMAS registers required tools', () => {
-		const names = ECC_TOOL_SCHEMAS.map(s => s.function.name);
+	test('ECC_BRIDGE_TOOL_DEFINITIONS registers required tools', () => {
+		const names = ECC_BRIDGE_TOOL_DEFINITIONS.map(s => s.function.name);
 		assert.ok(names.includes('ecc_run'));
 		assert.ok(names.includes('ecc_consult'));
 		assert.ok(names.includes('ecc_skill'));
@@ -131,5 +134,25 @@ suite('ContinueEccWorkflow', () => {
 		assert.ok(result.systemPrompt.includes('<ecc-context>'));
 		assert.deepStrictEqual(result.matchedSkills, ['security']);
 		assert.deepStrictEqual(result.matchedAgents, ['refactor-cleaner']);
+	});
+	test('collectEccCandidates includes packaged mobius-ecc from appRoot', () => {
+		const mockWorkspace = {
+			getWorkspace: () => ({ folders: [] }),
+		} as unknown as IWorkspaceContextService;
+		const candidates = collectEccCandidates(undefined, mockWorkspace, 'C:/Users/user/AppData/Local/Programs/Mobius/resources/app');
+		const hasPackaged = candidates.some(c => c.path.includes(PACKAGED_ECC_FOLDER));
+		assert.strictEqual(hasPackaged, true);
+	});
+
+	test('findEccRootUri finds staged package.json', async () => {
+		const mockFileService = {
+			exists: async (uri: URI) => uri.path.includes('mobius-ecc') && uri.path.endsWith('package.json'),
+		} as any;
+		const mockWorkspace = {
+			getWorkspace: () => ({ folders: [] }),
+		} as unknown as IWorkspaceContextService;
+		const root = await findEccRootUri(mockFileService, undefined, mockWorkspace, 'C:/Programs/Mobius/resources/app');
+		assert.ok(root);
+		assert.strictEqual(root.path.includes('mobius-ecc'), true);
 	});
 });
