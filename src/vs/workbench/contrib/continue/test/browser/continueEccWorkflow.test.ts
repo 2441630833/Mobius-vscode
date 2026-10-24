@@ -1,0 +1,135 @@
+/*---------------------------------------------------------------------------------------------
+ *  Mobius — ECC workflow & agent integration tests
+ *--------------------------------------------------------------------------------------------*/
+
+import assert from 'assert';
+import { CancellationToken } from '../../../../../base/common/cancellation.js';
+import { URI } from '../../../../../base/common/uri.js';
+import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
+import { NullLogService } from '../../../../../platform/log/common/log.js';
+import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import { ILanguageModelToolsService } from '../../../chat/common/tools/languageModelToolsService.js';
+import {
+	ECC_ROOT_FOLDER,
+	ECC_TOOL_SCHEMAS,
+	executeEccPreflight,
+	executeEccTool,
+	isEccTool,
+	quotePs,
+	resolveEccRootUri,
+} from '../../browser/continueEccWorkflow.js';
+
+suite('ContinueEccWorkflow', () => {
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('ECC_ROOT_FOLDER is ECC', () => {
+		assert.strictEqual(ECC_ROOT_FOLDER, 'ECC');
+	});
+
+	test('resolveEccRootUri checks workspace folders', () => {
+		const mockWorkspace = {
+			getWorkspace: () => ({
+				folders: [{ uri: URI.file('E:/MobiusCode/Mobius') }],
+			}),
+		} as unknown as IWorkspaceContextService;
+
+		const uri = resolveEccRootUri(undefined, mockWorkspace);
+		assert.ok(uri);
+		assert.strictEqual(uri.fsPath.replace(/\\/g, '/').endsWith('/ECC'), true);
+	});
+
+	test('quotePs escapes PowerShell arguments properly', () => {
+		assert.strictEqual(quotePs('status'), 'status');
+		assert.strictEqual(quotePs('hello world'), "'hello world'");
+		assert.strictEqual(quotePs("can't stop"), "'can''t stop'");
+	});
+
+	test('isEccTool identifies all ECC agent tools', () => {
+		assert.strictEqual(isEccTool('ecc_run'), true);
+		assert.strictEqual(isEccTool('ecc_consult'), true);
+		assert.strictEqual(isEccTool('ecc_skill'), true);
+		assert.strictEqual(isEccTool('ecc'), true);
+		assert.strictEqual(isEccTool('read_file'), false);
+		assert.strictEqual(isEccTool('fpga_detect'), false);
+	});
+
+	test('ECC_TOOL_SCHEMAS registers required tools', () => {
+		const names = ECC_TOOL_SCHEMAS.map(s => s.function.name);
+		assert.ok(names.includes('ecc_run'));
+		assert.ok(names.includes('ecc_consult'));
+		assert.ok(names.includes('ecc_skill'));
+	});
+
+	test('executeEccTool handles ecc_skill reading SKILL.md via fileService', async () => {
+		const mockFileService = {
+			exists: async (uri: URI) => uri.path.endsWith('SKILL.md'),
+			readFile: async (uri: URI) => ({
+				value: { toString: () => '# Test Skill\nInstructions here' },
+			}),
+		};
+		const mockWorkspace = {
+			getWorkspace: () => ({
+				folders: [{ uri: URI.file('E:/MobiusCode/Mobius') }],
+			}),
+		} as unknown as IWorkspaceContextService;
+
+		const tools = {} as ILanguageModelToolsService;
+		const logService = new NullLogService();
+		const context = {
+			sessionResource: URI.parse('test:session'),
+			workingDirectory: URI.file('E:/MobiusCode/Mobius'),
+		};
+
+		const result = await executeEccTool(
+			{ fileService: mockFileService as any, workspaceService: mockWorkspace },
+			tools,
+			logService,
+			context,
+			'ecc_skill',
+			{ skill_name: 'security' },
+			CancellationToken.None,
+		);
+
+		assert.strictEqual(result.ok, true);
+		assert.ok(result.text.includes('# Test Skill'));
+	});
+
+	test('executeEccPreflight parses JSON output from preflight runner', async () => {
+		const eccRoot = URI.file('E:/MobiusCode/Mobius/ECC');
+		const mockRequest = {
+			message: 'refactor code and run tests',
+			requestId: 'req-1',
+			sessionResource: URI.parse('test:session'),
+		} as any;
+
+		const jsonPayload = JSON.stringify({
+			ok: true,
+			summary: 'ECC Preflight: Active (Stack: javascript | Skills: `security`)',
+			systemPrompt: '<ecc-context><ecc-status readiness="active" /></ecc-context>',
+			matchedSkills: ['security'],
+			matchedAgents: ['refactor-cleaner'],
+		});
+
+		const mockToolsService = {
+			getTool: () => ({}),
+			invokeTool: async () => ({
+				content: [{ kind: 'text', value: jsonPayload }],
+			}),
+		} as unknown as ILanguageModelToolsService;
+
+		const result = await executeEccPreflight(
+			eccRoot,
+			mockRequest,
+			URI.file('E:/MobiusCode/Mobius'),
+			mockToolsService,
+			new NullLogService(),
+			CancellationToken.None,
+		);
+
+		assert.strictEqual(result.ok, true);
+		assert.ok(result.summary.includes('ECC Preflight: Active'));
+		assert.ok(result.systemPrompt.includes('<ecc-context>'));
+		assert.deepStrictEqual(result.matchedSkills, ['security']);
+		assert.deepStrictEqual(result.matchedAgents, ['refactor-cleaner']);
+	});
+});

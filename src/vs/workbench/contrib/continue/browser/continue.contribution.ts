@@ -50,9 +50,11 @@ import { registerContinueMobiusBundledAgentsContribution } from './continueMobiu
 import { registerContinueGameFactory3AWorkflowContribution } from './continueGameFactory3AWorkflow.js';
 import { registerContinueGameStudioWorkflowContribution } from './continueGameStudioWorkflow.js';
 import { registerContinueGodogenWorkflowContribution } from './continueGodogenWorkflow.js';
+import { registerContinueEccWorkflowContribution } from './continueEccWorkflow.js';
 import { registerContinueWebSearchAction, WebSearchActionViewItemContribution } from './continueWebSearchAction.js';
 import { CONTINUE_WEB_SEARCH_ENABLED_SETTING } from './continueWebSearch.js';
 import { registerContinueLocalOcrAction, LocalOcrActionViewItemContribution, CONTINUE_LOCAL_OCR_ENABLED_SETTING } from './continueOcrAction.js';
+import { MOBIUS_HARNESS_ENGINE_SETTING, MobiusHarnessRegistry } from './continueAgentHarness.js';
 import './mobiusCommitAction.js';
 import { IWorkspaceTrustEnablementService, IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
@@ -169,6 +171,24 @@ if (isContinuePhysicalAiIde()) {
 	});
 
 	Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+		id: 'mobiusAgentHarness',
+		title: 'Mobius Pluggable Agent Harness',
+		type: 'object',
+		properties: {
+			[MOBIUS_HARNESS_ENGINE_SETTING]: {
+				type: 'string',
+				enum: ['continue', 'deepseek'],
+				enumDescriptions: [
+					localize('mobius.harness.continue', "Continue — built-in standard agent harness with chat, autocomplete, and inline editing"),
+					localize('mobius.harness.deepseek', "DeepSeek — modular agent harness (dsh) with event-driven lifecycle, loop-hygiene guards, and capability seams"),
+				],
+				default: 'continue',
+				description: localize('mobius.harness.engine.desc', "The underlying agent execution harness engine (Continue: standard built-in; DeepSeek: modular plugin architecture with event lifecycle and loop-hygiene guards)."),
+			},
+		},
+	});
+
+	Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
 		id: 'continueLocalOcr',
 		title: 'Mobius Local OCR',
 		type: 'object',
@@ -213,6 +233,7 @@ registerContinueMobiusBundledAgentsContribution();
 registerContinueGameStudioWorkflowContribution();
 registerContinueGameFactory3AWorkflowContribution();
 registerContinueGodogenWorkflowContribution();
+registerContinueEccWorkflowContribution();
 
 /**
  * Mobius is a local dev environment — auto-trust opened folders so
@@ -680,6 +701,26 @@ registerWorkbenchContribution2(ContinueStartupContribution.ID, ContinueStartupCo
 registerWorkbenchContribution2(ContinueLanguageModelContribution.ID, ContinueLanguageModelContribution, WorkbenchPhase.AfterRestored);
 registerWorkbenchContribution2(LocalOcrActionViewItemContribution.ID, LocalOcrActionViewItemContribution, WorkbenchPhase.AfterRestored);
 registerWorkbenchContribution2(WebSearchActionViewItemContribution.ID, WebSearchActionViewItemContribution, WorkbenchPhase.AfterRestored);
+class SwitchAgentHarnessAction extends Action2 {
+	constructor() {
+		super({
+			id: 'workbench.action.mobius.switchAgentHarness',
+			title: localize2('mobius.switchAgentHarness', "Mobius: Switch Agent Harness (Continue / DeepSeek)"),
+			f1: true,
+		});
+	}
+
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		const configurationService = accessor.get(IConfigurationService);
+		const current = configurationService.getValue<string>(MOBIUS_HARNESS_ENGINE_SETTING) ?? 'continue';
+		const next = current === 'continue' ? 'deepseek' : 'continue';
+		await configurationService.updateValue(MOBIUS_HARNESS_ENGINE_SETTING, next, ConfigurationTarget.USER);
+		MobiusHarnessRegistry.setActiveHarness(next);
+		accessor.get(ILogService).info(`[Mobius] Switched agent harness engine to '${next}'`);
+	}
+}
+
+registerAction2(SwitchAgentHarnessAction);
 registerAction2(ReloadContinueLanguageModelsAction);
 registerAction2(FocusContinueChatAction);
 registerAction2(OpenModelProviderSettingsAction);

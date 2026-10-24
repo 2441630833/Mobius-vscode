@@ -73,6 +73,7 @@ import { executeRunTerminalCommand } from './continueTerminalTool.js';
 import { normalizeToolArguments, resolveToolPath, toolPathArgument } from './continueToolPaths.js';
 import { executeGodotTool, bootstrapGameModeGodotLivePreview, createGodotAutoPreviewState, createGodotToolHost, ensureGodotPreviewLaunched, gameDevSystemHint, GodotAutoPreviewState, isGameDevProjectUri, isGodotTool, openGodotLiveEditorIfNeeded, trackGodotToolCall, userRequestedGodotOpen } from './continueGodotTools.js';
 import { bootstrapChipModeDetect, createFpgaToolHost, executeFpgaTool, isFpgaTool } from './continueFpgaTools.js';
+import { executeEccPreflight, executeEccTool, isEccTool, resolveEccRootUri } from './continueEccWorkflow.js';
 import { chipDesignSystemHint, isChipModeExplicitlySelected } from './continueChipDesign.js';
 import { isPptModeExplicitlySelected, loadPptMasterSkill, pptModeSystemHint } from './continuePptMode.js';
 import { inferMobiusModeFromPrompt } from './continueMobiusModeRouting.js';
@@ -105,6 +106,9 @@ import {
 import { isWebSearchEnabled } from './continueWebSearch.js';
 import { BUNDLED_ONNX_OCR } from './continueModelConfig.js';
 import { RunInTerminalTool } from '../../terminalContrib/chatAgentTools/browser/tools/runInTerminalTool.js';
+import { MobiusHarnessRegistry, MOBIUS_HARNESS_ENGINE_SETTING } from './continueAgentHarness.js';
+import { DeepSeekAgentHarness } from './continueDeepSeekHarness.js';
+import { ContinueAgentHarness } from './continueContinueHarness.js';
 
 const CONTINUE_AGENT_IDS = {
 	ask: `${CONTINUE_EXTENSION_ID}.chat`,
@@ -633,7 +637,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		private readonly _chatTodoListService: IChatTodoListService,
 		private readonly _textFileService: ITextFileService,
 		private readonly _environmentService: IWorkbenchEnvironmentService,
-		storageService: IStorageService,
+		private readonly _storageService: IStorageService,
 		private readonly _dialogService: IDialogService,
 	) {
 				this._skillEmbeddingIndex = new ContinueSkillEmbeddingIndex(
@@ -647,7 +651,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			this._logService,
 			CancellationToken.None,
 		));
-		this._skillFeedbackStore = new ContinueSkillFeedbackStore(storageService, this._logService);
+		this._skillFeedbackStore = new ContinueSkillFeedbackStore(this._storageService, this._logService);
 
 		const selfEvolutionEnabled = this._configurationService.getValue<boolean>('continue.selfEvolution.enabled') ?? true;
 		const selfEvolutionGlobal = this._configurationService.getValue<boolean>('continue.selfEvolution.global') ?? false;
@@ -683,6 +687,19 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			{ mode: rsiMode, storeSubdir: rsiStoreSubdir, global: selfEvolutionGlobal },
 		);
 		setActiveRsiController(this._rsi);
+
+		// Pluggable Agent Harness initialization (DeepSeek & Continue)
+		MobiusHarnessRegistry.registerHarness(new ContinueAgentHarness());
+		MobiusHarnessRegistry.registerHarness(new DeepSeekAgentHarness());
+		const initialHarness = this._configurationService.getValue<string>(MOBIUS_HARNESS_ENGINE_SETTING) ?? 'continue';
+		MobiusHarnessRegistry.setActiveHarness(initialHarness);
+		this._configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(MOBIUS_HARNESS_ENGINE_SETTING)) {
+				const engine = this._configurationService.getValue<string>(MOBIUS_HARNESS_ENGINE_SETTING) ?? 'continue';
+				MobiusHarnessRegistry.setActiveHarness(engine);
+				this._logService.info(`[Mobius] Switched active agent harness to '${engine}'`);
+			}
+		});
 	}
 
 	async invoke(
@@ -736,6 +753,53 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		try {
 		const cwd = request.workingDirectory
 			?? this._workspaceService.getWorkspace().folders[0]?.uri;
+		const activeHarness = MobiusHarnessRegistry.getActiveHarness();
+		const requestedDeepSeekHarness = /^\/deepseek(?:\s+|$)/i.test(request.message.trim());
+		if (activeHarness.id === 'deepseek' || requestedDeepSeekHarness) {
+			const deepseekHarness = MobiusHarnessRegistry.getHarness('deepseek');
+			if (deepseekHarness) {
+				const cleanMessage = request.message.trim().replace(/^\/deepseek\s*/i, '');
+				const effectiveRequest = cleanMessage === request.message
+					? request
+					: { ...request, message: cleanMessage };
+				this._logService.info('[Mobius] Delegating agent turn to DeepSeek Agent Harness');
+				return await deepseekHarness.executeTurn({
+					request: effectiveRequest,
+					progress,
+					history,
+					token,
+					modelId,
+					cwd,
+					services: {
+						languageModelsService: this._languageModelsService,
+						promptsService: this._promptsService,
+						fileService: this._fileService,
+						configurationService: this._configurationService,
+						logService: this._logService,
+						workspaceService: this._workspaceService,
+						languageModelToolsService: this._languageModelToolsService,
+						commandService: this._commandService,
+						extensionService: this._extensionService,
+						markerService: this._markerService,
+						chatTodoListService: this._chatTodoListService,
+						textFileService: this._textFileService,
+						environmentService: this._environmentService,
+						storageService: this._storageService,
+						dialogService: this._dialogService,
+					},
+					executeTool: (call, toolCwd, sessionResource, requestId, toolToken) => {
+						return this._executeTool(
+							call as IChatResponseToolUsePart,
+							toolCwd ?? cwd,
+							sessionResource ?? request.sessionResource,
+							requestId ?? request.requestId,
+							toolToken ?? token,
+						);
+					},
+				});
+			}
+		}
+
 		const pptMasterSkill = isPptMode ? await loadPptMasterSkill(this._fileService, this._getAppRoot()) : undefined;
 		if (isPptMode && !pptMasterSkill) {
 			this._logService.error('[Continue][PPT] Bundled PPT Master SKILL.md is missing or unreadable');
@@ -749,11 +813,39 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		let skillCatalog: string | undefined;
 		let skillAttachments: string[] = [];
 		let routedSkillNames: string[] = [];
+		let eccPreflightResult: import('./continueEccWorkflow.js').EccPreflightResult | undefined;
+		if (isAgentMode) {
+			const eccRoot = resolveEccRootUri(cwd, this._workspaceService);
+			if (eccRoot) {
+				eccPreflightResult = await executeEccPreflight(
+					eccRoot,
+					request,
+					cwd,
+					this._languageModelToolsService,
+					this._logService,
+					token,
+					this._commandService,
+				);
+				if (eccPreflightResult.summary) {
+					progress([{
+						kind: 'markdownContent',
+						content: new MarkdownString(`**ECC**: ${eccPreflightResult.summary}`),
+					}]);
+				}
+			}
+		}
 		if (isAgentMode) {
 			const skillsContext = await this._resolveAgentSkillsContext(request, progress, token);
 			skillCatalog = skillsContext.systemText || undefined;
 			skillAttachments = [...skillsContext.attachmentTexts];
 			routedSkillNames = [...skillsContext.routedSkillNames];
+			if (eccPreflightResult?.matchedSkills?.length) {
+				for (const s of eccPreflightResult.matchedSkills) {
+					if (!routedSkillNames.includes(s)) {
+						routedSkillNames.push(s);
+					}
+				}
+			}
 			if (isPptMode && pptMasterSkill) {
 				if (!routedSkillNames.includes('ppt-master')) {
 					routedSkillNames.unshift('ppt-master');
@@ -806,6 +898,9 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			: Promise.resolve(undefined);
 
 		let agentSystem = AGENT_EXECUTE_SYSTEM;
+		if (eccPreflightResult?.systemPrompt) {
+			agentSystem += `\n\n${eccPreflightResult.systemPrompt}`;
+		}
 		const modeBody = request.modeInstructions?.content?.trim();
 		if (isAgentMode && modeBody) {
 			agentSystem += `\n\n<mode-instructions name="${request.modeInstructions?.name ?? ''}">\n${modeBody}\n</mode-instructions>`;
@@ -2754,6 +2849,18 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			// red as "Read File failed" even if Continue would have succeeded.
 			if (effectiveName === 'read_file' || effectiveName === 'read_file_range') {
 				return this._readFileLocal(params, cwd);
+			}
+
+			if (isEccTool(effectiveName)) {
+				return executeEccTool(
+					{ fileService: this._fileService, workspaceService: this._workspaceService },
+					this._languageModelToolsService,
+					this._logService,
+					{ sessionResource, workingDirectory: cwd, chatRequestId },
+					effectiveName,
+					params,
+					token,
+				);
 			}
 
 			if (isFpgaTool(effectiveName)) {

@@ -10,6 +10,7 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { GODOT_TOOL_SCHEMAS } from './continueGodotTools.js';
 import { FPGA_TOOL_SCHEMAS } from './continueFpgaTools.js';
+import { ECC_TOOL_SCHEMAS } from './continueEccWorkflow.js';
 import { isNetworkOnline, recordNetworkFailure } from './continueNetworkStatus.js';
 
 export const CONTINUE_GET_AGENT_CHAT_TOOLS = 'continue.getAgentChatTools';
@@ -416,6 +417,7 @@ export async function loadContinueAgentTools(
 		LOCAL_AGENT_TOOL_SCHEMAS,
 		GODOT_TOOL_SCHEMAS,
 		FPGA_TOOL_SCHEMAS,
+		ECC_TOOL_SCHEMAS,
 		extensionTools ?? [],
 	);
 
