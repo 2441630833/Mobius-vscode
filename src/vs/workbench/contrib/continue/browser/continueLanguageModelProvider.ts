@@ -365,7 +365,19 @@ function messagesToOpenAI(messages: IChatMessage[], entry: ContinueModelEntry): 
 		}
 		out.push(plainMsg);
 	}
-	return out;
+
+	// Ensure strict conversational integrity: merge consecutive messages of the same role (especially consecutive user messages)
+	const normalizedOut: OpenAIMessage[] = [];
+	for (const msg of out) {
+		const prev = normalizedOut[normalizedOut.length - 1];
+		if (prev && prev.role === msg.role && prev.role === 'user' && typeof prev.content === 'string' && typeof msg.content === 'string') {
+			// Merge consecutive user messages to avoid confusing the LLM into answering older turns
+			prev.content = `${prev.content}\n\n${msg.content}`;
+		} else {
+			normalizedOut.push(msg);
+		}
+	}
+	return normalizedOut;
 }
 
 function roleToOpenAI(role: ChatMessageRole): string {

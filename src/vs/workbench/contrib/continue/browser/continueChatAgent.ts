@@ -107,7 +107,7 @@ import { isWebSearchEnabled } from './continueWebSearch.js';
 import { BUNDLED_ONNX_OCR } from './continueModelConfig.js';
 import { RunInTerminalTool } from '../../terminalContrib/chatAgentTools/browser/tools/runInTerminalTool.js';
 import { MobiusHarnessRegistry, MOBIUS_HARNESS_ENGINE_SETTING } from './continueAgentHarness.js';
-import { DeepSeekAgentHarness } from './continueDeepSeekHarness.js';
+import { DeepSeekAgentHarness, extractAssistantHistoryText } from './continueDeepSeekHarness.js';
 import { ContinueAgentHarness } from './continueContinueHarness.js';
 
 const CONTINUE_AGENT_IDS = {
@@ -1548,7 +1548,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				if (turn === 0 && webSearchIntent) {
 					messages = [
 						...messages,
-						...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : []),
+						...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: '(Searching web)' }] }]),
 						{
 							role: ChatMessageRole.User,
 							content: [{
@@ -1563,7 +1563,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				if (turn === 0 && hasScaffoldProjectIntent(request.message)) {
 					messages = [
 						...messages,
-						...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : []),
+						...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: '(Scaffolding project)' }] }]),
 						{
 							role: ChatMessageRole.User,
 							content: [{
@@ -1583,7 +1583,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 						todoListForceNudges++;
 						messages = [
 							...messages,
-							...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : []),
+							...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: '(Initializing todo list)' }] }]),
 							{
 								role: ChatMessageRole.User,
 								content: [{ type: 'text', value: TODO_LIST_FORCE_NUDGE }],
@@ -1663,7 +1663,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 						);
 						messages = [
 							...messages,
-							...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : []),
+							...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: '(Executing task)' }] }]),
 							{
 								role: ChatMessageRole.User,
 								content: [{
@@ -1713,7 +1713,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 							}
 							messages = [
 								...messages,
-								...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : []),
+								...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: '(Continuing task)' }] }]),
 								{
 									role: ChatMessageRole.User,
 									content: [{
@@ -1758,7 +1758,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 							);
 							messages = [
 								...messages,
-								...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : []),
+								...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: '(Verifying compilation)' }] }]),
 								{
 									role: ChatMessageRole.User,
 									content: [{ type: 'text', value: compileNudge }],
@@ -1791,7 +1791,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					}
 					messages = [
 						...messages,
-						...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : []),
+						...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: '(Executing task)' }] }]),
 						{
 							role: ChatMessageRole.User,
 							content: [{
@@ -4632,24 +4632,22 @@ function buildChatMessages(
 		});
 	}
 
+		// Only include complete User+Assistant turn pairs from history so the model
+		// is never presented with orphaned user turns that hijack attention away from the current request.
 		for (const entry of history) {
-			if (entry?.request?.message) {
+			const userText = entry?.request?.message?.trim();
+			const assistantText = extractAssistantHistoryText(entry?.response);
+			if (userText && assistantText) {
 				messages.push({
 					role: ChatMessageRole.User,
-					content: [{ type: 'text', value: entry.request.message }],
+					content: [{ type: 'text', value: userText }],
+				});
+				messages.push({
+					role: ChatMessageRole.Assistant,
+					content: [{ type: 'text', value: assistantText }],
 				});
 			}
-			const assistantText = (entry?.response ?? [])
-				.map(part => part.kind === 'markdownContent' ? part.content.value : '')
-				.filter(Boolean)
-				.join('');
-		if (assistantText) {
-			messages.push({
-				role: ChatMessageRole.Assistant,
-				content: [{ type: 'text', value: assistantText }],
-			});
 		}
-	}
 
 	const userParts: string[] = [];
 	const rawWebSearch = hasWebSearchIntent(currentMessage, { isOnline: true });

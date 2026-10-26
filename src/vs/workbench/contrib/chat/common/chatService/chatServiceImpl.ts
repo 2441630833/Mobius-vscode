@@ -1554,6 +1554,12 @@ export class ChatService extends Disposable implements IChatService {
 			// Process the next pending request from the queue if any
 			if (shouldProcessPending) {
 				this.processNextPendingRequest(model);
+			} else if (token.isCancellationRequested) {
+				// When a request is cancelled, clear queued requests so they do not unexpectedly execute on a future turn
+				const pending = [...model.getPendingRequests()];
+				for (const p of pending) {
+					this.removePendingRequest(model.sessionResource, p.request.id);
+				}
 			}
 		});
 		if (options?.userSelectedModelId && !options.isSystemInitiated) {
@@ -1855,6 +1861,16 @@ export class ChatService extends Disposable implements IChatService {
 				this.info('cancelCurrentRequestForSession', `No pending request was found for session ${sessionResource}. requestInProgress=${requestInProgress ?? 'unknown'}, pendingRequests=${pendingRequestsCount}`);
 			}
 			return;
+		}
+
+		if (source === 'cancelAction') {
+			const model = this._sessionModels.get(sessionResource) as ChatModel | undefined;
+			if (model) {
+				const pendingRequests = [...model.getPendingRequests()];
+				for (const p of pendingRequests) {
+					this.removePendingRequest(sessionResource, p.request.id);
+				}
+			}
 		}
 
 		const responseCompletePromise = pendingRequest.responseCompletePromise;

@@ -14,6 +14,7 @@ import { URI } from '../../../../base/common/uri.js';
 import {
 	ChatMessageRole,
 	IChatMessage,
+	IChatMessagePart,
 	IChatResponseToolUsePart,
 } from '../../chat/common/languageModels.js';
 import { IChatAgentResult } from '../../chat/common/participants/chatAgents.js';
@@ -117,6 +118,44 @@ export function createWorkingMemory(goal: string): WorkingMemoryState {
 }
 
 // ==========================================
+/**
+ * Robustly extracts plain text and progress summaries from VS Code IChatProgressHistoryResponseContent parts.
+ */
+export function extractAssistantHistoryText(response: ReadonlyArray<unknown> | undefined): string {
+	if (!response || !response.length) {
+		return '';
+	}
+	const chunks: string[] = [];
+	for (const part of response) {
+		if (!part || typeof part !== 'object') {
+			continue;
+		}
+		const p = part as Record<string, unknown>;
+		if (p.kind === 'markdownContent' || p.kind === 'agentMarkdownContentWithVulnerability') {
+			const content = p.content;
+		if (typeof content === 'string') {
+			chunks.push(content);
+		} else if (content && typeof content === 'object' && typeof (content as { value?: unknown }).value === 'string') {
+			chunks.push((content as { value: string }).value);
+		}
+		} else if (p.kind === 'warning' || p.kind === 'info') {
+			const content = p.content;
+		if (typeof content === 'string') {
+			chunks.push(content);
+		} else if (content && typeof content === 'object' && typeof (content as { value?: unknown }).value === 'string') {
+			chunks.push((content as { value: string }).value);
+		}
+		} else if (p.kind === 'task' || p.kind === 'taskSerialized') {
+			if (typeof p.statusMessage === 'string' && p.statusMessage) {
+				chunks.push(p.statusMessage);
+			}
+		} else if (typeof p.value === 'string' && p.value) {
+			chunks.push(p.value);
+		}
+	}
+	return chunks.join('\n').trim();
+}
+
 // 3. DeepSeek Agent Harness Implementation
 // ==========================================
 
@@ -178,22 +217,19 @@ export class DeepSeekAgentHarness implements IMobiusAgentHarness {
 			content: [{ type: 'text', value: systemPrompt }],
 		});
 
-		// Append existing relevant history
+		// Append existing relevant history (only include complete User+Assistant turn pairs)
 		for (const h of history.slice(-6)) {
-			if (h.request?.message) {
+			const userText = h.request?.message?.trim();
+			const responseText = extractAssistantHistoryText(h.response);
+			if (userText && responseText) {
 				messages.push({
 					role: ChatMessageRole.User,
-					content: [{ type: 'text', value: h.request.message }],
+					content: [{ type: 'text', value: userText }],
 				});
-			}
-			if (h.response) {
-				const responseText = h.response.map(r => 'value' in r ? (typeof r.value === 'string' ? r.value : '') : '').join('\n');
-				if (responseText.trim()) {
-					messages.push({
-						role: ChatMessageRole.Assistant,
-						content: [{ type: 'text', value: responseText }],
-					});
-				}
+				messages.push({
+					role: ChatMessageRole.Assistant,
+					content: [{ type: 'text', value: responseText }],
+				});
 			}
 		}
 
@@ -276,10 +312,22 @@ export class DeepSeekAgentHarness implements IMobiusAgentHarness {
 			}
 
 			// Commit assistant message to conversation log
-			if (assistantText.trim()) {
+			if (assistantText.trim() || toolUses.length > 0) {
+				const contentParts: IChatMessagePart[] = [];
+				if (assistantText.trim()) {
+					contentParts.push({ type: 'text', value: assistantText });
+				}
+				for (const tu of toolUses) {
+					contentParts.push(tu);
+				}
 				messages.push({
 					role: ChatMessageRole.Assistant,
-					content: [{ type: 'text', value: assistantText }],
+					content: contentParts,
+				});
+			} else {
+				messages.push({
+					role: ChatMessageRole.Assistant,
+					content: [{ type: 'text', value: '(Executing tools)' }],
 				});
 			}
 
