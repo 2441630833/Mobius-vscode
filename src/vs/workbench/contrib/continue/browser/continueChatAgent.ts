@@ -1155,6 +1155,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			docEditTask,
 			isOnline,
 			webSearchEnabled,
+			codeChangeIntent,
 		);
 
 		if (!isAgentMode) {
@@ -2441,7 +2442,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		];
 
 		try {
-			let { assistantText } = await this._streamOnce(
+			let { assistantText, thinkingText } = await this._streamOnce(
 				modelId,
 				working,
 				progress,
@@ -2461,7 +2462,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 						content: [{ type: 'text' as const, value: retryNudge }],
 					},
 				];
-				({ assistantText } = await this._streamOnce(
+				const retryResult = await this._streamOnce(
 					modelId,
 					working,
 					progress,
@@ -2469,27 +2470,52 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					undefined,
 					undefined,
 					true,
-				));
-				assistantText = stripNudgeEchoes(stripUnrecoverableToolMarkup(assistantText));
+				);
+				assistantText = stripNudgeEchoes(stripUnrecoverableToolMarkup(retryResult.assistantText));
+				if (!thinkingText) {
+					thinkingText = retryResult.thinkingText;
+				}
+			}
+
+			if (!assistantText.trim() && thinkingText?.trim() && !token.isCancellationRequested) {
+				const fallbackThought = thinkingText.trim();
+				this._logService.info('[Continue] Using thinkingText as final answer fallback');
+				progress([{
+					kind: 'markdownContent',
+					content: new MarkdownString(fallbackThought),
+				}]);
+				return;
 			}
 
 			if (!assistantText.trim() && !token.isCancellationRequested) {
 				this._logService.warn('[Continue] Final answer still empty — emitting tool-result fallback');
 				const summary = collectRecentToolResultText(working);
 				const safeSummary = stripUnrecoverableToolMarkup(summary).slice(0, 2500);
+				const isWebResearch = working.some(m => Array.isArray(m.content) && m.content.some(c => c.type === 'tool_result' && Array.isArray((c as any).value) && (c as any).value.some((v: any) => typeof v?.value === 'string' && (v.value.includes('search_web') || v.value.includes('fetch_webpage')))));
 				progress([{
 					kind: 'markdownContent',
 					content: new MarkdownString(
 						safeSummary
-							? localize(
-								'continue.webResearchFallback',
-								"检索已完成，但模型未生成最终回复。根据工具结果整理如下：\n\n{0}",
-								safeSummary,
-							)
-							: localize(
-								'continue.webResearchEmpty',
-								"检索已完成，但模型未生成最终回复。请重试一次，或缩小问题范围后再问。",
-							),
+							? (isWebResearch
+								? localize(
+									'continue.webResearchFallback',
+									"检索已完成，但模型未生成最终回复。根据工具结果整理如下：\n\n{0}",
+									safeSummary,
+								)
+								: localize(
+									'continue.toolExecutionFallback',
+									"工具调用已完成，但模型未生成最终回复。根据工具结果整理如下：\n\n{0}",
+									safeSummary,
+								))
+							: (isWebResearch
+								? localize(
+									'continue.webResearchEmpty',
+									"检索已完成，但模型未生成最终回复。请重试一次，或缩小问题范围后再问。",
+								)
+								: localize(
+									'continue.finalAnswerEmpty',
+									"模型未生成最终回复。请重试一次，或更换提示词后再问。",
+								)),
 					),
 				}]);
 			}
@@ -2528,8 +2554,8 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					kind: 'markdownContent',
 					content: new MarkdownString(
 						localize(
-							'continue.webResearchFallback',
-							"检索已完成，但模型未生成最终回复。根据工具结果整理如下：\n\n{0}",
+							'continue.toolExecutionFallback',
+							"工具调用已完成，但模型未生成最终回复。根据工具结果整理如下：\n\n{0}",
 							summary,
 						),
 					),
@@ -4594,6 +4620,7 @@ function buildChatMessages(
 	docEditTask = false,
 	isOnline = true,
 	webSearchEnabled = true,
+	codeChangeIntent = true,
 ): IChatMessage[] {
 	const messages: IChatMessage[] = [];
 
@@ -4629,9 +4656,11 @@ function buildChatMessages(
 	const webSearch = isOnline && webSearchEnabled && rawWebSearch;
 	if (skillAttachments.length && !webSearch) {
 		userParts.push(...skillAttachments);
-		userParts.push(
-			'<execution-override>\nAgent mode: the user brief is sufficient for a first shippable version. Do NOT ask clarifying questions and NEVER ask for confirmation before editing (forbidden: 请确认 / please confirm / should I proceed). After any list_dir/read_file/grep_search, your NEXT action must be a patch edit tool (replace_string_in_file / multi_replace_string_in_file / insert_edit_into_file) or create_file — not write_file for small edits. Apply changes in the same turn.\n</execution-override>',
-		);
+		if (codeChangeIntent) {
+			userParts.push(
+				'<execution-override>\nAgent mode: the user brief is sufficient for a first shippable version. Do NOT ask clarifying questions and NEVER ask for confirmation before editing (forbidden: 请确认 / please confirm / should I proceed). After any list_dir/read_file/grep_search, your NEXT action must be a patch edit tool (replace_string_in_file / multi_replace_string_in_file / insert_edit_into_file) or create_file — not write_file for small edits. Apply changes in the same turn.\n</execution-override>',
+			);
+		}
 	}
 	if (!webSearchEnabled) {
 		userParts.push(
