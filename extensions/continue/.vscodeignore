@@ -37,6 +37,7 @@ e2e
 
 server/exe/**
 !out/node_modules/**
+!out/glm-ocr-runtime/**
 !node_modules/@vscode/ripgrep/bin/rg
 
 # Do not ship esbuild in VSIX

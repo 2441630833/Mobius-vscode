@@ -38,7 +38,7 @@ const esbuildConfig = {
             try {
               fs.writeFileSync(
                 "./build/meta.json",
-                JSON.stringify(result.metafile, null, 2),
+                JSON.stringify(result.metafile, null, 2)
               );
             } catch (e) {
               console.error("Failed to write esbuild meta file", e);
@@ -74,10 +74,13 @@ const glmOcrWorkerEsbuildConfig = {
   entryPoints: [
     path.join(
       __dirname,
-      "../../../core/llm/llms/transformersJsGlmOcrWorker.ts",
+      "../../../core/llm/llms/transformersJsGlmOcrWorker.ts"
     ),
   ],
   outfile: "out/transformersJsGlmOcrWorker.js",
+  banner: {
+    js: 'module.paths.unshift(require("path").join(__dirname, "glm-ocr-runtime", "node_modules"));',
+  },
   external: [...workerEsbuildConfig.external, "@huggingface/transformers"],
 };
 
@@ -140,7 +143,7 @@ void (async () => {
     await esbuild.build(glmOcrWorkerEsbuildConfig);
     await esbuild.build(chunkWorkerEsbuildConfig);
     console.log(
-      "VS Code Extension MiniLM + GLM-OCR + chunk worker esbuild complete",
+      "VS Code Extension MiniLM + GLM-OCR + chunk worker esbuild complete"
     );
   }
 })();
