@@ -1013,6 +1013,24 @@ export class ExtensionsListView extends AbstractExtensionsListView<IExtension> {
 		const otherRecommendations = await this.getOtherRecommendations();
 		const installableRecommendations = await this.getInstallableRecommendations(otherRecommendations, { ...options, source: 'recommendations-other', sortBy: undefined }, token);
 		const result = coalesce(otherRecommendations.map(id => installableRecommendations.find(i => areSameExtensions(i.identifier, { id }))));
+		if (result.length === 0) {
+			try {
+				const popularPager = await this.extensionsWorkbenchService.queryGallery({
+					...options,
+					sortBy: GallerySortBy.InstallCount,
+					pageSize: 8,
+					source: 'recommendations-other-fallback'
+				}, token);
+				const localExtensions = await this.extensionsWorkbenchService.queryLocal(this.options.server);
+				const localExtensionIds = localExtensions.map(e => e.identifier.id.toLowerCase());
+				const fallback = popularPager.firstPage.filter(e => !localExtensionIds.includes(e.identifier.id.toLowerCase()));
+				if (fallback.length) {
+					return new PagedModel(fallback.slice(0, 8));
+				}
+			} catch {
+				// ignore gallery query error
+			}
+		}
 		return new PagedModel(result);
 	}
 
@@ -1066,6 +1084,23 @@ export class ExtensionsListView extends AbstractExtensionsListView<IExtension> {
 				if (extension) {
 					result.push(extension);
 				}
+			}
+		}
+
+		if (result.length === 0) {
+			try {
+				const popularPager = await this.extensionsWorkbenchService.queryGallery({
+					...options,
+					sortBy: GallerySortBy.InstallCount,
+					pageSize: 8,
+					source: 'recommendations-all-fallback'
+				}, token);
+				const fallback = popularPager.firstPage.filter(e => !localExtensionIds.includes(e.identifier.id.toLowerCase()));
+				if (fallback.length) {
+					return new PagedModel(fallback.slice(0, 8));
+				}
+			} catch {
+				// ignore gallery query error
 			}
 		}
 
@@ -1495,6 +1530,9 @@ export class DefaultRecommendedExtensionsView extends ExtensionsListView {
 		if (!this.extensionsWorkbenchService.local.some(e => !e.isBuiltin)) {
 			// This is part of popular extensions view. Collapse if no installed extensions.
 			this.setExpanded(model.length > 0);
+		} else if (model.length === 0) {
+			// Do not leave an empty expanded section when there are zero recommendations
+			this.setExpanded(false);
 		}
 		return model;
 	}
