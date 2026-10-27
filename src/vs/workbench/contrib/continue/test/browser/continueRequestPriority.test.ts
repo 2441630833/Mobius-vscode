@@ -12,4 +12,8 @@ suite('Continue current request priority', () => {
 		assert.ok(text(messages[messages.length - 1]).endsWith(prompt));
 		assert.ok(!text(messages[messages.length - 1]).includes('<execution-override>'));
 	});
+	test('CURRENT_REQUEST_PRIORITY explicitly instructs response based primarily on user request', () => {
+		assert.ok(CURRENT_REQUEST_PRIORITY.includes('Base your response primarily on the user request'));
+		assert.ok(CURRENT_REQUEST_PRIORITY.includes('never on automatically routed skills'));
+	});
 });
