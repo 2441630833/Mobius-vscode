@@ -235,19 +235,11 @@ export async function executeEccPreflight(
 		logService.warn('[Continue][ECC] Preflight execution encountered non-fatal error:', err);
 	}
 
-	// Graceful fallback context when terminal command does not produce clean JSON
+	// A failed preflight is not evidence for any workflow or task.
 	return {
-		ok: true,
-		summary: 'ECC Preflight: Active (General engineering optimization)',
-		systemPrompt: `<ecc-context origin="submodules/ECC">
-<!-- Everything Claude Code (ECC) harness active -->
-<ecc-engineering-principles>
-- Disciplined Engineering Loop: Plan -> Test/Audit -> Implement -> Verify -> Document.
-- Verification Gate: Never declare complete without verifying with get_errors / build / test.
-- Security & Safety: Validate inputs, inspect modified files, protect secrets.
-- ECC Tools: ecc_run, ecc_consult, and ecc_skill are available.
-</ecc-engineering-principles>
-</ecc-context>`,
+		ok: false,
+		summary: 'ECC Preflight: unavailable; continuing with the user request',
+		systemPrompt: '',
 		matchedSkills: [],
 		matchedAgents: [],
 	};

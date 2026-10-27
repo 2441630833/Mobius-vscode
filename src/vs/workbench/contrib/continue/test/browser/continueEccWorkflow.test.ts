@@ -135,6 +135,19 @@ suite('ContinueEccWorkflow', () => {
 		assert.deepStrictEqual(result.matchedSkills, ['security']);
 		assert.deepStrictEqual(result.matchedAgents, ['refactor-cleaner']);
 	});
+	test('failed preflight does not invent an engineering workflow', async () => {
+		const result = await executeEccPreflight(
+			URI.file('/project/ECC'),
+			{ message: 'Fix the existing approval tab', requestId: 'failure', sessionResource: URI.parse('test:session') } as any,
+			URI.file('/project'),
+			{ getTool: () => undefined } as any,
+			new NullLogService(), CancellationToken.None,
+		);
+		assert.strictEqual(result.ok, false);
+		assert.strictEqual(result.systemPrompt, '');
+		assert.deepStrictEqual(result.matchedSkills, []);
+	});
+
 	test('collectEccCandidates includes packaged mobius-ecc from appRoot', () => {
 		const mockWorkspace = {
 			getWorkspace: () => ({ folders: [] }),
