@@ -75,7 +75,7 @@ import { executeRunTerminalCommand } from './continueTerminalTool.js';
 import { normalizeToolArguments, resolveToolPath, toolPathArgument } from './continueToolPaths.js';
 import { executeGodotTool, bootstrapGameModeGodotLivePreview, createGodotAutoPreviewState, createGodotToolHost, ensureGodotPreviewLaunched, gameDevSystemHint, GodotAutoPreviewState, isGameDevProjectUri, isGodotTool, openGodotLiveEditorIfNeeded, trackGodotToolCall, userRequestedGodotOpen } from './continueGodotTools.js';
 import { bootstrapChipModeDetect, createFpgaToolHost, executeFpgaTool, isFpgaTool } from './continueFpgaTools.js';
-import { executeEccPreflight, executeEccTool, findEccRootUri, isEccTool, resolveEccRootUri } from './continueEccWorkflow.js';
+import { buildEccAdvisory, executeEccPreflight, executeEccTool, findEccRootUri, isEccTool, resolveEccRootUri } from './continueEccWorkflow.js';
 import { chipDesignSystemHint, isChipModeExplicitlySelected } from './continueChipDesign.js';
 import { isPptModeExplicitlySelected, loadPptMasterSkill, pptModeSystemHint } from './continuePptMode.js';
 import { inferMobiusModeFromPrompt } from './continueMobiusModeRouting.js';
@@ -1138,7 +1138,8 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			? appendWorkingDirectoryHint(agentSystem, cwd)
 			: undefined;
 
-				let messages = buildChatMessages(
+		const eccAdvisory = isAgentMode ? buildEccAdvisory(eccPreflightResult) : undefined;
+		let messages = buildChatMessages(
 			history,
 			request.message,
 			executeSystemWithRules,
@@ -1151,6 +1152,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			docEditTask,
 			isOnline,
 			webSearchEnabled,
+			eccAdvisory,
 		);
 
 		if (!isAgentMode) {
@@ -4618,6 +4620,7 @@ export function buildChatMessages(
 	docEditTask = false,
 	isOnline = true,
 	webSearchEnabled = true,
+	eccAdvisory?: string,
 ): IChatMessage[] {
 	const messages: IChatMessage[] = [];
 
@@ -4651,6 +4654,9 @@ export function buildChatMessages(
 	const webSearch = isOnline && webSearchEnabled && rawWebSearch;
 	if (skillAttachments.length && !webSearch) {
 		userParts.push(...skillAttachments);
+	}
+	if (eccAdvisory && !webSearch) {
+		userParts.push(eccAdvisory);
 	}
 	if (!webSearchEnabled) {
 		userParts.push(

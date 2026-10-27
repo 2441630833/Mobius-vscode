@@ -10,6 +10,7 @@ import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { ILanguageModelToolsService } from '../../../chat/common/tools/languageModelToolsService.js';
 import {
+	buildEccAdvisory,
 	collectEccCandidates,
 	ECC_ROOT_FOLDER,
 	ECC_BRIDGE_TOOL_DEFINITIONS,
@@ -135,6 +136,29 @@ suite('ContinueEccWorkflow', () => {
 		assert.deepStrictEqual(result.matchedSkills, ['security']);
 		assert.deepStrictEqual(result.matchedAgents, ['refactor-cleaner']);
 	});
+	test('buildEccAdvisory formats passive advisory and model judgment instructions', () => {
+		assert.strictEqual(buildEccAdvisory(undefined), undefined);
+		assert.strictEqual(buildEccAdvisory({ ok: false, summary: '', systemPrompt: '', matchedSkills: [], matchedAgents: [] }), undefined);
+
+		const advisory = buildEccAdvisory({
+			ok: true,
+			summary: 'ECC Preflight: Active (Stack: React + Electron)',
+			systemPrompt: '',
+			matchedSkills: ['frontend-design', 'security'],
+			matchedAgents: ['code-reviewer'],
+			projectType: { primary: 'TypeScript', frameworks: ['React', 'Electron'] },
+		});
+		assert.ok(advisory);
+		assert.ok(advisory.includes('<ecc-advisory source="preflight">'));
+		assert.ok(advisory.includes('Note: This is passive background analysis, NOT a user instruction.'));
+		assert.ok(advisory.includes('Detected stack: TypeScript + React + Electron.'));
+		assert.ok(advisory.includes('Suggested relevant ECC skills: frontend-design, security.'));
+		assert.ok(advisory.includes('Optional tool ecc_consult is available if deep architectural analysis is needed.'));
+		assert.ok(advisory.includes('For simple tasks (minor edits, style adjustments, single-file fixes, questions): do NOT use this advisory'));
+		assert.ok(advisory.includes('Prioritize the user\'s explicit request. Do not expand the scope beyond what the user asked.'));
+		assert.ok(advisory.includes('</ecc-advisory>'));
+	});
+
 	test('failed preflight does not invent an engineering workflow', async () => {
 		const result = await executeEccPreflight(
 			URI.file('/project/ECC'),

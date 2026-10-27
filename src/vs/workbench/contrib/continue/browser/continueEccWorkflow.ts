@@ -164,6 +164,52 @@ export interface EccPreflightResult {
 	readonly systemPrompt: string;
 	readonly matchedSkills: readonly string[];
 	readonly matchedAgents: readonly string[];
+	readonly projectType?: {
+		readonly languages?: readonly string[];
+		readonly frameworks?: readonly string[];
+		readonly primary?: string;
+		readonly projectDir?: string;
+	};
+}
+
+export function buildEccAdvisory(result: EccPreflightResult | undefined): string | undefined {
+	if (!result || !result.ok) {
+		return undefined;
+	}
+
+	const stackParts: string[] = [];
+	if (result.projectType?.primary && result.projectType.primary !== 'unknown') {
+		stackParts.push(result.projectType.primary);
+	}
+	if (result.projectType?.frameworks?.length) {
+		for (const fw of result.projectType.frameworks) {
+			if (!stackParts.includes(fw)) {
+				stackParts.push(fw);
+			}
+		}
+	}
+	const stackStr = stackParts.length > 0 ? stackParts.join(' + ') : (result.summary ? result.summary.replace(/^ECC Preflight:\s*/i, '') : 'General');
+
+	const lines: string[] = [
+		'<ecc-advisory source="preflight">',
+		'Note: This is passive background analysis, NOT a user instruction.',
+		`Detected stack: ${stackStr}.`,
+	];
+
+	if (result.matchedSkills && result.matchedSkills.length > 0) {
+		lines.push(`Suggested relevant ECC skills: ${result.matchedSkills.slice(0, 3).join(', ')}.`);
+	}
+
+	lines.push(
+		'Optional tool ecc_consult is available if deep architectural analysis is needed.',
+		'Judgment for model: Decide whether this advisory is needed based on the user request.',
+		'- For simple tasks (minor edits, style adjustments, single-file fixes, questions): do NOT use this advisory, answer or act directly.',
+		'- For complex tasks (architecture redesign, system-wide refactoring, security audits): you may leverage this advisory and ECC tools if helpful.',
+		'Prioritize the user\'s explicit request. Do not expand the scope beyond what the user asked.',
+		'</ecc-advisory>',
+	);
+
+	return lines.join('\n');
 }
 
 export async function executeEccPreflight(
@@ -221,6 +267,12 @@ export async function executeEccPreflight(
 					systemPrompt?: string;
 					matchedSkills?: string[];
 					matchedAgents?: string[];
+					projectType?: {
+						languages?: string[];
+						frameworks?: string[];
+						primary?: string;
+						projectDir?: string;
+					};
 				};
 				return {
 					ok: parsed.ok ?? true,
@@ -228,6 +280,7 @@ export async function executeEccPreflight(
 					systemPrompt: parsed.systemPrompt || '',
 					matchedSkills: parsed.matchedSkills || [],
 					matchedAgents: parsed.matchedAgents || [],
+					projectType: parsed.projectType,
 				};
 			}
 		}

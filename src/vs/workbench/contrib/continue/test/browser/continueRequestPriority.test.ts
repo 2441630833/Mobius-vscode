@@ -16,4 +16,13 @@ suite('Continue current request priority', () => {
 		assert.ok(CURRENT_REQUEST_PRIORITY.includes('Base your response primarily on the user request'));
 		assert.ok(CURRENT_REQUEST_PRIORITY.includes('never on automatically routed skills'));
 	});
+	test('buildChatMessages includes eccAdvisory in user message before user prompt', () => {
+		const prompt = 'Fix button color';
+		const advisory = '<ecc-advisory source="preflight">\nDetected stack: React\n</ecc-advisory>';
+		const messages = buildChatMessages([], prompt, 'Agent system', undefined, [], undefined, undefined, undefined, false, false, true, true, advisory);
+		const userMsg = messages[messages.length - 1];
+		const userText = userMsg.content.map(p => p.type === 'text' ? p.value : '').join('');
+		assert.ok(userText.includes(advisory));
+		assert.ok(userText.endsWith(prompt));
+	});
 });
