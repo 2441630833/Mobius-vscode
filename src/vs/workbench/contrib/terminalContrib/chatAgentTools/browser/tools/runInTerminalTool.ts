@@ -158,6 +158,7 @@ function createPowerShellModelDescription(shell: string, sandboxingOptions: ISan
 		'- For pager commands, add | Out-String or | Format-List',
 		'',
 		'Best Practices:',
+		'- When reading or inspecting file contents, ALWAYS prefer dedicated file-reading tools (e.g. read_file) instead of running terminal commands like type, cat, or Get-Content. If PowerShell Get-Content must be used, always specify `-Encoding utf8` (e.g. `Get-Content -Path <file> -Encoding utf8`) to prevent GBK/CP936 decoding mojibake on Windows.',
 		'- Use proper cmdlet names instead of aliases in scripts',
 		'- Quote paths with spaces: "C:\\Path With Spaces"',
 		'- Prefer PowerShell cmdlets over external commands when available',

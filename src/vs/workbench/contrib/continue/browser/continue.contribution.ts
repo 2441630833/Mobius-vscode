@@ -215,6 +215,9 @@ if (isContinuePhysicalAiIde()) {
 			'terminal.integrated.env.windows': {
 				GIT_TERMINAL_PROMPT: '0',
 				GCM_INTERACTIVE: 'never',
+				PYTHONIOENCODING: 'utf-8',
+				PYTHONUTF8: '1',
+				LESSCHARSET: 'utf-8',
 			},
 			'terminal.integrated.env.linux': {
 				GIT_TERMINAL_PROMPT: '0',

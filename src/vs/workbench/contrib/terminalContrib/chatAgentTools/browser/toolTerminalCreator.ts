@@ -168,6 +168,10 @@ export class ToolTerminalCreator {
 			// "Which services should be restarted?" dialogs). The agent cannot
 			// drive TUI prompts, so non-interactive mode picks safe defaults.
 			DEBIAN_FRONTEND: 'noninteractive',
+			// Mobius: Force UTF-8 environment variables for CLI tools, Python, and pagers
+			PYTHONIOENCODING: 'utf-8',
+			PYTHONUTF8: '1',
+			LESSCHARSET: 'utf-8',
 		};
 
 		const preventShellHistory = this._configurationService.getValue(TerminalChatAgentToolsSettingId.PreventShellHistory) === true;

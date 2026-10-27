@@ -13,6 +13,15 @@ if ($ExecutionContext.SessionState.LanguageMode -ne "FullLanguage") {
 	return;
 }
 
+# Mobius: Force UTF-8 console and output encoding to prevent GBK/CP936 mojibake
+try {
+	[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+	$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+	if ($IsWindows -or $env:OS -eq "Windows_NT") {
+		$null = & chcp 65001 2>&1
+	}
+} catch {}
+
 $Global:__VSCodeState = @{
 	OriginalPrompt = $function:Prompt
 	LastHistoryId = -1
