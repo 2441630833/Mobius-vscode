@@ -303,6 +303,21 @@ suite('stripCommandEchoAndPrompt', () => {
 		);
 	});
 
+	test('strips previous command executions and matches latest command echo', () => {
+		const output = [
+			'PS C:\\test> git status',
+			'On branch main',
+			'PS C:\\test> git status',
+			'nothing to commit, working tree clean',
+			'PS C:\\test> ',
+		].join('\n');
+
+		assert.strictEqual(
+			stripCommandEchoAndPrompt(output, 'git status'),
+			'nothing to commit, working tree clean'
+		);
+	});
+
 	test('strips trailing prompt without @ (hostname:path user$)', () => {
 		const output = [
 			'dsm12-be220-abc:testWorkspace runner$  echo hello',

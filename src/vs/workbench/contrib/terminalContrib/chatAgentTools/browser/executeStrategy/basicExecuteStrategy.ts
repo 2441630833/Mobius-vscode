@@ -264,6 +264,9 @@ export class BasicExecuteStrategy extends Disposable implements ITerminalExecute
 				if (commandOutput !== undefined) {
 					this._log('Fetched output via finished command');
 					output = stripCommandEchoAndPrompt(commandOutput, commandLine, this._log.bind(this));
+				} else if (finishedCommand.executedMarker && finishedCommand.endMarker) {
+					this._log('Finished command produced empty output');
+					output = '';
 				}
 			}
 			if (output === undefined) {

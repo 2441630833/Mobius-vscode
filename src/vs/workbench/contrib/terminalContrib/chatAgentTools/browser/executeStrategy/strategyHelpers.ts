@@ -206,7 +206,7 @@ export function findCommandEcho(output: string, commandLine: string, allowSuffix
 	// Strip newlines from the output so we can find the command as a
 	// contiguous substring even when terminal wrapping splits it across lines.
 	const { strippedOutput, indexMapping } = stripNewLinesAndBuildMapping(output);
-	const matchIndex = strippedOutput.indexOf(trimmedCommand);
+	const matchIndex = strippedOutput.lastIndexOf(trimmedCommand);
 
 	let matchEndInStripped: number;
 	let contentBefore: string;

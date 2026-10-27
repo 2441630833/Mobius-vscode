@@ -992,7 +992,7 @@ export class TerminalInstance extends Disposable implements ITerminalInstance {
 		});
 	}
 
-	async runCommand(commandLine: string, shouldExecute: boolean, commandId?: string, forceBracketedPasteMode?: boolean, commandLineForMetadata?: string): Promise<void> {
+	async runCommand(commandLine: string, shouldExecute: boolean, commandId?: string, forceBracketedPasteMode?: boolean, commandLineForMetadata?: string, skipInterrupt?: boolean): Promise<void> {
 		let commandDetection = this.capabilities.get(TerminalCapability.CommandDetection);
 		const siInjectionEnabled = this._configurationService.getValue(TerminalSettingId.ShellIntegrationEnabled) === true;
 		const timeoutMs = getShellIntegrationTimeout(
@@ -1007,8 +1007,7 @@ export class TerminalInstance extends Disposable implements ITerminalInstance {
 
 			await Promise.race([
 				new Promise<void>(r => {
-					store.add(this.capabilities.onDidAddCommandDetectionCapability(e => {
-						commandDetection = e;
+					if (commandDetection) {
 						if (commandDetection.promptInputModel.state === PromptInputState.Input) {
 							r();
 						} else {
@@ -1016,7 +1015,18 @@ export class TerminalInstance extends Disposable implements ITerminalInstance {
 								r();
 							}));
 						}
-					}));
+					} else {
+						store.add(this.capabilities.onDidAddCommandDetectionCapability(e => {
+							commandDetection = e;
+							if (commandDetection.promptInputModel.state === PromptInputState.Input) {
+								r();
+							} else {
+								store.add(commandDetection.promptInputModel.onDidStartInput(() => {
+									r();
+								}));
+							}
+						}));
+					}
 				}),
 				timeout(timeoutMs)
 			]);
@@ -1032,8 +1042,9 @@ export class TerminalInstance extends Disposable implements ITerminalInstance {
 		}
 
 		// Determine whether to send ETX (ctrl+c) before running the command. Only do this when the
-		// command will be executed immediately or when command detection shows the prompt contains text.
-		if (shouldExecute && (!commandDetection || commandDetection.promptInputModel.value.length > 0)) {
+		// command will be executed immediately, interrupt is not skipped, and command detection confirms
+		// the prompt contains actual pending input text.
+		if (!skipInterrupt && shouldExecute && (commandDetection && commandDetection.promptInputModel.value.length > 0)) {
 			await this.sendText('\x03', false);
 			// Wait a little before running the command to avoid the sequences being echoed while the ^C
 			// is being evaluated

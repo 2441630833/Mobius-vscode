@@ -119,9 +119,15 @@ export class RichExecuteStrategy extends Disposable implements ITerminalExecuteS
 			// underlying xterm `IMarker` reference from `commandStartMarker`,
 			// so marker identity is a reliable stable comparison.
 			const staleMarker = this._commandDetection.executingCommandObject?.marker;
-			const onCommandFinishedFiltered = staleMarker
-				? Event.filter(this._commandDetection.onCommandFinished, e => e.marker !== staleMarker, store)
-				: this._commandDetection.onCommandFinished;
+			const onCommandFinishedFiltered = Event.filter(this._commandDetection.onCommandFinished, e => {
+				if (staleMarker && e.marker === staleMarker) {
+					return false;
+				}
+				if (commandId && e.id && e.id !== commandId) {
+					return false;
+				}
+				return true;
+			}, store);
 
 			// Subscribe to terminal lifecycle events BEFORE any awaits so that we
 			// don't miss events that fire while we're waiting for xterm to be
@@ -176,7 +182,7 @@ export class RichExecuteStrategy extends Disposable implements ITerminalExecuteS
 			this._log(`Executing command line \`${commandLine}\``);
 			markerRecreation.dispose();
 			const forceBracketedPasteMode = isMacintosh || isMultilineCommand(commandLine);
-			this._instance.runCommand(commandLine, true, commandId, forceBracketedPasteMode, commandLineForMetadata);
+			this._instance.runCommand(commandLine, true, commandId, forceBracketedPasteMode, commandLineForMetadata, true /* skipInterrupt */);
 
 			// Wait for the terminal to idle
 			this._log('Waiting for done event');
@@ -212,6 +218,9 @@ export class RichExecuteStrategy extends Disposable implements ITerminalExecuteS
 					// Strip it defensively — the function is a no-op when the output
 					// is already clean.
 					output = stripCommandEchoAndPrompt(commandOutput, commandLine, this._log.bind(this));
+				} else if (finishedCommand.executedMarker && finishedCommand.endMarker) {
+					this._log('Finished command produced empty output');
+					output = '';
 				}
 			}
 			if (output === undefined) {
