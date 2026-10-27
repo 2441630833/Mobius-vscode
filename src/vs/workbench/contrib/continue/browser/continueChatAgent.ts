@@ -29,6 +29,7 @@ import {
 	IChatResponseToolUsePart,
 	ILanguageModelsService,
 } from '../../chat/common/languageModels.js';
+import { didWriteRequestTodos, initializeRequestTodos, REQUEST_TODO_INSTRUCTIONS } from './continueRequestTodos.js';
 import { IChatTodoListService } from '../../chat/common/tools/chatTodoListService.js';
 import {
 	IChatAgentData,
@@ -285,7 +286,7 @@ const INVESTIGATE_CONTINUE_NUDGE =
 Do not stop after a single terminal/read call. Forbidden: asking the user to continue.`;
 
 const TODO_LIST_FORCE_NUDGE =
-	`You must call manage_todo_list NOW before other tools. Split the user's request into 3–7 actionable items in their language, mark the first item in-progress, then continue the work. Do NOT narrate the plan only in chat text.`;
+	REQUEST_TODO_INSTRUCTIONS;
 
 const TODO_LOOP_CONTINUE_NUDGE =
 	`Todo list update acknowledged. Do NOT call manage_todo_list again right now. Proceed IMMEDIATELY to execute the task using terminal or edit tools (e.g. run_in_terminal, read_file, replace_string_in_file, write_file).`;
@@ -600,7 +601,7 @@ CRITICAL RULES:
 1. Do NOT stall in long reasoning, questionnaires, or design interviews when the user already gave product intent (name, audience, style). Infer sensible defaults and BUILD.
 2. Prefer tools over talk. To edit EXISTING files prefer replace_string_in_file (one change), multi_replace_string_in_file (several changes), or apply_patch. Use create_file for new files only. Use insert_edit_into_file only when replacing a whole section with exact new code. Use write_file only for large rewrites (>60% of file) or after patch tools fail twice.
 3. To inspect the workspace use list_dir / read_file. To search code use grep_search or semantic_search. Prefer short literal queries (a symbol or path fragment) over broad regex with | alternation. If a search times out or fails, immediately retry with a simpler literal query, file_search, or list_dir — do NOT stop or ask the user. If semantic_search returns no results or is unavailable, immediately use grep_search.
-4. EXTERNAL / UP-TO-DATE KNOWLEDGE: Call search_web ONCE first. Optionally call fetch_webpage ONCE for one official page. Then ANSWER immediately — do NOT repeat search_web with rephrased queries.
+4. EXTERNAL / UP-TO-DATE KNOWLEDGE: After initializing the current-request todo, call search_web ONCE. Optionally call fetch_webpage ONCE for one official page. Then ANSWER immediately — do NOT repeat search_web with rephrased queries.
 5. RESEARCH LIMIT: At most 2× search_web and 3× fetch_webpage per question. Snippets may be incomplete — synthesize the best answer you have instead of looping tools.
 6. After list_dir/read_file/grep_search on a CODING task, your NEXT action must be a patch edit tool (not write_file) unless the user asked a pure question. Prefer editing early over long exploration.
 7. After writing files, briefly report the paths you changed. Do not dump huge code in chat if a tool already wrote it.
@@ -611,7 +612,7 @@ CRITICAL RULES:
 12. Keep working until the USER TASK is fully complete — including investigation/debug ("为什么/检查/排查"). Forbidden: stopping right after one terminal or read call, "请回复继续修改", "请回复任意消息", "由于本轮工具调用已用完", "我将立即对以上文件执行修改", "reply continue". There is NO tool-turn quota. After tools return — including tool ERRORS — either call the next tool or write the complete conclusion — never end silently because a tool failed.
 13. COMPILE GATE (mandatory after code edits): Before TASK_COMPLETE, call get_errors and fix every Error. If the package has compile/typecheck/build, run it via run_in_terminal and fix failures. The task is complete ONLY when Errors are gone and compile succeeds — then give a short done summary and end with a line containing exactly: TASK_COMPLETE
 14. TERMINAL OUTPUT: Recent terminal scrollback is NOT prefetched into the prompt. When the user asks about a build failure, crash, or log, call run_in_terminal (re-run or inspect via shell) or get_errors — do not assume you already saw terminal output.
-15. TODO LIST (mandatory for multi-step work): Call manage_todo_list as your FIRST tool whenever the task needs 2+ steps (coding, debugging, Godot loop, plans, exploration). Break work into 3–7 concise items in the user's language, mark ONE in-progress before each step, mark completed immediately after each step. Skip todos only for one-line trivia with no follow-up work.
+15. TODO LIST (mandatory for every request): Refine the IDE-initialized todo with manage_todo_list as your FIRST tool. Use 1-7 items grounded in the full current user request, including its constraints. Mark ONE in-progress before each step and completed after finishing it. Do not carry over unrelated tasks from history or ECC recommendations.
 16. Before TASK_COMPLETE, ensure every manage_todo_list item is completed (the IDE may auto-complete leftovers when you emit TASK_COMPLETE).
 17. TOOL CALL FORMAT (CRITICAL): Tools are provided via the API tools/function-calling channel. ALWAYS use that channel (tool_calls / tool_use). NEVER invent plain-text or XML-looking tool markup in your message content — it is not executed. To edit or run a command, emit a real native function call.
 18. ENCODING / CHINESE TEXT (CRITICAL): All workspace files are UTF-8. When editing, copy non-ASCII characters (especially Chinese) EXACTLY from read_file output — do not re-type, translate-through-pinyin, or "normalize" them. If you see mojibake like 鏉茬藁 / 閿俐 / 锟斤拷 instead of real Chinese, STOP and re-read the file with read_file before editing; never write mojibake back to disk.`;
@@ -810,6 +811,9 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			return {};
 		}
 
+		const todoListIntent = isAgentMode && !token.isCancellationRequested
+			&& initializeRequestTodos(this._chatTodoListService, request.sessionResource, request.message);
+
 		let skillCatalog: string | undefined;
 		let skillAttachments: string[] = [];
 		let routedSkillNames: string[] = [];
@@ -944,7 +948,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		}
 		if (docEditTask && isAgentMode) {
 			agentSystem += `\n\n<doc-edit-fast-path>
-Documentation-only edit (README / markdown). Workflow: read_file on the named .md files only (skip repo-wide grep unless one targeted phrase search is essential) → replace_string_in_file on those files → TASK_COMPLETE. Do NOT use manage_todo_list, get_errors, compile, or run_in_terminal. Target ≤5 tool calls; do not audit unrelated files first.
+Documentation-only edit (README / markdown). Workflow: read_file on the named .md files only (skip repo-wide grep unless one targeted phrase search is essential) → replace_string_in_file on those files → TASK_COMPLETE. Initialize the current-request todo first. Do NOT use get_errors, compile, or run_in_terminal. Target ≤5 tool calls; do not audit unrelated files first.
 </doc-edit-fast-path>`;
 		}
 
@@ -1105,14 +1109,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			isChipMode,
 			isPptMode,
 		}) || docEditTask;
-		const todoListIntent = !lightweightTask && shouldUseTodoList(request.message, {
-			codeChangeIntent,
-			investigateIntent,
-			isGameMode,
-			isChipMode,
-			isPptMode,
-			webSearchIntent,
-		});
+
 		const maxCompletionVerifyNudges = lightweightTask
 			? LIGHTWEIGHT_COMPLETION_VERIFY_NUDGES
 			: MAX_COMPLETION_VERIFY_NUDGES;
@@ -1122,8 +1119,8 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		if (lightweightTask) {
 			this._logService.info(
 				docEditTask
-					? '[Continue] Doc-edit fast path — skipping todo, memory, compile gate; capped tool turns'
-					: '[Continue] Lightweight task — skipping todo list and cross-session memory recall',
+					? '[Continue] Doc-edit fast path — skipping memory, compile gate; capped tool turns'
+					: '[Continue] Lightweight task — skipping cross-session memory recall',
 			);
 		}
 
@@ -1179,8 +1176,8 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		if (webSearchIntent) {
 			this._logService.info('[Continue] Web-search intent detected — forcing search_web tool');
 		}
-		const existingTodos = this._chatTodoListService.getTodos(request.sessionResource);
-		let needsInitialTodoList = todoListIntent && existingTodos.length === 0;
+		let needsInitialTodoList = todoListIntent;
+		let needsInitialWebSearch = webSearchIntent;
 		if (needsInitialTodoList) {
 			this._logService.info('[Continue] Todo-list intent detected — will force manage_todo_list on first turn');
 		}
@@ -1295,11 +1292,20 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				break;
 			}
 
-			const forceTool = turn === 0 && webSearchIntent
-				? 'search_web'
-				: turn === 0 && needsInitialTodoList
-					? 'manage_todo_list'
+			const forceTool = needsInitialTodoList && todoListForceNudges < MAX_TODO_LIST_FORCE_NUDGES
+				? 'manage_todo_list'
+				: needsInitialWebSearch
+					? 'search_web'
 					: undefined;
+			if (forceTool === 'manage_todo_list') {
+				todoListForceNudges++;
+			} else if (needsInitialTodoList) {
+				// Keep the request-specific fallback and let execution proceed after bounded attempts.
+				needsInitialTodoList = false;
+			}
+			if (forceTool === 'search_web') {
+				needsInitialWebSearch = false;
+			}
 			// Force native tool_calls when coding still needs writes, or after a textual-tool dump.
 			// Bounded: tool_choice='required' forbids plain text, so leaving it on forever
 			// deadlocks a model that only wants to answer (see MAX_FORCED_TOOL_TURNS_NO_WRITE).
@@ -1545,7 +1551,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				forceRequiredTools = true;
 			}
 			if (!toolUses.length) {
-				if (turn === 0 && webSearchIntent) {
+				if (forceTool === 'search_web') {
 					messages = [
 						...messages,
 						...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: '(Searching web)' }] }]),
@@ -1560,7 +1566,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					forceRequiredTools = true;
 					continue;
 				}
-				if (turn === 0 && hasScaffoldProjectIntent(request.message)) {
+				if (!needsInitialTodoList && turn === 0 && hasScaffoldProjectIntent(request.message)) {
 					messages = [
 						...messages,
 						...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: '(Scaffolding project)' }] }]),
@@ -1575,12 +1581,8 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					forceRequiredTools = true;
 					continue;
 				}
-				if (
-					needsInitialTodoList
-					&& this._chatTodoListService.getTodos(request.sessionResource).length === 0
-				) {
+				if (needsInitialTodoList) {
 					if (todoListForceNudges < MAX_TODO_LIST_FORCE_NUDGES) {
-						todoListForceNudges++;
 						messages = [
 							...messages,
 							...(assistantText.trim() ? [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: assistantText }] }] : [{ role: ChatMessageRole.Assistant, content: [{ type: 'text' as const, value: '(Initializing todo list)' }] }]),
@@ -1856,6 +1858,10 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					invocationMessage: `${formatSupersetToolDisplayName(call.name)}…`,
 				}]);
 
+				const todosBeforeCall = this._chatTodoListService.getTodos(request.sessionResource);
+				if (call.name === 'search_web') {
+					needsInitialWebSearch = false;
+				}
 				const { ok, text, editUri, editKind } = await this._executeTool(
 					call,
 					cwd,
@@ -1864,8 +1870,16 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					token,
 					godotAutoPreview,
 				);
-				if (isManageTodoListTool(call.name)) {
-					needsInitialTodoList = false;
+				if (isManageTodoListTool(call.name) && needsInitialTodoList) {
+					const todosAfterCall = this._chatTodoListService.getTodos(request.sessionResource);
+					if (didWriteRequestTodos(ok, todosBeforeCall, todosAfterCall)) {
+						needsInitialTodoList = false;
+					} else {
+						if (!todosAfterCall.length) {
+							initializeRequestTodos(this._chatTodoListService, request.sessionResource, request.message);
+						}
+						needsInitialTodoList = todoListForceNudges < MAX_TODO_LIST_FORCE_NUDGES;
+					}
 				}
 				this._trackToolOutcome(call.name, ok, toolStats);
 				taskRecorder.recordToolCall(call.name, call.parameters, ok);
@@ -3992,26 +4006,6 @@ function hasTodoPlanningShape(message: string): boolean {
 		|| /(?:^|\n)\s*[-*]\s+\S/m.test(message);
 }
 
-function shouldUseTodoList(
-	message: string,
-	opts: { codeChangeIntent: boolean; investigateIntent: boolean; isGameMode: boolean; isChipMode: boolean; isPptMode?: boolean; webSearchIntent: boolean },
-): boolean {
-	const trimmed = message.trim();
-	if (!trimmed || /^(hi|hello|thanks|thank you|你好|谢谢)\b/i.test(trimmed)) {
-		return false;
-	}
-	if (opts.webSearchIntent && !opts.codeChangeIntent && !opts.investigateIntent && !opts.isGameMode && !opts.isChipMode && !opts.isPptMode) {
-		return false;
-	}
-	if (opts.codeChangeIntent || opts.investigateIntent || opts.isGameMode || opts.isChipMode || opts.isPptMode) {
-		return true;
-	}
-	if (hasTodoPlanningShape(message)) {
-		return true;
-	}
-	return trimmed.length >= 20;
-}
-
 function isManageTodoListTool(toolName: string): boolean {
 	const fallback = remapCopilotNameToContinueFallback(toolName) ?? toolName;
 	const normalized = (fallback || '').toLowerCase().trim().replace(/[-_]/g, '');
@@ -4666,7 +4660,7 @@ function buildChatMessages(
 		);
 	} else if (webSearch) {
 		userParts.push(
-			'<web-search-override>\nExternal knowledge question. Call search_web ONCE first. You may call fetch_webpage at most once for one official page. Then STOP using tools and write your answer in the user\'s language. Do NOT repeat search_web with rephrased queries — Bing snippets are short; synthesize the best answer from what you have.\n</web-search-override>',
+			'<web-search-override>\nExternal knowledge question. After any required todo initialization, call search_web ONCE. You may call fetch_webpage at most once for one official page. Then STOP using tools and write your answer in the user\'s language. Do NOT repeat search_web with rephrased queries — Bing snippets are short; synthesize the best answer from what you have.\n</web-search-override>',
 		);
 	} else if (!isOnline && rawWebSearch) {
 		userParts.push(
@@ -4680,12 +4674,12 @@ function buildChatMessages(
 	}
 	if (todoListIntent) {
 		userParts.push(
-			'<todo-override>\nMulti-step task. Your FIRST tool call MUST be manage_todo_list: write 3–7 concise items in the user\'s language, mark the first item in-progress, then execute. Update the list after each step (one in-progress at a time). Do NOT skip the todo UI.\n</todo-override>',
+			`<todo-override>\n${REQUEST_TODO_INSTRUCTIONS}\n</todo-override>`,
 		);
 	}
 	if (docEditTask) {
 		userParts.push(
-			'<doc-edit-override>\nREADME/markdown only. Read the named .md file(s), patch with replace_string_in_file, then TASK_COMPLETE. No manage_todo_list, get_errors, compile, or broad repo grep.\n</doc-edit-override>',
+			'<doc-edit-override>\nREADME/markdown only. Read the named .md file(s), patch with replace_string_in_file, then TASK_COMPLETE. Follow current-request todo instructions when present. No get_errors, compile, or broad repo grep.\n</doc-edit-override>',
 		);
 	}
 	if (ocrExtract) {
