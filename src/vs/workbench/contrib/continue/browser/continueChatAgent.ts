@@ -2503,7 +2503,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		];
 
 		try {
-			let { assistantText, thinkingText } = await this._streamOnce(
+			let { assistantText } = await this._streamOnce(
 				modelId,
 				working,
 				progress,
@@ -2533,51 +2533,13 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					true,
 				);
 				assistantText = stripNudgeEchoes(stripUnrecoverableToolMarkup(retryResult.assistantText));
-				if (!thinkingText) {
-					thinkingText = retryResult.thinkingText;
-				}
-			}
-
-			if (!assistantText.trim() && thinkingText?.trim() && !token.isCancellationRequested) {
-				const fallbackThought = thinkingText.trim();
-				this._logService.info('[Continue] Using thinkingText as final answer fallback');
-				progress([{
-					kind: 'markdownContent',
-					content: new MarkdownString(fallbackThought),
-				}]);
-				return;
 			}
 
 			if (!assistantText.trim() && !token.isCancellationRequested) {
-				this._logService.warn('[Continue] Final answer still empty — emitting tool-result fallback');
-				const summary = collectRecentToolResultText(working);
-				const safeSummary = stripUnrecoverableToolMarkup(summary).slice(0, 2500);
-				const isWebResearch = working.some(m => Array.isArray(m.content) && m.content.some(c => c.type === 'tool_result' && Array.isArray((c as any).value) && (c as any).value.some((v: any) => typeof v?.value === 'string' && (v.value.includes('search_web') || v.value.includes('fetch_webpage')))));
+				this._logService.warn('[Continue] Final answer still empty after retry');
 				progress([{
-					kind: 'markdownContent',
-					content: new MarkdownString(
-						safeSummary
-							? (isWebResearch
-								? localize(
-									'continue.webResearchFallback',
-									"检索已完成，但模型未生成最终回复。根据工具结果整理如下：\n\n{0}",
-									safeSummary,
-								)
-								: localize(
-									'continue.toolExecutionFallback',
-									"工具调用已完成，但模型未生成最终回复。根据工具结果整理如下：\n\n{0}",
-									safeSummary,
-								))
-							: (isWebResearch
-								? localize(
-									'continue.webResearchEmpty',
-									"检索已完成，但模型未生成最终回复。请重试一次，或缩小问题范围后再问。",
-								)
-								: localize(
-									'continue.finalAnswerEmpty',
-									"模型未生成最终回复。请重试一次，或更换提示词后再问。",
-								)),
-					),
+					kind: 'warning',
+					content: new MarkdownString(localize('continue.finalAnswerEmpty', "工具已执行，但模型未生成最终回复。请检查模型端点日志，或切换支持工具调用的模型后重试。工具结果可在上方工具调用中查看；较长的搜索结果可能已截断。")),
 				}]);
 			}
 		} catch (err) {
@@ -2599,29 +2561,10 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				return;
 			}
 
-			const summary = collectRecentToolResultText(messages);
 			progress([{
 				kind: 'warning',
-				content: new MarkdownString(
-					localize(
-						'continue.finalAnswerFailed',
-						"生成最终回复失败：{0}",
-						msg,
-					),
-				),
+				content: new MarkdownString(localize('continue.finalAnswerFailed', "生成最终回复失败：{0}。工具结果可在上方工具调用中查看。", msg)),
 			}]);
-			if (summary) {
-				progress([{
-					kind: 'markdownContent',
-					content: new MarkdownString(
-						localize(
-							'continue.toolExecutionFallback',
-							"工具调用已完成，但模型未生成最终回复。根据工具结果整理如下：\n\n{0}",
-							summary,
-						),
-					),
-				}]);
-			}
 		}
 	}
 
@@ -2771,12 +2714,6 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		}
 		await response.result;
 
-		// Some models default to thinking; if content stayed empty, surface thinking as the answer.
-		if (!assistantText.trim() && thinkingText.trim() && toolUses.length === 0) {
-			assistantText = thinkingText.trim();
-			progress([{ kind: 'markdownContent', content: new MarkdownString(assistantText) }]);
-			streamedUpTo = assistantText.length;
-		}
 
 		// Drop dangling incomplete tags if the stream ended mid-markup (`...:<tool_ca`).
 		const hadIncompleteToolMarkup = incompleteToolMarkupHoldStart(assistantText) >= 0;
@@ -3866,35 +3803,6 @@ function toFileUri(pathOrUri: string): URI {
 		return URI.parse(pathOrUri);
 	}
 	return URI.file(pathOrUri);
-}
-
-/** Pull recent tool_result text for fallback when the model emits no final answer. */
-function collectRecentToolResultText(messages: readonly IChatMessage[], maxChars = 6000): string {
-	const chunks: string[] = [];
-	let total = 0;
-	for (let i = messages.length - 1; i >= 0 && total < maxChars; i--) {
-		for (const part of messages[i].content) {
-			if (part.type !== 'tool_result') {
-				continue;
-			}
-			const text = part.value
-				.filter((v): v is { type: 'text'; value: string } => v.type === 'text')
-				.map(v => v.value)
-				.join('\n')
-				.trim();
-			if (!text) {
-				continue;
-			}
-			const slice = text.length > 2000 ? `${text.slice(0, 2000)}…` : text;
-			chunks.unshift(slice);
-			total += slice.length;
-			if (total >= maxChars) {
-				break;
-			}
-		}
-	}
-	const joined = chunks.join('\n\n---\n\n');
-	return joined.length > maxChars ? `${joined.slice(0, maxChars)}…` : joined;
 }
 
 function asksToContinueNextTurn(text: string): boolean {

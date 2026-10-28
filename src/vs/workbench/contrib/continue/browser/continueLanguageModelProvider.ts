@@ -166,11 +166,12 @@ export class ContinueLanguageModelProvider extends Disposable implements ILangua
 			const decoder = new TextDecoder();
 			const toolAcc = new Map<number, { id: string; name: string; arguments: string }>();
 			const contentParser = createStreamContentParser();
+			const streamState = { hasContentDelta: false, hasReasoningDelta: false };
 			await new Promise<void>((resolve, reject) => {
 				listenStream(requestContext.stream, {
 					onData: (chunk: VSBuffer) => {
 						buffer += decoder.decode(chunk.buffer, { stream: true });
-						const parsed = parseOpenAIStreamBuffer(buffer, toolAcc, contentParser);
+						const parsed = parseOpenAIStreamBuffer(buffer, toolAcc, contentParser, streamState);
 						buffer = parsed.rest;
 						for (const part of parsed.parts) {
 							emitter.emitOne(part);
@@ -178,7 +179,7 @@ export class ContinueLanguageModelProvider extends Disposable implements ILangua
 					},
 					onError: reject,
 					onEnd: () => {
-						const parsed = parseOpenAIStreamBuffer(buffer + decoder.decode() + '\n', toolAcc, contentParser);
+						const parsed = parseOpenAIStreamBuffer(buffer + decoder.decode() + '\n', toolAcc, contentParser, streamState);
 						for (const part of parsed.parts) {
 							emitter.emitOne(part);
 						}
@@ -408,9 +409,8 @@ function buildOpenAiRequestBody(
 			// DeepSeek interleaves parallel tool-call deltas; disable parallel calls.
 			bodyObj['parallel_tool_calls'] = false;
 		}
-	} else if (options['tool_choice'] === 'none') {
-		bodyObj['tool_choice'] = 'none';
 	}
+	// With no tool definitions, omit tool_choice: some compatible APIs reject it.
 	return bodyObj;
 }
 
@@ -592,10 +592,11 @@ function parseStreamedToolArguments(raw: string): Record<string, unknown> {
 	return recovered;
 }
 
-function parseOpenAIStreamBuffer(
+export function parseOpenAIStreamBuffer(
 	buffer: string,
 	toolAcc: Map<number, { id: string; name: string; arguments: string }>,
 	contentParser: StreamContentParser,
+	streamState: { hasContentDelta: boolean; hasReasoningDelta: boolean },
 ): { rest: string; parts: IChatResponsePart[] } {
 	const parts: IChatResponsePart[] = [];
 	let rest = buffer;
@@ -641,17 +642,30 @@ function parseOpenAIStreamBuffer(
 				}
 			}
 
+			// Some compatible providers send a complete message instead of content deltas.
+			// Do not repeat the final message when the same answer was already streamed.
+			if (!streamState.hasContentDelta && !delta?.content && typeof message?.content === 'string' && message.content) {
+				parts.push(...contentParser.push(message.content));
+				streamState.hasContentDelta = true;
+			}
+			const messageReasoning = message?.reasoning_content ?? message?.reasoning ?? message?.thinking;
+			if (!streamState.hasReasoningDelta && !(delta?.reasoning_content ?? delta?.reasoning ?? delta?.thinking) && typeof messageReasoning === 'string' && messageReasoning) {
+				parts.push({ type: 'thinking', value: messageReasoning } satisfies IChatResponseThinkingPart);
+				streamState.hasReasoningDelta = true;
+			}
 			if (!delta) {
 				continue;
 			}
 
 			const reasoning = delta.reasoning_content ?? delta.reasoning ?? delta.thinking;
 			if (typeof reasoning === 'string' && reasoning.length > 0) {
+				streamState.hasReasoningDelta = true;
 				parts.push({ type: 'thinking', value: reasoning } satisfies IChatResponseThinkingPart);
 			}
 
 			const content = delta.content;
 			if (typeof content === 'string' && content.length > 0) {
+				streamState.hasContentDelta = true;
 				parts.push(...contentParser.push(content));
 			}
 
@@ -688,7 +702,7 @@ type StreamContentParser = {
 };
 
 /** Splits streamed content into answer text vs think-tag blocks. */
-function createStreamContentParser(): StreamContentParser {
+export function createStreamContentParser(): StreamContentParser {
 	let mode: 'answer' | 'thinking' = 'answer';
 	let carry = '';
 	// Built in pieces so source never contains a literal think-tag that tooling may strip.
