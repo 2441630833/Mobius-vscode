@@ -23,6 +23,7 @@ import { CommandsRegistry } from '../../../../../platform/commands/common/comman
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { ContextKeyExpr } from '../../../../../platform/contextkey/common/contextkey.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { ITextFileService } from '../../../../services/textfile/common/textfiles.js';
 import { EditorActivation } from '../../../../../platform/editor/common/editor.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
@@ -352,7 +353,6 @@ function filterToUserAttachedContext(attachedContext: readonly IChatRequestVaria
 }
 
 async function restoreSnapshotWithConfirmationByRequestId(accessor: ServicesAccessor, sessionResource: URI, requestId: string): Promise<boolean> {
-	const configurationService = accessor.get(IConfigurationService);
 	const dialogService = accessor.get(IDialogService);
 	const chatWidgetService = accessor.get(IChatWidgetService);
 	const widget = chatWidgetService.getWidgetBySessionResource(sessionResource);
@@ -378,7 +378,16 @@ async function restoreSnapshotWithConfirmationByRequestId(accessor: ServicesAcce
 	const requestsToRemove = chatRequests.slice(itemIndex);
 	const requestIdsToRemove = new Set(requestsToRemove.map(request => request.id));
 	const entriesModifiedInRequestsToRemove = session.entries.get().filter((entry) => requestIdsToRemove.has(entry.lastModifyingRequestId)) ?? [];
-	const shouldPrompt = entriesModifiedInRequestsToRemove.length > 0 && configurationService.getValue('chat.editing.confirmEditRequestRemoval') === true;
+	// Always show the affected tracked files and limitations before a restore.
+	// A user's later edits can overlap the recorded changes even when the
+	// optional legacy confirmation setting is disabled.
+	const textFileService = accessor.get(ITextFileService);
+	const previewFiles = entriesModifiedInRequestsToRemove.slice(0, 20).map(entry => textFileService.isDirty(entry.modifiedURI)
+		? localize('chat.restore.unsavedFile', '{0} (unsaved changes)', entry.modifiedURI.fsPath)
+		: entry.modifiedURI.fsPath);
+	const previewDetail = previewFiles.length
+		? localize('chat.restore.previewFiles', 'Recorded files ({0} total; showing up to 20):\n{1}\n\nLater manual edits may be overwritten. Terminal and external effects may not be protected.', entriesModifiedInRequestsToRemove.length, previewFiles.join('\n'))
+		: localize('chat.restore.previewNoFiles', 'No tracked files were found. Terminal and external effects may not be protected.');
 
 	let message: string;
 	if (editsToUndo === 1) {
@@ -395,32 +404,32 @@ async function restoreSnapshotWithConfirmationByRequestId(accessor: ServicesAcce
 		}
 	}
 
-	const confirmation = shouldPrompt
-		? await dialogService.confirm({
+	const confirmation = await dialogService.confirm({
 			title: editsToUndo === 1
 				? localize('chat.removeLast.confirmation.title', "Do you want to undo your last edit?")
 				: localize('chat.remove.confirmation.title', "Do you want to undo {0} edits?", editsToUndo),
 			message: message,
+			detail: previewDetail,
 			primaryButton: localize('chat.remove.confirmation.primaryButton', "Yes"),
-			checkbox: { label: localize('chat.remove.confirmation.checkbox', "Don't ask again"), checked: false },
 			type: 'info'
-		})
-		: { confirmed: true };
+		});
 
 	if (!confirmation.confirmed) {
 		widget?.viewModel?.model.setCheckpoint(undefined);
 		return false;
 	}
 
-	if (confirmation.checkboxChecked) {
-		await configurationService.updateValue('chat.editing.confirmEditRequestRemoval', false);
-	}
-
 	await chatService.cancelCurrentRequestForSession(sessionResource, 'restoreCheckpoint');
 
 	// Restore the snapshot to what it was before the request(s) that we deleted
 	const snapshotRequestId = chatRequests[itemIndex].id;
-	await session.restoreSnapshot(snapshotRequestId, undefined);
+	try {
+		await session.restoreSnapshot(snapshotRequestId, undefined);
+	} catch (error) {
+		widget?.viewModel?.model.setCheckpoint(undefined);
+		await dialogService.error(localize('chat.restore.failed', 'Checkpoint restoration failed.'), error instanceof Error ? error.message : String(error));
+		return false;
+	}
 	return true;
 }
 

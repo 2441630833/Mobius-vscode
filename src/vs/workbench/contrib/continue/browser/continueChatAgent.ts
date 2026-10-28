@@ -40,7 +40,7 @@ import {
 	IChatAgentResult,
 	IChatAgentService,
 } from '../../chat/common/participants/chatAgents.js';
-import { IChatProgress } from '../../chat/common/chatService/chatService.js';
+import { IChatProgress, IChatService } from '../../chat/common/chatService/chatService.js';
 import { ChatAgentLocation, ChatModeKind } from '../../chat/common/constants.js';
 import { IPromptsService } from '../../chat/common/promptSyntax/service/promptsService.js';
 import { SaveReason } from '../../../common/editor.js';
@@ -625,6 +625,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 	private readonly _selfEvolving: ContinueSelfEvolving;
 	private readonly _memoryStore: AgentMemoryStore;
 	private readonly _rsi: ContinueRsiController;
+	private _checkpointOperationId = 0;
 
 	constructor(
 		private readonly _languageModelsService: ILanguageModelsService,
@@ -642,6 +643,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		private readonly _environmentService: IWorkbenchEnvironmentService,
 		private readonly _storageService: IStorageService,
 		private readonly _dialogService: IDialogService,
+		private readonly _chatService: IChatService,
 	) {
 				this._skillEmbeddingIndex = new ContinueSkillEmbeddingIndex(
 			this._fileService,
@@ -1293,7 +1295,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					: QA_TOOL_TURNS;
 		let turnBudget = maxTurns;
 		let editRescueGranted = false;
-
+		let terminalCheckpointWarningShown = false;
 		let finalTodoReconciliationAttempts = 0;
 		let forceFinalTodoReconciliation = false;
 		const reconcileFinalTodos = (assistantText: string): boolean => {
@@ -1897,7 +1899,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				if (call.name === 'search_web') {
 					needsInitialWebSearch = false;
 				}
-				const { ok, text, editUri, editKind } = await this._executeTool(
+				const { ok, text, editUri, editKind, checkpointWarning, checkpointProtected } = await this._executeTool(
 					call,
 					cwd,
 					request.sessionResource,
@@ -1905,6 +1907,20 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					token,
 					godotAutoPreview,
 				);
+				if (checkpointWarning) {
+					const content = new MarkdownString();
+					content.appendText(checkpointWarning);
+					progress([{ kind: 'warning', content }]);
+				}
+				if (ok && editUri && !checkpointWarning && !checkpointProtected) {
+					const content = new MarkdownString();
+					content.appendText(localize('continue.checkpoint.unverifiedEdit', 'Checkpoint protection could not be verified for this edit: {0}', editUri.fsPath));
+					progress([{ kind: 'warning', content }]);
+				}
+				if (!terminalCheckpointWarningShown && /^(?:run_in_terminal|run_terminal_command|terminal|terminal_command|bash|sh|cmd|execute_command|run_command|runCommand|runInTerminal)$/i.test(call.name)) {
+					terminalCheckpointWarningShown = true;
+					progress([{ kind: 'warning', content: new MarkdownString(localize('continue.checkpoint.terminalUnprotected', 'Terminal changes and external effects are not automatically protected by chat checkpoints.')) }]);
+				}
 				if (isManageTodoListTool(call.name) && needsInitialTodoList) {
 					const todosAfterCall = this._chatTodoListService.getTodos(request.sessionResource);
 					if (didWriteRequestTodos(ok, todosBeforeCall, todosAfterCall)) {
@@ -2898,7 +2914,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		chatRequestId: string,
 		token: CancellationToken,
 		godotAutoPreview?: GodotAutoPreviewState,
-	): Promise<{ ok: boolean; text: string; editUri?: URI; editKind?: 'create' | 'edit' }> {
+	): Promise<{ ok: boolean; text: string; editUri?: URI; editKind?: 'create' | 'edit'; checkpointWarning?: string; checkpointProtected?: boolean }> {
 		try {
 			const params = normalizeToolArguments(call.parameters);
 
@@ -3058,10 +3074,10 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					const uri = resolveWorkspacePath(cwd, writeArgs.path.trim());
 					if (await this._fileService.exists(uri)) {
 						// Overwrite via write path — create_file "already exists" was stranding the agent.
-						return this._writeFile(writeArgs.path, writeArgs.contents, cwd);
+						return this._writeFileWithCheckpoint(writeArgs.path, writeArgs.contents, cwd, sessionResource, chatRequestId, call.toolCallId);
 					}
 				}
-				return this._writeFile(writeArgs.path, writeArgs.contents, cwd);
+				return this._writeFileWithCheckpoint(writeArgs.path, writeArgs.contents, cwd, sessionResource, chatRequestId, call.toolCallId);
 			}
 
 			// Continue-only patch edit names (fallback when Copilot replace/insert unavailable).
@@ -3093,7 +3109,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 							? continueParams.path
 							: '';
 					if (pathParam) {
-						patchResult = await this._writeFile(pathParam, continueParams.fallback_contents as string, cwd);
+						return this._writeFileWithCheckpoint(pathParam, continueParams.fallback_contents as string, cwd, sessionResource, chatRequestId, call.toolCallId);
 					}
 				}
 
@@ -3201,6 +3217,52 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				text: err instanceof Error ? err.message : String(err),
 			};
 		}
+	}
+
+	private async _writeFileWithCheckpoint(
+		pathParam: string,
+		contents: string,
+		cwd: URI | undefined,
+		sessionResource: URI,
+		requestId: string,
+		toolCallId: string,
+	): Promise<{ ok: boolean; text: string; editUri?: URI; editKind?: 'create' | 'edit'; checkpointWarning?: string; checkpointProtected?: boolean }> {
+		const uri = resolveWorkspacePath(cwd, pathParam.trim() || '.');
+		const model = this._chatService.getSession(sessionResource);
+		const response = model?.getRequests().find(request => request.id === requestId)?.response;
+		const editingSession = model?.editingSession;
+		const operationId = --this._checkpointOperationId;
+		let started = false;
+		let warning: string | undefined;
+		if (editingSession && response) {
+			try {
+				editingSession.createSnapshot?.(requestId, undefined);
+				await editingSession.startExternalEdits(response, operationId, [uri], toolCallId, undefined, true);
+				started = true;
+			} catch (error) {
+				this._logService.warn('[Continue] Could not record checkpoint before file write', error);
+				warning = localize('continue.checkpoint.unprotectedWrite', 'Checkpoint protection is unavailable for this file: {0}', uri.fsPath);
+			}
+		} else {
+			warning = localize('continue.checkpoint.unprotectedWrite', 'Checkpoint protection is unavailable for this file: {0}', uri.fsPath);
+		}
+		let result: { ok: boolean; text: string; editUri?: URI; editKind?: 'create' | 'edit' } | undefined;
+		try {
+			result = await this._writeFile(pathParam, contents, cwd);
+		} finally {
+			if (started && editingSession && response) {
+				try {
+					const parts = await editingSession.stopExternalEdits(response, operationId, undefined, true);
+					if (result?.ok && !parts.some(part => part.kind === 'textEdit' || part.kind === 'notebookEdit')) {
+						warning = localize('continue.checkpoint.unprotectedWrite', 'Checkpoint protection is unavailable for this file: {0}', uri.fsPath);
+					}
+				} catch (error) {
+					this._logService.warn('[Continue] Could not finish checkpoint after file write', error);
+					warning = localize('continue.checkpoint.unprotectedWrite', 'Checkpoint protection is unavailable for this file: {0}', uri.fsPath);
+				}
+			}
+		}
+		return { ...result!, checkpointWarning: warning, checkpointProtected: started && !warning };
 	}
 
 	private async _writeFile(
@@ -4781,6 +4843,7 @@ class ContinueChatAgentContribution extends Disposable implements IWorkbenchCont
 			@IWorkbenchEnvironmentService environmentService: IWorkbenchEnvironmentService,
 			@IStorageService storageService: IStorageService,
 			@IDialogService dialogService: IDialogService,
+			@IChatService chatService: IChatService,
 		) {
 			super();
 
@@ -4800,6 +4863,7 @@ class ContinueChatAgentContribution extends Disposable implements IWorkbenchCont
 				environmentService,
 				storageService,
 				dialogService,
+				chatService,
 			);
 		const registrations: Array<{
 			id: string;

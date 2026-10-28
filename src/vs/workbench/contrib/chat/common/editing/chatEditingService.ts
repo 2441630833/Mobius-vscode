@@ -116,6 +116,8 @@ export interface IChatEditingSession extends IDisposable {
 	readEntry(uri: URI, reader: IReader): IModifiedFileEntry | undefined;
 
 	restoreSnapshot(requestId: string, stopId: string | undefined): Promise<void>;
+	/** Establish a request boundary if this session supports local checkpoints. */
+	createSnapshot?(requestId: string, undoStop: string | undefined): void;
 
 	/**
 	 * Marks all edits to the given resources as agent edits until
@@ -123,8 +125,8 @@ export interface IChatEditingSession extends IDisposable {
 	 * agents that make changes on-disk rather than streaming edits through the
 	 * chat session.
 	 */
-	startExternalEdits(responseModel: IChatResponseModel, operationId: number, resources: URI[], undoStopId: string, contentFor?: URI[]): Promise<IChatProgress[]>;
-	stopExternalEdits(responseModel: IChatResponseModel, operationId: number, contentFor?: URI[]): Promise<IChatProgress[]>;
+	startExternalEdits(responseModel: IChatResponseModel, operationId: number, resources: URI[], undoStopId: string, contentFor?: URI[], preserveDirty?: boolean): Promise<IChatProgress[]>;
+	stopExternalEdits(responseModel: IChatResponseModel, operationId: number, contentFor?: URI[], preserveDirty?: boolean): Promise<IChatProgress[]>;
 
 	/**
 	 * Gets the snapshot URI of a file at the request and _after_ changes made in the undo stop.

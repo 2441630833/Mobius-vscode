@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { DisposableStore } from '../../../../../../base/common/lifecycle.js';
 import { ResourceMap } from '../../../../../../base/common/map.js';
-import { transaction } from '../../../../../../base/common/observable.js';
+import { observableValue, transaction } from '../../../../../../base/common/observable.js';
 import { URI } from '../../../../../../base/common/uri.js';
 import { upcastPartial } from '../../../../../../base/test/common/mock.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
@@ -16,8 +16,9 @@ import { ServiceCollection } from '../../../../../../platform/instantiation/comm
 import { workbenchInstantiationService } from '../../../../../test/browser/workbenchTestServices.js';
 import { INotebookService } from '../../../../notebook/common/notebookService.js';
 import { ChatEditingCheckpointTimelineImpl, IChatEditingTimelineFsDelegate } from '../../../browser/chatEditing/chatEditingCheckpointTimelineImpl.js';
+import { ChatEditingSession } from '../../../browser/chatEditing/chatEditingSession.js';
 import { FileOperation, FileOperationType } from '../../../browser/chatEditing/chatEditingOperations.js';
-import { IModifiedEntryTelemetryInfo } from '../../../common/editing/chatEditingService.js';
+import { ChatEditingSessionState, IModifiedEntryTelemetryInfo } from '../../../common/editing/chatEditingService.js';
 
 suite('ChatEditingCheckpointTimeline', function () {
 
@@ -585,6 +586,66 @@ suite('ChatEditingCheckpointTimeline', function () {
 		await timeline.navigateToCheckpoint(initialCheckpoint.checkpointId);
 		assert.strictEqual(fileContents.has(uri1), false);
 		assert.strictEqual(fileContents.has(uri2), false);
+	});
+
+	test('restoring a request keeps earlier request changes when no intermediate stop exists', async function () {
+		const first = URI.parse('file:///first.txt');
+		const second = URI.parse('file:///second.txt');
+		timeline.createCheckpoint('req1', undefined, 'Start req1');
+		timeline.recordFileOperation(createFileCreateOperation(first, 'req1', timeline.incrementEpoch(), 'first'));
+		fileContents.set(first, 'first');
+		timeline.createCheckpoint('req2', undefined, 'Start req2');
+		timeline.recordFileOperation(createFileCreateOperation(second, 'req2', timeline.incrementEpoch(), 'second'));
+		fileContents.set(second, 'second');
+		const session = { _timeline: timeline } as unknown as ChatEditingSession;
+		await ChatEditingSession.prototype.restoreSnapshot.call(session, 'req2', undefined);
+		assert.strictEqual(fileContents.get(first), 'first');
+		assert.strictEqual(fileContents.has(second), false);
+	});
+
+	test('restoring a request with no checkpoint reports failure', async function () {
+		const session = { _timeline: timeline } as unknown as ChatEditingSession;
+		await assert.rejects(() => ChatEditingSession.prototype.restoreSnapshot.call(session, 'missing', undefined), /no checkpoint was recorded/i);
+	});
+
+	test('external write snapshots dirty working-copy content without saving or reverting it', async function () {
+		let contents = 'unsaved user content';
+		let saves = 0;
+		let reverts = 0;
+		let before = '';
+		let after = '';
+		const state = observableValue('test', ChatEditingSessionState.Idle);
+		const entry = {
+			telemetryInfo: DEFAULT_TELEMETRY_INFO,
+			save: async () => { saves++; },
+			revertToDisk: async () => { reverts++; },
+			startExternalEdit() { },
+			stopExternalEdit() { },
+			acceptStreamingEditsEnd: async () => { },
+			computeEditsFromSnapshots: async (a: string, b: string) => { before = a; after = b; return []; },
+		};
+		const session = {
+			state, _state: state, isDisposed: false,
+			chatSessionResource: URI.parse('chat://test-session'),
+			_getTelemetryInfoForModel: () => DEFAULT_TELEMETRY_INFO,
+			_getOrCreateModifiedFileEntry: async () => entry,
+			_getEntry: () => entry,
+			_acceptStreamingEditsStart: async () => { },
+			_getCurrentTextOrNotebookSnapshot: () => contents,
+			_recordEditOperations: () => { },
+			createSnapshot: () => { },
+			_externalEditOperations: new Map(),
+			_notebookService: { hasSupportedNotebooks: () => false },
+			_streamingEditLocks: { queue: (_key: string, task: () => Promise<void>) => { void task(); }, keys: () => [] },
+		} as unknown as ChatEditingSession;
+		const response = { requestId: 'req1' } as any;
+		await ChatEditingSession.prototype.startExternalEdits.call(session, response, 1, [URI.file('/dirty.txt')], 'stop', undefined, true);
+		contents = 'agent content';
+		await ChatEditingSession.prototype.stopExternalEdits.call(session, response, 1, undefined, true);
+		assert.strictEqual(before, 'unsaved user content');
+		assert.strictEqual(after, 'agent content');
+		assert.strictEqual(saves, 0);
+		assert.strictEqual(reverts, 0);
 	});
 
 	test('getContentURIAtStop returns snapshot URI', function () {

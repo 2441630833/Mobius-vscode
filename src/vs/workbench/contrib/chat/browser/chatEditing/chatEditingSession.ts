@@ -426,23 +426,11 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 	public async restoreSnapshot(requestId: string, stopId: string | undefined): Promise<void> {
 		const checkpointId = this._timeline.getCheckpointIdForRequest(requestId, stopId);
 		if (!checkpointId) {
-			return;
+			throw new Error(localize('chat.checkpoint.missing', 'Cannot restore this request: no checkpoint was recorded.'));
 		}
 
-		// "Restore Checkpoint" should undo the request's edits by navigating
-		// to the state BEFORE the request, not TO the request's own checkpoint
-		// (which represents the state AFTER edits). This matches
-		// AgentHostSnapshotController which targets index - 1.
-		if (stopId === undefined) {
-			const timelineState = this._timeline.getStateForPersistence();
-			const checkpoints = timelineState.checkpoints;
-			const targetIdx = checkpoints.findIndex(c => c.checkpointId === checkpointId);
-			if (targetIdx > 0) {
-				await this._timeline.navigateToCheckpoint(checkpoints[targetIdx - 1].checkpointId);
-			}
-			return;
-		}
-
+		// Request checkpoints are created when the request is added, before its
+		// edits. Going to the preceding checkpoint can also undo an earlier request.
 		await this._timeline.navigateToCheckpoint(checkpointId);
 	}
 
@@ -694,7 +682,7 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 		}
 	}
 
-	async startExternalEdits(responseModel: IChatResponseModel, operationId: number, resources: URI[], undoStopId: string, contentFor?: URI[]): Promise<IChatProgress[]> {
+	async startExternalEdits(responseModel: IChatResponseModel, operationId: number, resources: URI[], undoStopId: string, contentFor?: URI[], preserveDirty = false): Promise<IChatProgress[]> {
 		const snapshots = new ResourceMap<string | undefined>();
 		const acquiredLockPromises: DeferredPromise<void>[] = [];
 		const releaseLockPromises: DeferredPromise<void>[] = [];
@@ -746,7 +734,9 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 					snapshots.set(resource, initialContent);
 				} else {
 					// Save to disk to ensure disk state is current before external edits
-					await entry?.save();
+					if (!preserveDirty) {
+						await entry?.save();
+					}
 					// Take snapshot of current state
 					snapshots.set(resource, entry && this._getCurrentTextOrNotebookSnapshot(entry));
 				}
@@ -772,7 +762,7 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 		return progress;
 	}
 
-	async stopExternalEdits(responseModel: IChatResponseModel, operationId: number, contentFor?: URI[]): Promise<IChatProgress[]> {
+	async stopExternalEdits(responseModel: IChatResponseModel, operationId: number, contentFor?: URI[], preserveDirty = false): Promise<IChatProgress[]> {
 		const operation = this._externalEditOperations.get(operationId);
 		if (!operation) {
 			this._logService.warn(`stopExternalEdits called for unknown operation ${operationId}`);
@@ -826,7 +816,9 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 					}
 				} else {
 					// Reload from disk to ensure in-memory model is in sync with file system
-					await entry.revertToDisk();
+					if (!preserveDirty) {
+						await entry.revertToDisk();
+					}
 					afterSnapshot = this._getCurrentTextOrNotebookSnapshot(entry) ?? '';
 				}
 
