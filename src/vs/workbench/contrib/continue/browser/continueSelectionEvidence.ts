@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { URI } from '../../../../base/common/uri.js';
+import { localize } from '../../../../nls.js';
 import { normalizeToolArguments, resolveToolPath, toolPathArgument } from './continueToolPaths.js';
 
 export interface SelectionEvidence {
@@ -12,6 +13,33 @@ export interface SelectionEvidence {
 	readonly name: string;
 	readonly path?: string;
 	readonly tool: string;
+}
+
+/** Successful preflight is background work; only failures need a chat notice. */
+export function shouldShowEccPreflight(ok: boolean): boolean {
+	return !ok;
+}
+
+/** User-facing facts, not an assertion that a model followed the instructions. */
+export function formatSelectionEvidence(event: SelectionEvidence): string {
+	const subject = event.path ? `${event.name} (${event.path})` : event.name;
+	if (event.kind === 'skill') {
+		if (event.outcome === 'failure') {
+			return localize('continue.selection.skillFailed', 'Skill read failed: {0}', subject);
+		}
+		return event.tool === 'explicit-context' || event.tool === 'ppt-mode-context'
+			? localize('continue.selection.skillIncluded', 'Skill in context: {0}', subject)
+			: localize('continue.selection.skillRead', 'Skill read: {0}', subject);
+	}
+	if (event.kind === 'agent-profile') {
+		return event.outcome === 'success'
+			? localize('continue.selection.profileRead', 'Agent profile read: {0}', subject)
+			: localize('continue.selection.profileFailed', 'Agent profile read failed: {0}', subject);
+	}
+	const agent = event.name || localize('continue.selection.agentUnspecified', 'not specified');
+	return event.outcome === 'success'
+		? localize('continue.selection.agentCompleted', 'Agent tool completed: {0} ({1})', agent, event.tool)
+		: localize('continue.selection.agentFailed', 'Agent tool failed: {0} ({1})', agent, event.tool);
 }
 
 /** Classify only observed tool invocations; recommendations are deliberately not evidence. */

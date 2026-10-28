@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { SelectionEvidenceTracker, selectionEvidenceForTool } from '../../browser/continueSelectionEvidence.js';
+import { formatSelectionEvidence, SelectionEvidenceTracker, selectionEvidenceForTool, shouldShowEccPreflight } from '../../browser/continueSelectionEvidence.js';
 
 suite('Continue selection evidence', () => {
 	ensureNoDisposablesAreLeakedInTestSuite();
@@ -65,5 +65,20 @@ suite('Continue selection evidence', () => {
 		assert.ok(tracker.has('skill'));
 		assert.ok(!tracker.has('agent'));
 		assert.ok(new SelectionEvidenceTracker().add(failed));
+	});
+
+	test('keeps successful preflight quiet and displays failures', () => {
+		assert.strictEqual(shouldShowEccPreflight(true), false);
+		assert.strictEqual(shouldShowEccPreflight(false), true);
+	});
+
+	test('formats concise, distinct selection outcomes and preserves paths', () => {
+		const path = URI.joinPath(cwd, 'skills', 'demo', 'SKILL.md').fsPath;
+		assert.strictEqual(formatSelectionEvidence({ kind: 'skill', outcome: 'success', name: 'demo', path, tool: 'explicit-context' }), `Skill in context: demo (${path})`);
+		assert.strictEqual(formatSelectionEvidence({ kind: 'skill', outcome: 'success', name: 'demo', path, tool: 'read_file' }), `Skill read: demo (${path})`);
+		assert.strictEqual(formatSelectionEvidence({ kind: 'skill', outcome: 'failure', name: 'demo', path, tool: 'read_file' }), `Skill read failed: demo (${path})`);
+		assert.strictEqual(formatSelectionEvidence({ kind: 'agent-profile', outcome: 'success', name: 'reviewer', path, tool: 'read_file' }), `Agent profile read: reviewer (${path})`);
+		assert.strictEqual(formatSelectionEvidence({ kind: 'agent', outcome: 'success', name: 'reviewer', tool: 'runSubagent' }), 'Agent tool completed: reviewer (runSubagent)');
+		assert.strictEqual(formatSelectionEvidence({ kind: 'agent', outcome: 'failure', name: '', tool: 'runSubagent' }), 'Agent tool failed: not specified (runSubagent)');
 	});
 });

@@ -76,7 +76,7 @@ import { normalizeToolArguments, resolveToolPath, toolPathArgument } from './con
 import { executeGodotTool, bootstrapGameModeGodotLivePreview, createGodotAutoPreviewState, createGodotToolHost, ensureGodotPreviewLaunched, gameDevSystemHint, GodotAutoPreviewState, isGameDevProjectUri, isGodotTool, openGodotLiveEditorIfNeeded, trackGodotToolCall, userRequestedGodotOpen } from './continueGodotTools.js';
 import { bootstrapChipModeDetect, createFpgaToolHost, executeFpgaTool, isFpgaTool } from './continueFpgaTools.js';
 import { buildEccAdvisory, executeEccPreflight, executeEccTool, findEccRootUri, isEccTool, resolveEccRootUri } from './continueEccWorkflow.js';
-import { SelectionEvidenceTracker, selectionEvidenceForTool } from './continueSelectionEvidence.js';
+import { formatSelectionEvidence, SelectionEvidenceTracker, selectionEvidenceForTool, shouldShowEccPreflight } from './continueSelectionEvidence.js';
 import { chipDesignSystemHint, isChipModeExplicitlySelected } from './continueChipDesign.js';
 import { isPptModeExplicitlySelected, loadPptMasterSkill, pptModeSystemHint } from './continuePptMode.js';
 import { inferMobiusModeFromPrompt } from './continueMobiusModeRouting.js';
@@ -837,10 +837,12 @@ class ContinueChatAgent implements IChatAgentImplementation {
 					this._commandService,
 					this._fileService,
 				);
-				if (eccPreflightResult.summary) {
+				if (shouldShowEccPreflight(eccPreflightResult.ok) && eccPreflightResult.summary) {
+					const content = new MarkdownString();
+					content.appendText(eccPreflightResult.summary);
 					progress([{
-						kind: 'markdownContent',
-						content: new MarkdownString(`**ECC**: ${eccPreflightResult.summary}`),
+						kind: 'warning',
+						content,
 					}]);
 				}
 			}
@@ -889,18 +891,6 @@ class ContinueChatAgent implements IChatAgentImplementation {
 					...ccgsBootstrap.attachmentTexts,
 					...skillAttachments,
 				];
-			}
-			if (routedSkillNames.length) {
-				progress([{
-					kind: 'markdownContent',
-					content: new MarkdownString(
-						localize(
-							'continue.skillsAutoRouted',
-							"Suggested skills (optional): {0}",
-							routedSkillNames.map(n => `\`${n}\``).join(', '),
-						),
-					),
-				}]);
 			}
 		}
 
@@ -983,17 +973,6 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			if (maybeMedia.length) {
 				if (supportsVision) {
 					// Model natively declares vision support -> direct passthrough
-					progress([{
-						kind: 'markdownContent',
-						content: new MarkdownString(
-							localize(
-								'continue.visionPassthrough',
-								"Model `{0}` supports vision — sending {1} media attachment(s) directly (skipping local OCR).",
-								modelMeta?.family ?? modelId,
-								maybeMedia.length,
-							),
-						),
-					}]);
 					const collected = await collectAgentRequestMediaParts(
 						request,
 						this._fileService,
@@ -1169,9 +1148,11 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		}
 		if (isPptMode && pptMasterSkill) {
 			const path = URI.joinPath(pptMasterSkill.directory, 'SKILL.md').fsPath;
-			selectionEvidence.add({ kind: 'skill', outcome: 'success', name: 'ppt-master', path, tool: 'ppt-mode-context' });
+			const event = { kind: 'skill' as const, outcome: 'success' as const, name: 'ppt-master', path, tool: 'ppt-mode-context' };
+			selectionEvidence.add(event);
 			const content = new MarkdownString();
-			content.appendText(localize('continue.pptSkillInjected', 'PPT mode added skill content to request context: {0} ({1}). This does not prove the model followed it.', 'ppt-master', path));
+			content.appendText(formatSelectionEvidence(event));
+			content.appendMarkdown('\n\n');
 			progress([{ kind: 'markdownContent', content }]);
 		}
 		if (!webSearchIntent) {
@@ -1179,7 +1160,8 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				const event = { kind: 'skill' as const, outcome: 'success' as const, name: skill.name, path: skill.path, tool: 'explicit-context' };
 				if (selectionEvidence.add(event)) {
 					const content = new MarkdownString();
-					content.appendText(localize('continue.skillInjected', 'Skill content added to request context: {0} ({1}). This does not prove the model followed it.', skill.name, skill.path));
+					content.appendText(formatSelectionEvidence(event));
+					content.appendMarkdown('\n\n');
 					progress([{ kind: 'markdownContent', content }]);
 				}
 			}
@@ -1941,20 +1923,8 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				const evidence = selectionEvidenceForTool(remapCopilotNameToContinueFallback(call.name) ?? call.name, call.parameters, ok, cwd, eccRoot);
 				if (evidence && selectionEvidence.add(evidence)) {
 					const content = new MarkdownString();
-					if (evidence.kind === 'skill') {
-						content.appendText(evidence.outcome === 'success'
-							? localize('continue.skillRead', 'Skill read successfully: {0} ({1}). Reading does not prove the model followed it.', evidence.name, evidence.path ?? evidence.tool)
-							: localize('continue.skillReadFailed', 'Skill read failed: {0} ({1}).', evidence.name, evidence.path ?? evidence.tool));
-					} else if (evidence.kind === 'agent-profile') {
-						content.appendText(evidence.outcome === 'success'
-							? localize('continue.agentProfileRead', 'ECC agent profile read: {0} ({1}). This is not an agent invocation.', evidence.name, evidence.path ?? evidence.tool)
-							: localize('continue.agentProfileReadFailed', 'ECC agent profile read failed: {0} ({1}).', evidence.name, evidence.path ?? evidence.tool));
-					} else {
-						const requestedAgent = evidence.name || localize('continue.agentNotSpecified', 'not specified');
-						content.appendText(evidence.outcome === 'success'
-							? localize('continue.agentToolCompleted', 'Agent tool completed: {0}; requested agent: {1}.', evidence.tool, requestedAgent)
-							: localize('continue.agentToolFailed', 'Agent tool failed: {0}; requested agent: {1}.', evidence.tool, requestedAgent));
-					}
+					content.appendText(formatSelectionEvidence(evidence));
+					content.appendMarkdown('\n\n');
 					progress([{ kind: 'markdownContent', content }]);
 				}
 				if (editUri && editKind) {
@@ -2220,14 +2190,6 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 
 		if (needsFinalAnswer && !token.isCancellationRequested && !stoppedForRateLimit && !stoppedForContextOverflow) {
 			await this._forceFinalAnswer(modelId, messages, progress, token);
-		}
-		if (!token.isCancellationRequested) {
-			if (!selectionEvidence.has('skill')) {
-				progress([{ kind: 'markdownContent', content: new MarkdownString(localize('continue.noSkillEvidence', 'No tracked skill read or explicit skill injection was observed in this request. Suggestions alone do not indicate use.')) }]);
-			}
-			if (!selectionEvidence.has('agent')) {
-				progress([{ kind: 'markdownContent', content: new MarkdownString(localize('continue.noAgentEvidence', 'No tracked agent tool call was observed in this request. Recommended agents were not automatically invoked.')) }]);
-			}
 		}
 
 		if (routedSkillNames.length) {
