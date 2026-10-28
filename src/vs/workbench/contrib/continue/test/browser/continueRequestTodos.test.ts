@@ -7,7 +7,7 @@ import assert from 'assert';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import type { IChatTodo, IChatTodoListService } from '../../../chat/common/tools/chatTodoListService.js';
-import { didWriteRequestTodos, initializeRequestTodos } from '../../browser/continueRequestTodos.js';
+import { didWriteRequestTodos, initializeRequestTodos, shouldReconcileRequestTodos } from '../../browser/continueRequestTodos.js';
 
 suite('Continue request todos', () => {
 	ensureNoDisposablesAreLeakedInTestSuite();
@@ -55,4 +55,16 @@ suite('Continue request todos', () => {
 		service.setTodos(session, [...before]);
 		assert.strictEqual(didWriteRequestTodos(true, before, service.getTodos(session)), true);
 	});
+	test('only an accepted normal stop with unfinished items requests reconciliation', () => {
+		const pending: IChatTodo[] = [{ id: 1, title: 'Implement', status: 'in-progress' }];
+		const completed: IChatTodo[] = [{ id: 1, title: 'Implement', status: 'completed' }];
+		assert.strictEqual(shouldReconcileRequestTodos(pending, 0, 2, false, false), true);
+		assert.strictEqual(shouldReconcileRequestTodos(completed, 0, 2, false, false), false);
+		assert.strictEqual(shouldReconcileRequestTodos([], 0, 2, false, false), false);
+		assert.strictEqual(shouldReconcileRequestTodos(pending, 0, 2, true, false), false);
+		assert.strictEqual(shouldReconcileRequestTodos(pending, 0, 2, false, true), false);
+		assert.strictEqual(shouldReconcileRequestTodos(pending, 2, 2, false, false), false);
+		assert.strictEqual(pending[0].status, 'in-progress');
+	});
+
 });

@@ -22,3 +22,8 @@ export function didWriteRequestTodos(ok: boolean, before: IChatTodo[], after: IC
 }
 
 export const REQUEST_TODO_INSTRUCTIONS = 'The IDE initialized a fallback todo from the current request. Your FIRST tool call MUST be manage_todo_list to replace it with 1-7 actionable items in the user\'s language, proportional to the task (one item is enough for a simple request). Base every item on the FULL latest user request and its constraints, not ECC recommendations, recalled memories, or unrelated older tasks. Use history only to resolve explicit follow-ups such as "continue"; retain unfinished work only when the current request continues it. Mark one item in-progress and then execute the work. Update progress after each step. This also applies to short requests, searches and documentation edits.';
+
+/** Reconcile only at an accepted normal stop; never turn interruption into success. */
+export function shouldReconcileRequestTodos(todos: readonly IChatTodo[], attempts: number, maxAttempts: number, canceled: boolean, incomplete: boolean): boolean {
+	return !canceled && !incomplete && attempts < maxAttempts && todos.some(todo => todo.status !== 'completed');
+}

@@ -30,7 +30,7 @@ import {
 	IChatResponseToolUsePart,
 	ILanguageModelsService,
 } from '../../chat/common/languageModels.js';
-import { didWriteRequestTodos, initializeRequestTodos, REQUEST_TODO_INSTRUCTIONS } from './continueRequestTodos.js';
+import { didWriteRequestTodos, initializeRequestTodos, REQUEST_TODO_INSTRUCTIONS, shouldReconcileRequestTodos } from './continueRequestTodos.js';
 import { IChatTodoListService } from '../../chat/common/tools/chatTodoListService.js';
 import {
 	IChatAgentData,
@@ -615,7 +615,7 @@ CRITICAL RULES:
 13. COMPILE GATE (mandatory after code edits): Before TASK_COMPLETE, call get_errors and fix every Error. If the package has compile/typecheck/build, run it via run_in_terminal and fix failures. The task is complete ONLY when Errors are gone and compile succeeds — then give a short done summary and end with a line containing exactly: TASK_COMPLETE
 14. TERMINAL OUTPUT: Recent terminal scrollback is NOT prefetched into the prompt. When the user asks about a build failure, crash, or log, call run_in_terminal (re-run or inspect via shell) or get_errors — do not assume you already saw terminal output.
 15. TODO LIST (mandatory for every request): Refine the IDE-initialized todo with manage_todo_list as your FIRST tool. Use 1-7 items grounded in the full current user request, including its constraints. Mark ONE in-progress before each step and completed after finishing it. Do not carry over unrelated tasks from history or ECC recommendations.
-16. Before TASK_COMPLETE, ensure every manage_todo_list item is completed (the IDE may auto-complete leftovers when you emit TASK_COMPLETE).
+16. Before TASK_COMPLETE, update manage_todo_list based on the actual work. Leave unperformed or failed items unfinished and explain them.
 17. TOOL CALL FORMAT (CRITICAL): Tools are provided via the API tools/function-calling channel. ALWAYS use that channel (tool_calls / tool_use). NEVER invent plain-text or XML-looking tool markup in your message content — it is not executed. To edit or run a command, emit a real native function call.
 18. ENCODING / CHINESE TEXT (CRITICAL): All workspace files are UTF-8. When editing, copy non-ASCII characters (especially Chinese) EXACTLY from read_file output — do not re-type, translate-through-pinyin, or "normalize" them. If you see mojibake like 鏉茬藁 / 閿俐 / 锟斤拷 instead of real Chinese, STOP and re-read the file with read_file before editing; never write mojibake back to disk.`;
 
@@ -1294,17 +1294,39 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		let turnBudget = maxTurns;
 		let editRescueGranted = false;
 
+		let finalTodoReconciliationAttempts = 0;
+		let forceFinalTodoReconciliation = false;
+		const reconcileFinalTodos = (assistantText: string): boolean => {
+			const incomplete = !assistantText.trim() || looksLikeRemainingWork(assistantText)
+				|| asksToContinueNextTurn(assistantText) || asksForUserConfirmation(assistantText)
+				|| looksLikeIncompleteHandoff(assistantText) || looksLikePromisedEditsWithoutTools(assistantText);
+			if (!shouldReconcileRequestTodos(this._chatTodoListService.getTodos(request.sessionResource), finalTodoReconciliationAttempts, 2, token.isCancellationRequested, incomplete)) {
+				return false;
+			}
+			finalTodoReconciliationAttempts++;
+			forceFinalTodoReconciliation = true;
+			// Reserve a tool turn and a final-response turn when the normal budget is exhausted.
+			turnBudget += 2;
+			messages = [...messages,
+				{ role: ChatMessageRole.Assistant, content: [{ type: 'text', value: assistantText }] },
+				{ role: ChatMessageRole.User, content: [{ type: 'text', value: 'Before finishing, reconcile the current todo list with the actual tool results. Call manage_todo_list to mark only genuinely finished items completed. Keep unperformed or failed work unfinished and explain it in your final answer. Then provide your final answer.' }] },
+			];
+			return true;
+		};
+
 		for (let turn = 0; turn < turnBudget; turn++) {
 			if (token.isCancellationRequested) {
 				break;
 			}
 
-			const forceTool = needsInitialTodoList && todoListForceNudges < MAX_TODO_LIST_FORCE_NUDGES
+			const forceTool = forceFinalTodoReconciliation ? 'manage_todo_list' : needsInitialTodoList && todoListForceNudges < MAX_TODO_LIST_FORCE_NUDGES
 				? 'manage_todo_list'
 				: needsInitialWebSearch
 					? 'search_web'
 					: undefined;
-			if (forceTool === 'manage_todo_list') {
+			if (forceFinalTodoReconciliation) {
+				forceFinalTodoReconciliation = false;
+			} else if (forceTool === 'manage_todo_list') {
 				todoListForceNudges++;
 			} else if (needsInitialTodoList) {
 				// Keep the request-specific fallback and let execution proceed after bounded attempts.
@@ -1777,6 +1799,9 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 						}
 					}
 
+					if (reconcileFinalTodos(assistantText)) {
+						continue;
+					}
 					exitedOnTaskComplete = true;
 					lastAssistantText = assistantText;
 					break;
@@ -1818,6 +1843,9 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				// Model stopped tools but produced no answer text (common after web research or local thinking models).
 				if (!assistantText.trim()) {
 					needsFinalAnswer = true;
+				}
+				if (reconcileFinalTodos(assistantText)) {
+					continue;
 				}
 				lastAssistantText = assistantText;
 				exitedOnTaskComplete = true;
@@ -2197,11 +2225,10 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			this._skillFeedbackStore.recordOutcome(routedSkillNames, outcome);
 		}
 
-		// Model often emits TASK_COMPLETE without updating manage_todo_list — sync the UI.
-		// Also tear down pending background-terminal completion steering so a late
-		// "terminal exited" System Notification cannot start a new agent turn.
-				if (exitedOnTaskComplete && !token.isCancellationRequested && request.sessionResource) {
-			this._completeSessionTodos(request.sessionResource);
+		if (exitedOnTaskComplete && !token.isCancellationRequested && request.sessionResource) {
+			if (this._chatTodoListService.getTodos(request.sessionResource).some(todo => todo.status !== 'completed')) {
+				progress([{ kind: 'warning', content: new MarkdownString(localize('continue.todosUnresolved', 'Some todo items remain unfinished or could not be verified. Their status has been preserved.')) }]);
+			}
 			RunInTerminalTool.suppressBackgroundSteeringForSession(request.sessionResource);
 		}
 
@@ -2418,20 +2445,6 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		}
 	}
 
-		/** Mark every remaining todo completed when the agent asserts TASK_COMPLETE. */
-	private _completeSessionTodos(sessionResource: URI): void {
-		const todos = this._chatTodoListService.getTodos(sessionResource);
-		if (!todos.length || todos.every(t => t.status === 'completed')) {
-			return;
-		}
-		const completed = todos.map(t => (
-			t.status === 'completed' ? t : { ...t, status: 'completed' as const }
-		));
-		this._chatTodoListService.setTodos(sessionResource, completed);
-		this._logService.info(
-			`[Continue] Auto-completed ${todos.filter(t => t.status !== 'completed').length} todo(s) after TASK_COMPLETE`,
-		);
-	}
 
 	/**
 	 * Recall relevant memories from prior sessions and format them as a
