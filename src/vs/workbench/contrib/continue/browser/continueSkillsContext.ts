@@ -224,6 +224,8 @@ export interface ContinueSkillsContext {
 	readonly attachmentTexts: readonly string[];
 	/** Skill names that were auto-routed / loaded (for logging / UI). */
 	readonly routedSkillNames: readonly string[];
+	/** Explicit skill bodies read from disk and added to attachmentTexts. */
+	readonly injectedSkills?: readonly { readonly name: string; readonly path: string }[];
 }
 
 /**
@@ -489,6 +491,7 @@ export async function buildContinueSkillsContext(
 
 	const attachmentTexts: string[] = [];
 	const routedSkillNames: string[] = [];
+	const injectedSkills: { name: string; path: string }[] = [];
 	for (const item of ordered) {
 		if (token.isCancellationRequested) {
 			break;
@@ -511,6 +514,7 @@ export async function buildContinueSkillsContext(
 			attachmentTexts.push(
 				`<skill-context name="${escapeXml(item.name)}" score="${item.score}" mode="agent-execute">\nBase directory: ${baseDir}\n\n${body}\n</skill-context>`
 			);
+			injectedSkills.push({ name: item.name, path: item.uri.fsPath });
 			routedSkillNames.push(item.name);
 		} catch (err) {
 			logService.warn('[Continue] Failed to load skill file', item.uri.toString(), err);
@@ -530,7 +534,7 @@ export async function buildContinueSkillsContext(
 		);
 	}
 
-	return { systemText, attachmentTexts, routedSkillNames };
+	return { systemText, attachmentTexts, routedSkillNames, injectedSkills };
 }
 
 export interface RankedSkill {

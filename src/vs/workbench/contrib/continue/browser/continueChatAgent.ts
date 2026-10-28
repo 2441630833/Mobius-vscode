@@ -76,6 +76,7 @@ import { normalizeToolArguments, resolveToolPath, toolPathArgument } from './con
 import { executeGodotTool, bootstrapGameModeGodotLivePreview, createGodotAutoPreviewState, createGodotToolHost, ensureGodotPreviewLaunched, gameDevSystemHint, GodotAutoPreviewState, isGameDevProjectUri, isGodotTool, openGodotLiveEditorIfNeeded, trackGodotToolCall, userRequestedGodotOpen } from './continueGodotTools.js';
 import { bootstrapChipModeDetect, createFpgaToolHost, executeFpgaTool, isFpgaTool } from './continueFpgaTools.js';
 import { buildEccAdvisory, executeEccPreflight, executeEccTool, findEccRootUri, isEccTool, resolveEccRootUri } from './continueEccWorkflow.js';
+import { SelectionEvidenceTracker, selectionEvidenceForTool } from './continueSelectionEvidence.js';
 import { chipDesignSystemHint, isChipModeExplicitlySelected } from './continueChipDesign.js';
 import { isPptModeExplicitlySelected, loadPptMasterSkill, pptModeSystemHint } from './continuePptMode.js';
 import { inferMobiusModeFromPrompt } from './continueMobiusModeRouting.js';
@@ -818,9 +819,12 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		let skillCatalog: string | undefined;
 		let skillAttachments: string[] = [];
 		let routedSkillNames: string[] = [];
+		let injectedSkills: readonly { readonly name: string; readonly path: string }[] = [];
+		let eccRoot: URI | undefined;
+		const selectionEvidence = new SelectionEvidenceTracker();
 		let eccPreflightResult: import('./continueEccWorkflow.js').EccPreflightResult | undefined;
 		if (isAgentMode) {
-			const eccRoot = await findEccRootUri(this._fileService, cwd, this._workspaceService, this._getAppRoot())
+			eccRoot = await findEccRootUri(this._fileService, cwd, this._workspaceService, this._getAppRoot())
 				?? resolveEccRootUri(cwd, this._workspaceService, this._getAppRoot());
 			if (eccRoot) {
 				eccPreflightResult = await executeEccPreflight(
@@ -845,6 +849,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			const skillsContext = await this._resolveAgentSkillsContext(request, progress, token);
 			skillCatalog = skillsContext.systemText || undefined;
 			skillAttachments = [...skillsContext.attachmentTexts];
+			injectedSkills = skillsContext.injectedSkills ?? [];
 			routedSkillNames = [...skillsContext.routedSkillNames];
 			if (eccPreflightResult?.matchedSkills?.length) {
 				for (const s of eccPreflightResult.matchedSkills) {
@@ -905,6 +910,9 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			: Promise.resolve(undefined);
 
 		let agentSystem = AGENT_EXECUTE_SYSTEM;
+		if (isAgentMode) {
+			agentSystem += '\n\nWhen you choose to use a suggested skill or delegate to an agent, briefly tell the user your practical reason in ordinary language. State only what you actually intend or did; do not claim a recommendation was used without reading it or an agent was run without a tool call. Do not reveal private chain-of-thought.';
+		}
 		// ECC recommendations must never become system-level task instructions.
 		const modeBody = request.modeInstructions?.content?.trim();
 		if (isAgentMode && modeBody) {
@@ -1158,6 +1166,23 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		if (!isAgentMode) {
 			await this._streamOnce(modelId, messages, progress, token);
 			return {};
+		}
+		if (isPptMode && pptMasterSkill) {
+			const path = URI.joinPath(pptMasterSkill.directory, 'SKILL.md').fsPath;
+			selectionEvidence.add({ kind: 'skill', outcome: 'success', name: 'ppt-master', path, tool: 'ppt-mode-context' });
+			const content = new MarkdownString();
+			content.appendText(localize('continue.pptSkillInjected', 'PPT mode added skill content to request context: {0} ({1}). This does not prove the model followed it.', 'ppt-master', path));
+			progress([{ kind: 'markdownContent', content }]);
+		}
+		if (!webSearchIntent) {
+			for (const skill of injectedSkills) {
+				const event = { kind: 'skill' as const, outcome: 'success' as const, name: skill.name, path: skill.path, tool: 'explicit-context' };
+				if (selectionEvidence.add(event)) {
+					const content = new MarkdownString();
+					content.appendText(localize('continue.skillInjected', 'Skill content added to request context: {0} ({1}). This does not prove the model followed it.', skill.name, skill.path));
+					progress([{ kind: 'markdownContent', content }]);
+				}
+			}
 		}
 
 		const toolStats = { writeSuccess: 0, writeFailed: 0, exploreOnly: false };
@@ -1913,6 +1938,25 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 						: `${formatSupersetToolDisplayName(call.name)} failed${formatToolFailureSuffix(toolResultText)}`,
 					errorMessage: ok && !searchTimedOut ? undefined : toolResultText,
 				}]);
+				const evidence = selectionEvidenceForTool(remapCopilotNameToContinueFallback(call.name) ?? call.name, call.parameters, ok, cwd, eccRoot);
+				if (evidence && selectionEvidence.add(evidence)) {
+					const content = new MarkdownString();
+					if (evidence.kind === 'skill') {
+						content.appendText(evidence.outcome === 'success'
+							? localize('continue.skillRead', 'Skill read successfully: {0} ({1}). Reading does not prove the model followed it.', evidence.name, evidence.path ?? evidence.tool)
+							: localize('continue.skillReadFailed', 'Skill read failed: {0} ({1}).', evidence.name, evidence.path ?? evidence.tool));
+					} else if (evidence.kind === 'agent-profile') {
+						content.appendText(evidence.outcome === 'success'
+							? localize('continue.agentProfileRead', 'ECC agent profile read: {0} ({1}). This is not an agent invocation.', evidence.name, evidence.path ?? evidence.tool)
+							: localize('continue.agentProfileReadFailed', 'ECC agent profile read failed: {0} ({1}).', evidence.name, evidence.path ?? evidence.tool));
+					} else {
+						const requestedAgent = evidence.name || localize('continue.agentNotSpecified', 'not specified');
+						content.appendText(evidence.outcome === 'success'
+							? localize('continue.agentToolCompleted', 'Agent tool completed: {0}; requested agent: {1}.', evidence.tool, requestedAgent)
+							: localize('continue.agentToolFailed', 'Agent tool failed: {0}; requested agent: {1}.', evidence.tool, requestedAgent));
+					}
+					progress([{ kind: 'markdownContent', content }]);
+				}
 				if (editUri && editKind) {
 					editedUris.add(editUri.toString());
 					if (godotAutoPreview && isGameDevProjectUri(editUri.toString())) {
@@ -2176,6 +2220,14 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 
 		if (needsFinalAnswer && !token.isCancellationRequested && !stoppedForRateLimit && !stoppedForContextOverflow) {
 			await this._forceFinalAnswer(modelId, messages, progress, token);
+		}
+		if (!token.isCancellationRequested) {
+			if (!selectionEvidence.has('skill')) {
+				progress([{ kind: 'markdownContent', content: new MarkdownString(localize('continue.noSkillEvidence', 'No tracked skill read or explicit skill injection was observed in this request. Suggestions alone do not indicate use.')) }]);
+			}
+			if (!selectionEvidence.has('agent')) {
+				progress([{ kind: 'markdownContent', content: new MarkdownString(localize('continue.noAgentEvidence', 'No tracked agent tool call was observed in this request. Recommended agents were not automatically invoked.')) }]);
+			}
 		}
 
 		if (routedSkillNames.length) {

@@ -71,9 +71,11 @@ suite('Mobius generated skills auto-route', () => {
 		assert.strictEqual(reads, 0);
 		assert.ok(automatic.attachmentTexts.some(t => t.includes('<skill-reference')));
 		assert.ok(automatic.attachmentTexts.every(t => !t.includes('index.html')));
+		assert.deepStrictEqual(automatic.injectedSkills, []);
 		const explicit = await resolve('/frontend-design Update the approval tab UI');
 		assert.strictEqual(reads, 1);
 		assert.ok(explicit.attachmentTexts.some(t => t.includes('<skill-context') && t.includes('index.html')));
+		assert.deepStrictEqual(explicit.injectedSkills, [{ name: 'frontend-design', path: candidate.uri.fsPath }]);
 	});
 
 	test('detects .agents/skills/auto as generated', () => {
