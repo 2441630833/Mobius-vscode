@@ -120,9 +120,9 @@ suite('ChatTodoListWidget Accessibility', () => {
 		const titleElement = expandoButton?.querySelector('.todo-list-title');
 		assert.ok(titleElement, 'Should have title element');
 		const titleText = titleElement?.textContent;
-		// When collapsed, title shows progress and current task: " (2/3) - Second task"
+		// When collapsed, title shows completed progress and the current task.
 		// Progress is 2/3 because: 1 completed + 1 in-progress (current) = task 2 of 3
-		assert.ok(titleText?.includes('(2/3)'), `Title should show progress format, but got: "${titleText}"`);
+		assert.ok(titleText?.includes('(1/3 completed)'), `Title should show progress format, but got: "${titleText}"`);
 		assert.ok(titleText?.includes('Second task'), `Title should show current task when collapsed, but got: "${titleText}"`);
 	});
 
@@ -189,11 +189,9 @@ suite('ChatTodoListWidget Accessibility', () => {
 		const titleElement = widget.domNode.querySelector('#todo-list-title');
 		assert.ok(titleElement, 'Should have title element with ID');
 
-		// Title should show progress format: " (2/3)" since one todo is completed and one is in-progress
-		// When collapsed, it also shows the current task: " (2/3) - Second task"
-		// Progress is 2/3 because: 1 completed + 1 in-progress (current) = task 2 of 3
+		// Count completed work, not the ordinal of the active item.
 		const titleText = titleElement?.textContent;
-		assert.ok(titleText?.includes('(2/3)'), `Title should show progress format, but got: "${titleText}"`);
+		assert.ok(titleText?.includes('(1/3 completed)'), `Title should show completed progress, but got: "${titleText}"`);
 		assert.ok(titleText?.includes('Second task'), `Title should show current task when collapsed, but got: "${titleText}"`);
 
 		// Verify aria-labelledby connection works

@@ -6,9 +6,18 @@
 import assert from 'assert';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { formatSelectionEvidence, SelectionEvidenceTracker, selectionEvidenceForTool, shouldShowEccPreflight } from '../../browser/continueSelectionEvidence.js';
+import { formatRoutingCandidates, formatSelectionEvidence, SelectionEvidenceTracker, selectionEvidenceForTool, shouldShowEccPreflight } from '../../browser/continueSelectionEvidence.js';
 
 suite('Continue selection evidence', () => {
+	test('shows candidates separately and reports unused capabilities without claiming adoption', () => {
+		assert.ok(formatRoutingCandidates(['review', 'review'], ['reviewer']).includes('suggested skills: review;'));
+		const tracker = new SelectionEvidenceTracker();
+		tracker.add({ kind: 'skill', name: 'broken', outcome: 'failure', tool: 'ecc_skill' });
+		assert.ok(tracker.summary().includes('skills read/in context: none'));
+		tracker.add({ kind: 'agent-profile', name: 'reviewer', outcome: 'success', tool: 'read_file' });
+		assert.ok(tracker.summary().includes('agent profiles read: reviewer'));
+		assert.ok(tracker.summary().includes('agents invoked successfully: none'));
+	});
 	ensureNoDisposablesAreLeakedInTestSuite();
 	const cwd = URI.file('C:/workspace');
 	const ecc = URI.file('C:/ecc');

@@ -414,7 +414,6 @@ export class ChatTodoListWidget extends Disposable {
 		const firstInProgressTodo = inProgressTodos.length > 0 ? inProgressTodos[0] : undefined;
 		const notStartedTodos = todoList.filter(todo => todo.status === 'not-started');
 		const firstNotStartedTodo = notStartedTodos.length > 0 ? notStartedTodos[0] : undefined;
-		const currentTaskNumber = inProgressTodos.length > 0 ? completedCount + 1 : Math.max(1, completedCount);
 
 		const expandButtonLabel = this._isExpanded
 			? localize('chat.todoList.collapseButton', 'Collapse Todos')
@@ -425,7 +424,7 @@ export class ChatTodoListWidget extends Disposable {
 		if (this._isExpanded) {
 			const titleText = dom.$('span');
 			titleText.textContent = totalCount > 0 ?
-				localize('chat.todoList.titleWithCount', 'Todos ({0}/{1})', currentTaskNumber, totalCount) :
+				localize('chat.todoList.completedCount', 'Todos ({0}/{1} completed)', completedCount, totalCount) :
 				localize('chat.todoList.title', 'Todos');
 			titleElement.appendChild(titleText);
 		} else {
@@ -445,7 +444,7 @@ export class ChatTodoListWidget extends Disposable {
 				titleElement.appendChild(icon);
 
 				const todoText = dom.$('span');
-				todoText.textContent = localize('chat.todoList.currentTask', '{0} ({1}/{2})', todoToShow.title, currentTaskNumber, totalCount);
+				todoText.textContent = localize('chat.todoList.currentTaskCompleted', '{0} ({1}/{2} completed)', todoToShow.title, completedCount, totalCount);
 				todoText.style.verticalAlign = 'middle';
 				todoText.style.overflow = 'hidden';
 				todoText.style.textOverflow = 'ellipsis';

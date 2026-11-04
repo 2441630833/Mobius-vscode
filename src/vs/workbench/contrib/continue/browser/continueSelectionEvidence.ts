@@ -81,9 +81,14 @@ export function selectionEvidenceForTool(name: string, parameters: unknown, ok: 
 export class SelectionEvidenceTracker {
 	private readonly seen = new Set<string>();
 	private readonly kinds = new Set<SelectionEvidence['kind']>();
+	private readonly successful = new Map<SelectionEvidence['kind'], Set<string>>();
 
 	add(event: SelectionEvidence): boolean {
 		this.kinds.add(event.kind);
+		if (event.outcome === 'success') {
+			const names = this.successful.get(event.kind) ?? new Set<string>();
+			names.add(event.name || event.tool); this.successful.set(event.kind, names);
+		}
 		const key = JSON.stringify([event.kind, event.outcome, event.name, event.path, event.tool]);
 		if (this.seen.has(key)) { return false; }
 		this.seen.add(key);
@@ -91,4 +96,14 @@ export class SelectionEvidenceTracker {
 	}
 
 	has(kind: SelectionEvidence['kind']): boolean { return this.kinds.has(kind); }
+
+	summary(): string {
+		const names = (kind: SelectionEvidence['kind']) => [...(this.successful.get(kind) ?? [])].join(', ') || localize('continue.selection.none', 'none');
+		return localize('continue.selection.summary', 'Selection results — skills read/in context: {0}; agent profiles read: {1}; agents invoked successfully: {2}. Routing suggestions alone do not count as use.', names('skill'), names('agent-profile'), names('agent'));
+	}
+}
+
+export function formatRoutingCandidates(skills: readonly string[], agents: readonly string[]): string {
+	const none = localize('continue.selection.none', 'none');
+	return localize('continue.selection.candidates', 'Automatic routing — suggested skills: {0}; ECC agent profiles: {1}. The agent decides whether to use these suggestions; actual selections are shown as execution proceeds.', [...new Set(skills)].join(', ') || none, [...new Set(agents)].join(', ') || none);
 }

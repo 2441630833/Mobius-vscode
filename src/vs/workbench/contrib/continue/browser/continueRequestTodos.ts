@@ -27,3 +27,17 @@ export const REQUEST_TODO_INSTRUCTIONS = 'The IDE initialized a fallback todo fr
 export function shouldReconcileRequestTodos(todos: readonly IChatTodo[], attempts: number, maxAttempts: number, canceled: boolean, incomplete: boolean): boolean {
 	return !canceled && !incomplete && attempts < maxAttempts && todos.some(todo => todo.status !== 'completed');
 }
+
+/** Periodically ask the executor to reconcile actual progress; never infer completion from an edit. */
+export class RequestTodoCheckpoint {
+	private workBatches = 0;
+	private attempts = 0;
+	observe(before: string, after: readonly IChatTodo[], didWork: boolean): void {
+		if (before !== JSON.stringify(after)) { this.workBatches = 0; }
+		else if (didWork) { this.workBatches++; }
+	}
+	shouldSync(todos: readonly IChatTodo[], canceled: boolean): boolean {
+		return !canceled && this.attempts < 12 && this.workBatches >= 3 && todos.some(todo => todo.status !== 'completed');
+	}
+	requested(): void { this.workBatches = 0; this.attempts++; }
+}

@@ -30,7 +30,7 @@ import {
 	IChatResponseToolUsePart,
 	ILanguageModelsService,
 } from '../../chat/common/languageModels.js';
-import { didWriteRequestTodos, initializeRequestTodos, REQUEST_TODO_INSTRUCTIONS, shouldReconcileRequestTodos } from './continueRequestTodos.js';
+import { didWriteRequestTodos, initializeRequestTodos, REQUEST_TODO_INSTRUCTIONS, RequestTodoCheckpoint, shouldReconcileRequestTodos } from './continueRequestTodos.js';
 import { IChatTodoListService } from '../../chat/common/tools/chatTodoListService.js';
 import {
 	IChatAgentData,
@@ -76,7 +76,7 @@ import { normalizeToolArguments, resolveToolPath, toolPathArgument } from './con
 import { executeGodotTool, bootstrapGameModeGodotLivePreview, createGodotAutoPreviewState, createGodotToolHost, ensureGodotPreviewLaunched, gameDevSystemHint, GodotAutoPreviewState, isGameDevProjectUri, isGodotTool, openGodotLiveEditorIfNeeded, trackGodotToolCall, userRequestedGodotOpen } from './continueGodotTools.js';
 import { bootstrapChipModeDetect, createFpgaToolHost, executeFpgaTool, isFpgaTool } from './continueFpgaTools.js';
 import { buildEccAdvisory, executeEccPreflight, executeEccTool, findEccRootUri, isEccTool, resolveEccRootUri } from './continueEccWorkflow.js';
-import { formatSelectionEvidence, SelectionEvidenceTracker, selectionEvidenceForTool, shouldShowEccPreflight } from './continueSelectionEvidence.js';
+import { formatRoutingCandidates, formatSelectionEvidence, SelectionEvidenceTracker, selectionEvidenceForTool, shouldShowEccPreflight } from './continueSelectionEvidence.js';
 import { chipDesignSystemHint, isChipModeExplicitlySelected } from './continueChipDesign.js';
 import { isPptModeExplicitlySelected, loadPptMasterSkill, pptModeSystemHint } from './continuePptMode.js';
 import { inferMobiusModeFromPrompt } from './continueMobiusModeRouting.js';
@@ -1128,6 +1128,12 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			: undefined;
 
 		const eccAdvisory = isAgentMode ? buildEccAdvisory(eccPreflightResult) : undefined;
+		if (isAgentMode) {
+			const content = new MarkdownString();
+			content.appendText(formatRoutingCandidates(routedSkillNames, eccPreflightResult?.matchedAgents ?? []));
+			content.appendMarkdown('\n\n');
+			progress([{ kind: 'markdownContent', content }]);
+		}
 		let messages = buildChatMessages(
 			history,
 			request.message,
@@ -1298,6 +1304,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		let terminalCheckpointWarningShown = false;
 		let finalTodoReconciliationAttempts = 0;
 		let forceFinalTodoReconciliation = false;
+		const todoCheckpoint = new RequestTodoCheckpoint();
 		const reconcileFinalTodos = (assistantText: string): boolean => {
 			const incomplete = !assistantText.trim() || looksLikeRemainingWork(assistantText)
 				|| asksToContinueNextTurn(assistantText) || asksForUserConfirmation(assistantText)
@@ -1321,13 +1328,16 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				break;
 			}
 
-			const forceTool = forceFinalTodoReconciliation ? 'manage_todo_list' : needsInitialTodoList && todoListForceNudges < MAX_TODO_LIST_FORCE_NUDGES
+			const checkpointDue = isAgentMode && !needsInitialTodoList && todoCheckpoint.shouldSync(this._chatTodoListService.getTodos(request.sessionResource), token.isCancellationRequested);
+			const forceTool = (forceFinalTodoReconciliation || checkpointDue) ? 'manage_todo_list' : needsInitialTodoList && todoListForceNudges < MAX_TODO_LIST_FORCE_NUDGES
 				? 'manage_todo_list'
 				: needsInitialWebSearch
 					? 'search_web'
 					: undefined;
 			if (forceFinalTodoReconciliation) {
 				forceFinalTodoReconciliation = false;
+			} else if (checkpointDue) {
+				todoCheckpoint.requested();
 			} else if (forceTool === 'manage_todo_list') {
 				todoListForceNudges++;
 			} else if (needsInitialTodoList) {
@@ -1336,6 +1346,9 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			}
 			if (forceTool === 'search_web') {
 				needsInitialWebSearch = false;
+			}
+			if (forceTool === 'manage_todo_list') {
+				messages = [...messages, { role: ChatMessageRole.User, content: [{ type: 'text', value: `Todo checkpoint: current persisted list is ${JSON.stringify(this._chatTodoListService.getTodos(request.sessionResource))}. Call manage_todo_list with the complete list now. Reconcile each item's status against the work and tool results so far; mark only actually finished items completed, and keep failed/unperformed work unfinished. Then continue the user's task. Do not write a final answer during this bookkeeping call.` }] }];
 			}
 			// Force native tool_calls when coding still needs writes, or after a textual-tool dump.
 			// Bounded: tool_choice='required' forbids plain text, so leaving it on forever
@@ -1365,7 +1378,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					messages,
 					progress,
 					token,
-					agentTools,
+					forceTool === 'manage_todo_list' ? agentTools.filter(tool => isManageTodoListTool(tool.function.name)) : agentTools,
 					forceTool,
 					false,
 					requireNativeTools,
@@ -1855,6 +1868,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		}
 
 			lastTurnHadTools = true;
+			const todosBeforeBatch = JSON.stringify(this._chatTodoListService.getTodos(request.sessionResource));
 			postToolContinueNudges = 0;
 			const assistantContent: IChatMessage['content'] = [];
 			if (assistantThinking.trim()) {
@@ -2020,6 +2034,8 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					},
 				];
 			}
+
+			todoCheckpoint.observe(todosBeforeBatch, this._chatTodoListService.getTodos(request.sessionResource), toolUses.some(call => !isManageTodoListTool(call.name)));
 
 			// ── Stuck-loop circuit breaker ───────────────────────────────────────
 			// Models can emit valid but progress-free tool calls forever (classic:
@@ -2236,6 +2252,12 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			await this._forceFinalAnswer(modelId, messages, progress, token);
 		}
 
+		if (isAgentMode) {
+			const content = new MarkdownString();
+			content.appendText(selectionEvidence.summary());
+			content.appendMarkdown('\n\n');
+			progress([{ kind: 'markdownContent', content }]);
+		}
 		if (routedSkillNames.length) {
 			const outcome = classifySkillRoutingOutcome(toolStats);
 			this._skillFeedbackStore.recordOutcome(routedSkillNames, outcome);

@@ -42,6 +42,7 @@ import { ILanguageModelChatMetadata, ILanguageModelChatMetadataAndIdentifier } f
 import { IChatAgentCommand, IChatAgentData, IChatAgentResult, IChatAgentService, UserSelectedTools, reviveSerializedAgent } from '../participants/chatAgents.js';
 import { ChatRequestTextPart, IParsedChatRequest, reviveParsedChatRequest } from '../requestParser/chatParserTypes.js';
 import { chatSessionResourceToId, LocalChatSessionUri } from './chatUri.js';
+import { IChatTodoListService } from '../tools/chatTodoListService.js';
 import { ObjectMutationLog } from './objectMutationLog.js';
 
 
@@ -2398,6 +2399,7 @@ export class ChatModel extends Disposable implements IChatModel {
 		@IChatAgentService private readonly chatAgentService: IChatAgentService,
 		@IChatEditingService private readonly chatEditingService: IChatEditingService,
 		@IChatService private readonly chatService: IChatService,
+		@IChatTodoListService private readonly chatTodoListService: IChatTodoListService,
 	) {
 		super();
 
@@ -2870,6 +2872,18 @@ export class ChatModel extends Disposable implements IChatModel {
 
 		if (request.response.isComplete) {
 			throw new Error('acceptResponseProgress: Adding progress to a completed response');
+		}
+
+		// External tools do not execute the built-in todo writer. Persist successful
+		// live updates here, never while rendering serialized history. Older requests
+		// must not overwrite the current request's list.
+		if (request === this._requests.at(-1) && progress.kind === 'externalToolInvocationUpdate'
+			&& progress.isComplete && !progress.errorMessage && progress.toolSpecificData?.kind === 'todoList') {
+			this.chatTodoListService.setTodos(this.sessionResource, progress.toolSpecificData.todoList.map((todo, index) => ({
+				id: Number.parseInt(todo.id, 10) || index + 1,
+				title: todo.title,
+				status: todo.status
+			})));
 		}
 
 		if (progress.kind === 'usage') {

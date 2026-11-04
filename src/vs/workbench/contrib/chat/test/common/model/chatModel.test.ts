@@ -33,6 +33,7 @@ import { ChatRequestQueueKind, IChatService, IChatTerminalToolInvocationData, IC
 import { ToolDataSource } from '../../../common/tools/languageModelToolsService.js';
 import { ChatAgentLocation, ChatModeKind } from '../../../common/constants.js';
 import { MockChatService } from '../chatService/mockChatService.js';
+import { IChatTodo, IChatTodoListService } from '../../../common/tools/chatTodoListService.js';
 
 suite('ChatModel', () => {
 	const testDisposables = ensureNoDisposablesAreLeakedInTestSuite();
@@ -48,6 +49,22 @@ suite('ChatModel', () => {
 		instantiationService.stub(IChatAgentService, testDisposables.add(instantiationService.createInstance(ChatAgentService)));
 		instantiationService.stub(IConfigurationService, new TestConfigurationService());
 		instantiationService.stub(IChatService, new MockChatService());
+	});
+
+	test('external todo progress persists only successful updates for the latest request', () => {
+		let saved: IChatTodo[] = [];
+		instantiationService.stub(IChatTodoListService, { setTodos: (_session, todos) => { saved = todos; } });
+		const model = testDisposables.add(instantiationService.createInstance(ChatModel, undefined, { initialLocation: ChatAgentLocation.Chat, canUseTools: true }));
+		const first = model.addRequest({ text: 'first', parts: [] }, { variables: [] }, 0);
+		const current = model.addRequest({ text: 'current', parts: [] }, { variables: [] }, 0);
+		const progress = { kind: 'externalToolInvocationUpdate' as const, toolCallId: 'todo', toolName: 'todo', invocationMessage: 'Update', isComplete: true,
+			toolSpecificData: { kind: 'todoList' as const, todoList: [{ id: '1', title: 'Current', status: 'completed' as const }] } };
+		model.acceptResponseProgress(current, progress);
+		assert.strictEqual(saved[0].title, 'Current');
+		const expected = saved;
+		model.acceptResponseProgress(first, { ...progress, toolSpecificData: { kind: 'todoList', todoList: [] } });
+		model.acceptResponseProgress(current, { ...progress, errorMessage: 'failed', toolSpecificData: { kind: 'todoList', todoList: [] } });
+		assert.strictEqual(saved, expected);
 	});
 
 	test('initialization with exported data only (imported)', async () => {

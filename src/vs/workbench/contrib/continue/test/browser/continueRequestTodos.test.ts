@@ -7,9 +7,22 @@ import assert from 'assert';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import type { IChatTodo, IChatTodoListService } from '../../../chat/common/tools/chatTodoListService.js';
-import { didWriteRequestTodos, initializeRequestTodos, shouldReconcileRequestTodos } from '../../browser/continueRequestTodos.js';
+import { didWriteRequestTodos, initializeRequestTodos, RequestTodoCheckpoint, shouldReconcileRequestTodos } from '../../browser/continueRequestTodos.js';
 
 suite('Continue request todos', () => {
+	test('stale execution progress schedules a bounded checkpoint without completing items', () => {
+		const checkpoint = new RequestTodoCheckpoint();
+		const todos: IChatTodo[] = [{ id: 1, title: 'Verify', status: 'in-progress' }];
+		for (let i = 0; i < 3; i++) { checkpoint.observe(JSON.stringify(todos), todos, true); }
+		assert.strictEqual(checkpoint.shouldSync(todos, false), true);
+		assert.strictEqual(checkpoint.shouldSync(todos, true), false);
+		checkpoint.requested();
+		assert.strictEqual(checkpoint.shouldSync(todos, false), false);
+		assert.strictEqual(todos[0].status, 'in-progress');
+		for (let i = 0; i < 3; i++) { checkpoint.observe(JSON.stringify(todos), todos, true); }
+		checkpoint.observe(JSON.stringify(todos), [{ ...todos[0], status: 'completed' }], false);
+		assert.strictEqual(checkpoint.shouldSync(todos, false), false);
+	});
 	ensureNoDisposablesAreLeakedInTestSuite();
 	const session = URI.parse('test://request-todos');
 	function fixture() {
