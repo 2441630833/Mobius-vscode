@@ -21,6 +21,7 @@ suite('ChatTodoListWidget Accessibility', () => {
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
 	let widget: ChatTodoListWidget;
+	let writes: string[];
 
 	const sampleTodos: IChatTodo[] = [
 		{ id: 1, title: 'First task', status: 'not-started' },
@@ -29,12 +30,13 @@ suite('ChatTodoListWidget Accessibility', () => {
 	];
 
 	setup(() => {
+		writes = [];
 		// Mock the todo list service
 		const mockTodoListService: IChatTodoListService = {
 			_serviceBrand: undefined,
 			onDidUpdateTodos: Event.None,
 			getTodos: (sessionResource: URI) => sampleTodos,
-			setTodos: (sessionResource: URI, todos: IChatTodo[]) => { },
+			setTodos: (sessionResource: URI, todos: IChatTodo[]) => { writes.push(sessionResource.toString()); },
 			migrateTodos: (oldSessionResource: URI, newSessionResource: URI) => { }
 		};
 
@@ -52,6 +54,18 @@ suite('ChatTodoListWidget Accessibility', () => {
 		if (widget.domNode.parentNode) {
 			widget.domNode.parentNode.removeChild(widget.domNode);
 		}
+	});
+
+	test('hiding and switching sessions never delete persisted todos', () => {
+		widget.render(testSessionUri);
+		widget.render(undefined);
+		widget.render(URI.parse('chat-session://test/session2'));
+		widget.clear(testSessionUri, true);
+		assert.deepEqual(writes, []);
+		widget.render(testSessionUri);
+		assert.equal(widget.domNode.querySelectorAll('.todo-item').length, 3);
+		widget.clear(testSessionUri, true);
+		assert.deepEqual(writes, [testSessionUri.toString()]);
 	});
 
 	test('creates proper semantic list structure', () => {

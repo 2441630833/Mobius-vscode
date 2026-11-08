@@ -231,6 +231,7 @@ export class ChatTodoListWidget extends Disposable {
 
 	public render(sessionResource: URI | undefined): void {
 		if (!sessionResource) {
+			this._currentSessionResource = undefined;
 			this.hideWidget();
 			return;
 		}
@@ -245,7 +246,7 @@ export class ChatTodoListWidget extends Disposable {
 	}
 
 	public clear(sessionResource: URI | undefined, force: boolean = false): void {
-		if (!sessionResource || this.domNode.style.display === 'none') {
+		if (!sessionResource || !isEqual(sessionResource, this._currentSessionResource) || this.domNode.style.display === 'none') {
 			return;
 		}
 

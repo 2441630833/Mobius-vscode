@@ -997,7 +997,7 @@ export class ChatWidget extends Disposable implements IChatWidget {
 			this.unlockFromCodingAgent();
 		}
 
-		this.inputPart?.clearTodoListWidget(this.viewModel?.sessionResource, true);
+		this.inputPart?.hideTodoListWidget();
 		this.inputPart?.clearArtifactsWidget();
 		this.chatSuggestNextWidget.hide();
 		await this.viewOptions.clear?.();
@@ -2125,7 +2125,7 @@ export class ChatWidget extends Disposable implements IChatWidget {
 		if (this.viewModel?.editing) {
 			this.finishedEditing();
 		}
-		this.inputPart?.clearTodoListWidget(model.sessionResource, false);
+		this.inputPart?.hideTodoListWidget();
 		this.inputPart?.clearArtifactsWidget();
 		this.chatSuggestNextWidget.hide();
 		this.chatTipService.resetSession();

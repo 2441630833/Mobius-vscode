@@ -15,9 +15,15 @@ export interface SelectionEvidence {
 	readonly tool: string;
 }
 
-/** Successful preflight is background work; only failures need a chat notice. */
-export function shouldShowEccPreflight(ok: boolean): boolean {
-	return !ok;
+/** Preflight recommendations are visible for both foreground and background execution. */
+export function shouldShowEccPreflight(_ok: boolean): boolean {
+	return true;
+}
+
+export function formatEccPreflight(result: { ok: boolean; summary: string; matchedSkills: readonly string[]; matchedAgents: readonly string[]; projectType?: { primary?: string; languages?: readonly string[]; frameworks?: readonly string[] } }): string {
+	if (!result.ok) { return result.summary; }
+	const stack = [...new Set([result.projectType?.primary, ...result.projectType?.languages ?? [], ...result.projectType?.frameworks ?? []].filter((s): s is string => !!s && s !== 'unknown'))];
+	return localize('continue.ecc.visiblePreflight', 'ECC preflight — detected stack: {0}.', stack.join(', ') || localize('continue.ecc.unknownStack', 'not identified')) + '\n\n' + formatRoutingCandidates(result.matchedSkills, result.matchedAgents);
 }
 
 /** User-facing facts, not an assertion that a model followed the instructions. */

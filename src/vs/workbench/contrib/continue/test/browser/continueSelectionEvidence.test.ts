@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { formatRoutingCandidates, formatSelectionEvidence, SelectionEvidenceTracker, selectionEvidenceForTool, shouldShowEccPreflight } from '../../browser/continueSelectionEvidence.js';
+import { formatEccPreflight, formatRoutingCandidates, formatSelectionEvidence, SelectionEvidenceTracker, selectionEvidenceForTool, shouldShowEccPreflight } from '../../browser/continueSelectionEvidence.js';
 
 suite('Continue selection evidence', () => {
 	test('shows candidates separately and reports unused capabilities without claiming adoption', () => {
@@ -76,9 +76,14 @@ suite('Continue selection evidence', () => {
 		assert.ok(new SelectionEvidenceTracker().add(failed));
 	});
 
-	test('keeps successful preflight quiet and displays failures', () => {
-		assert.strictEqual(shouldShowEccPreflight(true), false);
+	test('shows successful stack detection and recommendations without claiming adoption', () => {
+		assert.strictEqual(shouldShowEccPreflight(true), true);
 		assert.strictEqual(shouldShowEccPreflight(false), true);
+		const text = formatEccPreflight({ ok: true, summary: 'Active', matchedSkills: ['react-patterns'], matchedAgents: ['reviewer'], projectType: { primary: 'typescript', languages: ['typescript'], frameworks: ['react'] } });
+		assert.ok(text.includes('detected stack: typescript, react'));
+		assert.ok(text.includes('suggested skills: react-patterns'));
+		assert.ok(text.includes('ECC agent profiles: reviewer'));
+		assert.ok(text.includes('decides whether to use'));
 	});
 
 	test('formats concise, distinct selection outcomes and preserves paths', () => {

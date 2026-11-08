@@ -3529,6 +3529,10 @@ export class ChatInputPart extends Disposable implements IHistoryNavigationWidge
 		this._chatInputTodoListWidget.value?.clear(sessionResource, force);
 	}
 
+	hideTodoListWidget(): void {
+		this._chatInputTodoListWidget.value?.render(undefined);
+	}
+
 	renderArtifactsWidget(chatSessionResource: URI): void {
 		if (!this.configurationService.getValue<boolean>(ChatConfiguration.ArtifactsEnabled)) {
 			return;

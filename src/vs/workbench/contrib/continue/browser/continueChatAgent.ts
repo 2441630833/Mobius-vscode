@@ -31,6 +31,7 @@ import {
 	ILanguageModelsService,
 } from '../../chat/common/languageModels.js';
 import { didWriteRequestTodos, initializeRequestTodos, REQUEST_TODO_INSTRUCTIONS, RequestTodoCheckpoint, shouldReconcileRequestTodos } from './continueRequestTodos.js';
+import { formatSuperAgentResult, SuperAgentChatResult } from './continueSuperAgentRouting.js';
 import { IChatTodoListService } from '../../chat/common/tools/chatTodoListService.js';
 import {
 	IChatAgentData,
@@ -76,7 +77,7 @@ import { normalizeToolArguments, resolveToolPath, toolPathArgument } from './con
 import { executeGodotTool, bootstrapGameModeGodotLivePreview, createGodotAutoPreviewState, createGodotToolHost, ensureGodotPreviewLaunched, gameDevSystemHint, GodotAutoPreviewState, isGameDevProjectUri, isGodotTool, openGodotLiveEditorIfNeeded, trackGodotToolCall, userRequestedGodotOpen } from './continueGodotTools.js';
 import { bootstrapChipModeDetect, createFpgaToolHost, executeFpgaTool, isFpgaTool } from './continueFpgaTools.js';
 import { buildEccAdvisory, executeEccPreflight, executeEccTool, findEccRootUri, isEccTool, resolveEccRootUri } from './continueEccWorkflow.js';
-import { formatRoutingCandidates, formatSelectionEvidence, SelectionEvidenceTracker, selectionEvidenceForTool, shouldShowEccPreflight } from './continueSelectionEvidence.js';
+import { formatEccPreflight, formatRoutingCandidates, formatSelectionEvidence, SelectionEvidenceTracker, selectionEvidenceForTool, shouldShowEccPreflight } from './continueSelectionEvidence.js';
 import { chipDesignSystemHint, isChipModeExplicitlySelected } from './continueChipDesign.js';
 import { isPptModeExplicitlySelected, loadPptMasterSkill, pptModeSystemHint } from './continuePptMode.js';
 import { inferMobiusModeFromPrompt } from './continueMobiusModeRouting.js';
@@ -758,6 +759,47 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		try {
 		const cwd = request.workingDirectory
 			?? this._workspaceService.getWorkspace().folders[0]?.uri;
+		let eccRoot: URI | undefined;
+		const selectionEvidence = new SelectionEvidenceTracker();
+		let eccPreflightResult: import('./continueEccWorkflow.js').EccPreflightResult | undefined;
+		if (isAgentMode) {
+			eccRoot = await findEccRootUri(this._fileService, cwd, this._workspaceService, this._getAppRoot())
+				?? resolveEccRootUri(cwd, this._workspaceService, this._getAppRoot());
+			if (eccRoot) {
+				eccPreflightResult = await executeEccPreflight(
+					eccRoot,
+					request,
+					cwd,
+					this._languageModelToolsService,
+					this._logService,
+					token,
+					this._commandService,
+					this._fileService,
+				);
+				if (shouldShowEccPreflight(eccPreflightResult.ok) && eccPreflightResult.summary) {
+					const content = new MarkdownString();
+					content.appendText(formatEccPreflight(eccPreflightResult));
+					content.appendMarkdown("\n\n");
+					progress([{
+						kind: eccPreflightResult.ok ? 'markdownContent' : 'warning',
+						content,
+					}]);
+				}
+			}
+		}
+		if (isAgentMode && !isPptMode && !isChipMode && !isGameMode && cwd && !token.isCancellationRequested) {
+			const background = await this._commandService.executeCommand<SuperAgentChatResult>('workbench.action.mobius.superagent.route', {
+				root: cwd, session: request.sessionResource.toString(), requestId: request.requestId, text: request.message, modelId,
+				ecc: eccPreflightResult ? { root: eccRoot?.toString(), skills: eccPreflightResult.matchedSkills, agents: eccPreflightResult.matchedAgents, advisory: buildEccAdvisory(eccPreflightResult) } : undefined,
+				context: history.slice(-6).map(h => h.request.message).join('\n\n').slice(-12000),
+				unsupportedContext: request.variables.variables.length > 0 || request.hasHooksEnabled || !!request.subAgentInvocationId,
+			});
+			if (background?.handled) {
+				progress([{ kind: 'markdownContent', content: new MarkdownString().appendText(formatSuperAgentResult(background)) }]);
+				return {};
+			}
+			if (background?.reason) { progress([{ kind: 'markdownContent', content: new MarkdownString().appendText(`Super Agent：${background.reason}\n\n由当前聊天继续处理。\n\n`) }]); }
+		}
 		const activeHarness = MobiusHarnessRegistry.getActiveHarness();
 		const requestedDeepSeekHarness = /^\/deepseek(?:\s+|$)/i.test(request.message.trim());
 		if (activeHarness.id === 'deepseek' || requestedDeepSeekHarness) {
@@ -822,33 +864,6 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		let skillAttachments: string[] = [];
 		let routedSkillNames: string[] = [];
 		let injectedSkills: readonly { readonly name: string; readonly path: string }[] = [];
-		let eccRoot: URI | undefined;
-		const selectionEvidence = new SelectionEvidenceTracker();
-		let eccPreflightResult: import('./continueEccWorkflow.js').EccPreflightResult | undefined;
-		if (isAgentMode) {
-			eccRoot = await findEccRootUri(this._fileService, cwd, this._workspaceService, this._getAppRoot())
-				?? resolveEccRootUri(cwd, this._workspaceService, this._getAppRoot());
-			if (eccRoot) {
-				eccPreflightResult = await executeEccPreflight(
-					eccRoot,
-					request,
-					cwd,
-					this._languageModelToolsService,
-					this._logService,
-					token,
-					this._commandService,
-					this._fileService,
-				);
-				if (shouldShowEccPreflight(eccPreflightResult.ok) && eccPreflightResult.summary) {
-					const content = new MarkdownString();
-					content.appendText(eccPreflightResult.summary);
-					progress([{
-						kind: 'warning',
-						content,
-					}]);
-				}
-			}
-		}
 		if (isAgentMode) {
 			const skillsContext = await this._resolveAgentSkillsContext(request, progress, token);
 			skillCatalog = skillsContext.systemText || undefined;
