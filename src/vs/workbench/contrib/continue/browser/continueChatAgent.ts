@@ -762,6 +762,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 		let eccRoot: URI | undefined;
 		const selectionEvidence = new SelectionEvidenceTracker();
 		let eccPreflightResult: import('./continueEccWorkflow.js').EccPreflightResult | undefined;
+		let eccCandidatesShown = false;
 		if (isAgentMode) {
 			eccRoot = await findEccRootUri(this._fileService, cwd, this._workspaceService, this._getAppRoot())
 				?? resolveEccRootUri(cwd, this._workspaceService, this._getAppRoot());
@@ -784,6 +785,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 						kind: eccPreflightResult.ok ? 'markdownContent' : 'warning',
 						content,
 					}]);
+					eccCandidatesShown = eccPreflightResult.ok;
 				}
 			}
 		}
@@ -1143,7 +1145,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			: undefined;
 
 		const eccAdvisory = isAgentMode ? buildEccAdvisory(eccPreflightResult) : undefined;
-		if (isAgentMode) {
+		if (isAgentMode && !eccCandidatesShown) {
 			const content = new MarkdownString();
 			content.appendText(formatRoutingCandidates(routedSkillNames, eccPreflightResult?.matchedAgents ?? []));
 			content.appendMarkdown('\n\n');
@@ -1948,7 +1950,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				}
 				if (!terminalCheckpointWarningShown && /^(?:run_in_terminal|run_terminal_command|terminal|terminal_command|bash|sh|cmd|execute_command|run_command|runCommand|runInTerminal)$/i.test(call.name)) {
 					terminalCheckpointWarningShown = true;
-					progress([{ kind: 'warning', content: new MarkdownString(localize('continue.checkpoint.terminalUnprotected', 'Terminal changes and external effects are not automatically protected by chat checkpoints.')) }]);
+					this._logService.debug('[Continue] Terminal tool invoked; external effects not tracked by checkpoints:', call.name);
 				}
 				if (isManageTodoListTool(call.name) && needsInitialTodoList) {
 					const todosAfterCall = this._chatTodoListService.getTodos(request.sessionResource);
