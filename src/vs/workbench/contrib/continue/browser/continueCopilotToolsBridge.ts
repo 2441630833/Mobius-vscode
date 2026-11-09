@@ -25,6 +25,7 @@ import {
 } from '../../chat/common/tools/languageModelToolsService.js';
 import {
 	ContinueAgentToolSchema,
+	ContinueAgentToolsOptions,
 	loadContinueAgentTools,
 	isRetiredOrchestrationTool,
 } from './continueAgentToolsBridge.js';
@@ -636,8 +637,9 @@ export async function loadAgentToolSuperset(
 	commandService: ICommandService,
 	logService?: ILogService,
 	configurationService?: IConfigurationService,
+	options?: ContinueAgentToolsOptions,
 ): Promise<readonly ContinueAgentToolSchema[]> {
-	const continueTools = await loadContinueAgentTools(commandService, logService, configurationService);
+	const continueTools = await loadContinueAgentTools(commandService, logService, configurationService, options);
 	const continueByName = new Map(continueTools.map(t => [t.function.name, t]));
 
 	const schemas: ContinueAgentToolSchema[] = [];

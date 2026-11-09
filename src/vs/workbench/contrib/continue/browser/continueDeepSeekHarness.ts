@@ -24,6 +24,9 @@ import {
 	IMobiusHarnessTurnContext,
 } from './continueAgentHarness.js';
 import { ContinueAgentToolSchema } from './continueAgentToolsBridge.js';
+import { isFpgaTool } from './continueFpgaTools.js';
+import { isGodotTool, isGameDevProjectUri } from './continueGodotTools.js';
+import { hasChipDesignIntent } from './continueChipDesign.js';
 
 // ==========================================
 // 1. Loop Hygiene Guards (from deepseek-harness/packages/guard)
@@ -200,12 +203,19 @@ export class DeepSeekAgentHarness implements IMobiusAgentHarness {
 		const memory = createWorkingMemory(request.message);
 
 		// Load tools superset (capability seams)
-		const tools: readonly ContinueAgentToolSchema[] = await loadAgentToolSuperset(
+		const isChip = hasChipDesignIntent(request.message);
+		const isGame = isGameDevProjectUri(cwd?.toString() ?? '') || /\b(godot|game)\b/i.test(request.message);
+		const tools: readonly ContinueAgentToolSchema[] = (await loadAgentToolSuperset(
 			services.languageModelToolsService,
 			services.commandService,
 			services.logService,
 			services.configurationService,
-		);
+			{ includeFpgaTools: isChip, includeGodotTools: isGame },
+		)).filter(t => {
+			if (!isChip && isFpgaTool(t.function.name)) { return false; }
+			if (!isGame && isGodotTool(t.function.name)) { return false; }
+			return true;
+		});
 
 		// Prepare conversation messages
 		const messages: IChatMessage[] = [];

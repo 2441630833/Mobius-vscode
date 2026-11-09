@@ -379,10 +379,16 @@ function extractFileUri(items: RawContextItem[]): { uri?: string; kind?: 'create
 	return {};
 }
 
+export interface ContinueAgentToolsOptions {
+	readonly includeFpgaTools?: boolean;
+	readonly includeGodotTools?: boolean;
+}
+
 export async function loadContinueAgentTools(
 	commandService: ICommandService,
 	logService?: ILogService,
 	configurationService?: IConfigurationService,
+	options?: ContinueAgentToolsOptions,
 ): Promise<readonly ContinueAgentToolSchema[]> {
 	let extensionTools: ContinueAgentToolSchema[] | undefined;
 
@@ -412,11 +418,14 @@ export async function loadContinueAgentTools(
 		? CORE_SEARCH_TOOL_SCHEMAS
 		: CORE_SEARCH_TOOL_SCHEMAS.filter(t => t.function.name !== 'search_web');
 
+	const godotTools = options?.includeGodotTools !== false ? GODOT_TOOL_SCHEMAS : [];
+	const fpgaTools = options?.includeFpgaTools !== false ? FPGA_TOOL_SCHEMAS : [];
+
 	let merged = mergeToolSchemas(
 		activeCoreSearchTools,
 		LOCAL_AGENT_TOOL_SCHEMAS,
-		GODOT_TOOL_SCHEMAS,
-		FPGA_TOOL_SCHEMAS,
+		godotTools,
+		fpgaTools,
 		ECC_TOOL_SCHEMAS,
 		extensionTools ?? [],
 	);

@@ -1199,9 +1199,16 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			this._commandService,
 			this._logService,
 			this._configurationService,
+			{ includeFpgaTools: isChipMode, includeGodotTools: isGameMode || isGameModeSelected },
 		);
 		if (!allowWebSearch) {
 			agentTools = agentTools.filter(t => t.function.name !== 'search_web');
+		}
+		if (!isChipMode) {
+			agentTools = agentTools.filter(t => !isFpgaTool(t.function.name));
+		}
+		if (!isGameMode && !isGameModeSelected) {
+			agentTools = agentTools.filter(t => !isGodotTool(t.function.name));
 		}
 		/** Keep looping until the user task is done (edits OR investigation), not mere Q&A. */
 		const untilDoneIntent = (codeChangeIntent || investigateIntent);
