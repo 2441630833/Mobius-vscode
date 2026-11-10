@@ -1033,14 +1033,27 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 				continue;
 			}
 
+			// Never evict a chat that is mid-request. Disposing it drops the chat-model
+			// reference, and disposing the reference cancels the in-flight agent turn —
+			// which is exactly what made long runs die somewhere around the third todo
+			// item once the cache became bounded. A busy cache may temporarily exceed
+			// the cap; the next insert trims again once the turn finishes.
+			const children = [...this._sessionCache.entries()].filter(
+				([, child]) => !!child.parentResource && isEqual(child.parentResource, session.resource),
+			);
+			if (
+				session.status.get() === SessionStatus.InProgress
+				|| children.some(([, child]) => child.status.get() === SessionStatus.InProgress)
+			) {
+				continue;
+			}
+
 			// Children can only be reached through their primary, so they go too.
-			for (const [childKey, child] of [...this._sessionCache.entries()]) {
-				if (child.parentResource && isEqual(child.parentResource, session.resource)) {
-					this._sessionCache.delete(childKey);
-					this._sessionCacheLru.delete(childKey);
-					this._removeStoredSession(child.resource);
-					child.dispose();
-				}
+			for (const [childKey, child] of children) {
+				this._sessionCache.delete(childKey);
+				this._sessionCacheLru.delete(childKey);
+				this._removeStoredSession(child.resource);
+				child.dispose();
 			}
 
 			const wasVisible = !session.parentResource;

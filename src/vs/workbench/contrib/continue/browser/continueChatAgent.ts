@@ -2083,10 +2083,17 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					content.appendText(checkpointWarning);
 					progress([{ kind: 'warning', content }]);
 				}
+				// Only the checkpoint-aware file writers (`write_file` / `create_file`) can
+				// report a protection verdict; the patch-style editors (`apply_patch`,
+				// `insert_edit_into_file`, `replace_string_in_file`) return an `editUri`
+				// but no checkpoint state, so `checkpointProtected` is `undefined` for
+				// them. The old `!checkpointProtected` test therefore fired on every
+				// patched file and painted a "Checkpoint protection could not be
+				// verified" banner that reads like a failure and buries the tool result.
+				// Genuine checkpoint failures already surface through
+				// `checkpointWarning` above — keep this one in the log only.
 				if (ok && editUri && !checkpointWarning && !checkpointProtected) {
-					const content = new MarkdownString();
-					content.appendText(localize('continue.checkpoint.unverifiedEdit', 'Checkpoint protection could not be verified for this edit: {0}', editUri.fsPath));
-					progress([{ kind: 'warning', content }]);
+					this._logService.debug('[Continue] Checkpoint protection could not be verified for edit', editUri.fsPath);
 				}
 				if (!terminalCheckpointWarningShown && /^(?:run_in_terminal|run_terminal_command|terminal|terminal_command|bash|sh|cmd|execute_command|run_command|runCommand|runInTerminal)$/i.test(call.name)) {
 					terminalCheckpointWarningShown = true;
