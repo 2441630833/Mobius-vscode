@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Emitter, Event } from '../../../../../base/common/event.js';
-import { timeout } from '../../../../../base/common/async.js';
+import { disposableTimeout, timeout } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableMap, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../../base/common/network.js';
@@ -12,7 +12,7 @@ import { autorun, constObservable, IObservable, IReader, ISettableObservable, ob
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { URI, UriComponents } from '../../../../../base/common/uri.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { IChatService, IChatSendRequestOptions, IChatDetail, convertLegacyChatSessionTiming } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
+import { IChatService, IChatSendRequestOptions, IChatDetail, IChatModelReference, convertLegacyChatSessionTiming } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
 import { IChatSessionFileChange2, IChatSessionProviderOptionItem, SessionType } from '../../../../../workbench/contrib/chat/common/chatSessionsService.js';
 import { ISession, IChat, ISessionGitRepository, ISessionFolder, ISessionWorkspace, SessionStatus, ISessionType, ISessionFileChange, toSessionId, SESSION_WORKSPACE_GROUP_LOCAL, IChatCheckpoints } from '../../../../services/sessions/common/session.js';
 import { ChatAgentLocation, ChatConfiguration, ChatModeKind, ChatPermissionLevel, isChatPermissionLevel } from '../../../../../workbench/contrib/chat/common/constants.js';
@@ -207,13 +207,14 @@ class LocalSession extends Disposable {
 			}
 		} else {
 			// New session — create a fresh chat model
-			const modelRef = this._register(this.chatService.startNewLocalSession(
+			const modelRef = this.chatService.startNewLocalSession(
 				ChatAgentLocation.Chat,
 				{ debugOwner: 'LocalChatSessionsProvider#createNewSession' },
-			));
+			);
 			if (workspace && workspace.folders.length > 0) {
 				modelRef.object.setWorkingDirectory(workspace.folders[0]?.root);
 			}
+			this._sessionModelRef.value = modelRef;
 			this.resource = modelRef.object.sessionResource;
 			this.createdAt = new Date();
 
@@ -257,6 +258,9 @@ class LocalSession extends Disposable {
 			// Monotonically increasing version used to discard stale diff results.
 			let diffVersion = 0;
 
+			// At most one HEAD diff per session at a time (see below).
+			let diffInFlight = false;
+
 			this._register(autorun((reader) => {
 				const state = repo.state.read(reader);
 				const head = state.HEAD;
@@ -288,7 +292,18 @@ class LocalSession extends Disposable {
 				}
 
 				const version = ++diffVersion;
-				repo.diffBetweenWithStats2('HEAD').then(async diffChanges => {
+				if (diffInFlight) {
+					// A diff for this session is already running. During an agent run the
+					// repository emits a state change per edited file, and every cached
+					// session reacted to each of them — with hundreds of cached chats that
+					// meant hundreds of concurrent HEAD diffs, each reading every untracked
+					// file. That is what made long requests progressively slower. Skip the
+					// redundant pass; the next state change recomputes, so the final state
+					// is still reached.
+					return;
+				}
+				diffInFlight = true;
+				repo.diffBetweenWithStats2('HEAD').finally(() => { diffInFlight = false; }).then(async diffChanges => {
 					if (this._store.isDisposed || version !== diffVersion) {
 						return;
 					}
@@ -373,15 +388,93 @@ class LocalSession extends Disposable {
 	private readonly _modelTracker = this._register(new MutableDisposable());
 
 	/**
+	 * Reference to the chat model created for a brand-new session.
+	 *
+	 * A {@link LocalSession} is kept for the lifetime of the window by the
+	 * provider's session cache, so holding this reference indefinitely pinned one
+	 * `ChatModel` — every message, tool result and streamed part — per chat that
+	 * was ever started. It is released once the chat is idle and its metadata has
+	 * been persisted; the next send re-acquires the model through
+	 * `IChatService.acquireOrLoadSession`.
+	 */
+	private readonly _sessionModelRef = this._register(new MutableDisposable<IChatModelReference>());
+
+	/**
+	 * Drops the chat-model reference and every subscription derived from it.
+	 * The model is re-acquired lazily on the next send.
+	 */
+	releaseModel(): void {
+		this._trackedModelHandle = undefined;
+		this._modelTracker.clear();
+		this._notifyScheduler.clear();
+		this._sessionModelRef.clear();
+	}
+
+	/** Coalesces model-notification bursts (see {@link trackModel}). */
+	private readonly _notifyScheduler = this._register(new MutableDisposable());
+
+	private static readonly MODEL_NOTIFY_THROTTLE_MS = 200;
+
+	/**
+	 * Weak handle on the model currently being tracked. Held so that repeated
+	 * {@link trackModel} calls for the same model do not churn the subscription.
+	 */
+	private _trackedModelHandle: WeakRef<IChatModel> | undefined;
+
+	/**
 	 * Subscribe to live updates from the given chat model. Subsequent calls
 	 * replace any prior subscription. Disposed automatically with the session.
+	 *
+	 * IMPORTANT: the subscription must not strongly retain `model`. A
+	 * `LocalSession` is kept for the lifetime of the window by the provider's
+	 * session cache, so an autorun that closes over `model` — or over
+	 * `model.requestInProgress`, which stores its owning model — pins that whole
+	 * `ChatModel` (every message, tool result and streamed part of every long
+	 * agent run) even after the chat has been closed and the model disposed.
+	 * That is what made memory grow with usage instead of being released.
+	 * Reading the flag through a {@link WeakRef} keeps the behaviour while
+	 * letting an idle/disposed model be collected.
 	 */
 	trackModel(model: IChatModel, onChange: () => void): void {
+		if (this._trackedModelHandle?.deref() === model) {
+			return;
+		}
+
+		this._trackedModelHandle = new WeakRef(model);
 		this._modelTracker.value = autorun(reader => {
-			const inProgress = model.requestInProgress.read(reader);
+			const tracked = this._trackedModelHandle?.deref();
+			const inProgress = tracked ? tracked.requestInProgress.read(reader) : false;
 			this._status.set(inProgress ? SessionStatus.InProgress : SessionStatus.Completed, undefined);
-			onChange();
+			// Never call `onChange()` inline: the autorun body runs inside a
+			// tracking scope, so anything the callback reads (`model.timing`,
+			// request/response state, ...) silently becomes a dependency of
+			// this autorun. A single streamed response then re-runs the
+			// callback once per streamed chunk, re-persisting and re-firing
+			// the whole session list thousands of times per long request —
+			// which is where the progressive slowdown and the heap growth
+			// came from. Deferring collapses a burst into one refresh.
+			this._scheduleModelNotify(onChange);
 		});
+	}
+
+	/**
+         * Detach from the tracked chat model so it can be garbage collected while
+         * this session stays in the provider's cache. The subscription is re-armed
+         * lazily by the next {@link trackModel} call (i.e. next send).
+         */
+	untrackModel(): void {
+		this._trackedModelHandle = undefined;
+		this._modelTracker.clear();
+		this._notifyScheduler.clear();
+	}
+
+	private _scheduleModelNotify(onChange: () => void): void {
+		if (!this._notifyScheduler.value) {
+			this._notifyScheduler.value = disposableTimeout(() => {
+				this._notifyScheduler.clear();
+				onChange();
+			}, LocalSession.MODEL_NOTIFY_THROTTLE_MS);
+		}
 	}
 
 	setMode(mode: IChatMode | undefined): void {
@@ -435,8 +528,32 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 	/** Cache of sessions, keyed by resource URI string. Holds every chat (primary and children). */
 	private readonly _sessionCache = new Map<string, LocalSession>();
 
+	/**
+	 * Least-recently-used order for {@link _sessionCache}, oldest first.
+	 *
+	 * Every chat the user ever opened used to stay resident for the lifetime of
+	 * the window, so a long-running session kept growing and the whole provider
+	 * got slower. The cache is now capped and trimmed instead.
+	 */
+	private readonly _sessionCacheLru = new Map<string, true>();
+
+	/** Chat cache high-water mark; the least recently used idle chats are dropped. */
+	private static readonly MAX_CACHED_SESSIONS = 100;
+
 	/** Aggregated multi-chat session wrappers, keyed by group (primary) session id. */
 	private readonly _sessionGroupCache = new Map<string, ISession>();
+
+	/**
+	 * Sessions whose chat model is currently subscribed for live updates, in
+	 * least-recently-used order (oldest first). Deliberately bounded: a tracked
+	 * session keeps its whole `ChatModel` reachable (every message, tool result and
+	 * streamed part of every long agent run), so subscribing to every chat the user
+	 * ever opened is exactly what made the heap grow with usage. Inactive chats are
+	 * detached and re-armed on demand by {@link _syncSessionFromModel}.
+	 */
+	private readonly _trackedSessions = new Map<string, LocalSession>();
+
+	private static readonly MAX_TRACKED_SESSIONS = 24;
 
 	/** Fires when the set of chats in a group changes (chat added or removed). */
 	private readonly _onDidChangeGroupMembership = this._register(new Emitter<{ readonly groupKey: string }>());
@@ -539,14 +656,33 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 		if (sessionCwd && model.workingDirectory?.toString() !== sessionCwd.toString()) {
 			model.setWorkingDirectory(sessionCwd);
 		}
+		// No strong `model` reference may be captured here: this callback lives as
+		// long as the tracked session, and closing over the model would pin every
+		// message, tool result and streamed part of every long agent run for the
+		// lifetime of the window. Deref through a WeakRef instead.
+		const modelHandle = new WeakRef(model);
 		session.trackModel(model, () => {
-			const timing = model.timing;
+			const tracked = modelHandle.deref();
+			if (!tracked) {
+				return;
+			}
+			const timing = tracked.timing;
 			const lastUpdate = timing.lastRequestEnded ?? timing.lastRequestStarted ?? timing.created;
-			session.setTitle(model.title);
+			const title = tracked.title;
+			// Tool ticks / streamed chunks bump neither title nor timing, so the
+			// vast majority of notifications are no-ops. Bail out before doing
+			// the persist + full session-list refresh.
+			if (title === session.title.get() && lastUpdate === session.updatedAt.get().getTime()) {
+				return;
+			}
+			if (title !== session.title.get()) {
+				session.setTitle(title);
+			}
 			session.setUpdatedAt(new Date(lastUpdate));
 			this._updateStoredSession(session);
 			this._onDidChangeSessions.fire({ added: [], removed: [], changed: [this._toISession(session)] });
 		});
+		this._trackSession(session);
 	}
 
 	// -- Session types --
@@ -622,7 +758,7 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 					session.setParentResource(parentUri);
 				}
 			}
-			this._sessionCache.set(key, session);
+			this._cacheSession(key, session);
 			loaded.push(session);
 		}
 
@@ -642,23 +778,74 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 
 	// -- Storage helpers --
 
+	/**
+	 * In-memory mirror of {@link STORAGE_KEY_SESSIONS}.
+	 *
+	 * Session metadata is read and rewritten on every request start/finish (title,
+	 * status, timing) and on {@link LocalSession} tracking callbacks. Re-parsing the
+	 * whole persisted blob for each of those events made the provider progressively
+	 * slower the more chats the user accumulated. Keep one parsed copy as the source
+	 * of truth instead.
+	 */
+	private _storedSessions: IStoredLocalSession[] | undefined;
+
+	/**
+	 * `resource.toString()` → stored entry, kept in sync with {@link _storedSessions}.
+	 *
+	 * Every metadata mutation used to locate its entry with
+	 * `sessions.findIndex(s => URI.revive(s.uri).toString() === key)`, i.e. it revived
+	 * a URI object for every stored session on every call. With a few hundred chats
+	 * and a model notification per request tick that turned into millions of throwaway
+	 * allocations. The index makes each lookup O(1) and allocation-free.
+	 */
+	private readonly _storedSessionIndex = new Map<string, IStoredLocalSession>();
+
+	/** Pending coalesced write of {@link _storedSessions}. */
+	private _storeFlushHandle: ReturnType<typeof setTimeout> | undefined;
+
+	/**
+	 * A single request produces several metadata mutations (submit, completion, title
+	 * change). Serialising the full list for each one is wasted work, so writes are
+	 * coalesced into one flush per window.
+	 */
+	private static readonly STORE_FLUSH_DELAY_MS = 500;
+
 	private _readStoredSessions(): IStoredLocalSession[] {
+		if (this._storedSessions) {
+			return this._storedSessions;
+		}
+
 		const raw = this.storageService.get(STORAGE_KEY_SESSIONS, StorageScope.PROFILE);
 		if (!raw) {
-			return [];
+			this._storedSessions = [];
+			return this._storedSessions;
 		}
 		try {
 			const parsed = JSON.parse(raw);
-			return Array.isArray(parsed) ? parsed : [];
+			this._storedSessions = Array.isArray(parsed) ? parsed : [];
 		} catch {
-			return [];
+			this._storedSessions = [];
+		}
+		this._reindexStoredSessions(this._storedSessions);
+		const trimmed = this._trimPersistedSessions(this._storedSessions);
+		if (trimmed !== this._storedSessions) {
+			this._storedSessions = trimmed;
+			this._reindexStoredSessions(trimmed);
+		}
+		return this._storedSessions;
+	}
+
+	private _reindexStoredSessions(sessions: IStoredLocalSession[]): void {
+		this._storedSessionIndex.clear();
+		for (const stored of sessions) {
+			this._storedSessionIndex.set(URI.revive(stored.uri).toString(), stored);
 		}
 	}
 
 	private _addStoredSession(session: LocalSession): void {
 		const sessions = this._readStoredSessions();
 		const key = session.resource.toString();
-		if (sessions.some(s => URI.revive(s.uri).toString() === key)) {
+		if (this._storedSessionIndex.has(key)) {
 			return;
 		}
 		const workingDirectory = session.workspace.get()?.folders[0]?.root;
@@ -679,35 +866,198 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 
 	private _updateStoredSession(session: LocalSession): void {
 		const sessions = this._readStoredSessions();
-		const key = session.resource.toString();
-		const idx = sessions.findIndex(s => URI.revive(s.uri).toString() === key);
-		if (idx >= 0) {
-			sessions[idx] = {
-				...sessions[idx],
-				title: session.title.get(),
-				lastMessageDate: session.updatedAt.get().getTime(),
-				archived: session.isArchived.get(),
-			};
-			this._writeStoredSessions(sessions);
+		const stored = this._storedSessionIndex.get(session.resource.toString());
+		if (!stored) {
+			return;
 		}
+		const next: IStoredLocalSession = {
+			...stored,
+			title: session.title.get(),
+			lastMessageDate: session.updatedAt.get().getTime(),
+			archived: session.isArchived.get(),
+		};
+		// Streaming/tool ticks leave title and timing untouched; re-serialising the
+		// whole list for those would be pure waste.
+		if (stored.title === next.title && stored.lastMessageDate === next.lastMessageDate && stored.archived === next.archived) {
+			return;
+		}
+		const idx = sessions.indexOf(stored);
+		if (idx >= 0) {
+			sessions[idx] = next;
+		} else {
+			sessions.push(next);
+		}
+		this._writeStoredSessions(sessions);
 	}
 
 	private _removeStoredSession(resource: URI): void {
 		const sessions = this._readStoredSessions();
-		const key = resource.toString();
-		const filtered = sessions.filter(s => URI.revive(s.uri).toString() !== key);
-		if (filtered.length !== sessions.length) {
-			this._writeStoredSessions(filtered);
+		const stored = this._storedSessionIndex.get(resource.toString());
+		if (!stored) {
+			return;
 		}
+		this._writeStoredSessions(sessions.filter(s => s !== stored));
 	}
 
 	private _writeStoredSessions(sessions: IStoredLocalSession[]): void {
+		sessions = this._trimPersistedSessions(sessions);
+		this._storedSessions = sessions;
+		this._reindexStoredSessions(sessions);
+		if (this._storeFlushHandle !== undefined) {
+			return;
+		}
+		this._storeFlushHandle = setTimeout(() => {
+			this._storeFlushHandle = undefined;
+			this._flushStoredSessions();
+		}, LocalChatSessionsProvider.STORE_FLUSH_DELAY_MS);
+	}
+
+	/**
+	 * Upper bound on the number of chats mirrored into memory and storage.
+	 *
+	 * The provider used to keep every chat the user had ever created: the whole
+	 * metadata list was parsed into memory at startup, one {@link LocalSession} was
+	 * allocated per entry, and the list was re-serialised on every metadata write.
+	 * On long-lived windows with heavy agent usage that grew without bound. The
+	 * oldest chats (by last message date) are dropped first; chats that are
+	 * currently mid-request are pinned so an active run is never evicted.
+	 */
+	private static readonly MAX_PERSISTED_SESSIONS = 200;
+
+	/**
+	 * Trims `sessions` down to {@link MAX_PERSISTED_SESSIONS}. Returns the input
+	 * array unchanged when nothing has to be dropped.
+	 */
+	private _trimPersistedSessions(sessions: IStoredLocalSession[]): IStoredLocalSession[] {
+		if (sessions.length <= LocalChatSessionsProvider.MAX_PERSISTED_SESSIONS) {
+			return sessions;
+		}
+
+		const pinned = new Set<string>();
+		for (const [key, session] of this._sessionCache) {
+			if (session.status.get() === SessionStatus.InProgress) {
+				pinned.add(key);
+			}
+		}
+
+		const byAge = sessions
+			.map((entry, index) => ({ entry, index }))
+			.sort((a, b) => (b.entry.lastMessageDate || 0) - (a.entry.lastMessageDate || 0) || b.index - a.index);
+
+		const keep = new Set<IStoredLocalSession>();
+		let budget = LocalChatSessionsProvider.MAX_PERSISTED_SESSIONS;
+		for (const { entry } of byAge) {
+			const key = URI.revive(entry.uri).toString();
+			const isPinned = pinned.has(key);
+			if (!isPinned && budget <= 0) {
+				continue;
+			}
+			keep.add(entry);
+			if (!isPinned) {
+				budget--;
+			}
+		}
+
+		if (keep.size === sessions.length) {
+			return sessions;
+		}
+		this.logService.trace(`[LocalChatSessionsProvider] Trimmed persisted sessions ${sessions.length} -> ${keep.size}`);
+		// Preserve the original ordering so the session list does not reshuffle.
+		return sessions.filter(entry => keep.has(entry));
+	}
+
+	private _releaseSessionResources(session: LocalSession): void {
+		session.untrackModel();
+		// An unsaved new chat has no persisted entry to restore from, so its model
+		// reference must be kept until it is committed.
+		if (this._storedSessionIndex.has(session.resource.toString())) {
+			session.releaseModel();
+		}
+	}
+
+	private _flushStoredSessions(): void {
+		const sessions = this._storedSessions;
+		if (!sessions) {
+			return;
+		}
 		this.storageService.store(
 			STORAGE_KEY_SESSIONS,
 			JSON.stringify(sessions),
 			StorageScope.PROFILE,
 			StorageTarget.MACHINE,
 		);
+	}
+
+	// -- Cache maintenance --
+
+	/** Mark a cached chat as recently used. */
+	private _touchCachedSession(key: string): void {
+		this._sessionCacheLru.delete(key);
+		this._sessionCacheLru.set(key, true);
+	}
+
+	/** Insert into {@link _sessionCache}, keeping LRU order and the size cap in sync. */
+	private _cacheSession(key: string, session: LocalSession): void {
+		this._sessionCache.set(key, session);
+		this._touchCachedSession(key);
+		this._trimSessionCache();
+	}
+
+	/**
+	 * Bound the in-memory chat cache so a long session cannot grow without limit.
+	 *
+	 * Evicts the least recently used chats together with their child chats,
+	 * disposes them and removes them from the persisted metadata list, then tells
+	 * the sessions list they are gone (the same shape as a user-initiated delete,
+	 * so no stale ISession is left behind). Archived chats are user-pinned history
+	 * and are never dropped implicitly.
+	 */
+	private _trimSessionCache(): void {
+		if (this._sessionCache.size <= LocalChatSessionsProvider.MAX_CACHED_SESSIONS) {
+			return;
+		}
+
+		const removed: ISession[] = [];
+		let evicted = 0;
+		for (const key of [...this._sessionCacheLru.keys()]) {
+			if (this._sessionCache.size <= LocalChatSessionsProvider.MAX_CACHED_SESSIONS) {
+				break;
+			}
+
+			const session = this._sessionCache.get(key);
+			if (!session) {
+				this._sessionCacheLru.delete(key);
+				continue;
+			}
+			if (session.isArchived.get()) {
+				continue;
+			}
+
+			// Children can only be reached through their primary, so they go too.
+			for (const [childKey, child] of [...this._sessionCache.entries()]) {
+				if (child.parentResource && isEqual(child.parentResource, session.resource)) {
+					this._sessionCache.delete(childKey);
+					this._sessionCacheLru.delete(childKey);
+					this._removeStoredSession(child.resource);
+					child.dispose();
+				}
+			}
+
+			const wasVisible = !session.parentResource;
+			this._sessionCache.delete(key);
+			this._sessionCacheLru.delete(key);
+			this._removeStoredSession(session.resource);
+			if (wasVisible) {
+				removed.push(this._toISession(session));
+			}
+			session.dispose();
+			evicted++;
+		}
+
+		if (removed.length > 0) {
+			this._onDidChangeSessions.fire({ added: [], removed, changed: [] });
+		}
+		this.logService.trace(`[LocalChatSessionsProvider] Trimmed ${evicted} least recently used chats (cap ${LocalChatSessionsProvider.MAX_CACHED_SESSIONS})`);
 	}
 
 	// -- Workspace --
@@ -861,6 +1211,7 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 		for (const chat of group) {
 			await this.chatService.removeHistoryEntry(chat.resource);
 			this._sessionCache.delete(chat.resource.toString());
+			this._untrackSession(chat);
 			this._removeStoredSession(chat.resource);
 			chat.dispose();
 		}
@@ -905,6 +1256,7 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 
 		await this.chatService.removeHistoryEntry(target.resource);
 		this._sessionCache.delete(target.resource.toString());
+		this._untrackSession(target);
 		this._removeStoredSession(target.resource);
 		target.dispose();
 
@@ -964,7 +1316,7 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 		child.setModelId(primary.modelId.get());
 		child.setTitle(localize('newChat', "New Chat"));
 
-		this._sessionCache.set(child.resource.toString(), child);
+		this._cacheSession(child.resource.toString(), child);
 		this._onDidChangeGroupMembership.fire({ groupKey: primary.sessionId });
 		this._onDidChangeSessions.fire({ added: [], removed: [], changed: [this._toISession(primary)] });
 
@@ -1014,7 +1366,7 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 		}
 
 		// Put the new session into the cache and persist its URI.
-		this._sessionCache.set(newSession.resource.toString(), newSession);
+		this._cacheSession(newSession.resource.toString(), newSession);
 		this._addStoredSession(newSession);
 		this._newSessions.deleteAndLeak(newSession.sessionId);
 
@@ -1049,6 +1401,7 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 		if (result.kind === 'rejected') {
 			// Roll back the unsent child so it does not linger in the group.
 			this._sessionCache.delete(child.resource.toString());
+			this._untrackSession(child);
 			this._onDidChangeGroupMembership.fire({ groupKey: primary.sessionId });
 			this._onDidChangeSessions.fire({ added: [], removed: [], changed: [groupISession] });
 			child.dispose();
@@ -1122,12 +1475,62 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 	// -- Private helpers --
 
 	override dispose(): void {
+		// Persist any coalesced metadata change before the provider goes away.
+		if (this._storeFlushHandle !== undefined) {
+			clearTimeout(this._storeFlushHandle);
+			this._storeFlushHandle = undefined;
+		}
+		this._flushStoredSessions();
+
+		for (const session of this._trackedSessions.values()) {
+			session.untrackModel();
+		}
+		this._trackedSessions.clear();
 		for (const session of this._sessionCache.values()) {
 			session.dispose();
 		}
 		this._sessionCache.clear();
 		this._sessionGroupCache.clear();
+		this._sessionCacheLru.clear();
+		this._storedSessionIndex.clear();
 		super.dispose();
+	}
+
+	/**
+	 * Drops `session` from the tracking LRU and releases its chat-model subscription,
+	 * so a deleted chat is never retained by the cache.
+	 */
+	private _untrackSession(session: LocalSession): void {
+		const key = session.resource.toString();
+		if (this._trackedSessions.get(key) === session) {
+			this._trackedSessions.delete(key);
+		}
+		session.untrackModel();
+	}
+
+	/**
+	 * Marks `session` as most-recently-used and detaches the least recently used
+	 * inactive chat once the tracking budget is exceeded. Never detaches a chat that
+	 * is mid-request — it needs the model notification to persist its final title and
+	 * to leave the in-progress status.
+	 */
+	private _trackSession(session: LocalSession): void {
+		const key = session.resource.toString();
+		this._trackedSessions.delete(key);
+		this._trackedSessions.set(key, session);
+		if (this._trackedSessions.size <= LocalChatSessionsProvider.MAX_TRACKED_SESSIONS) {
+			return;
+		}
+		for (const [candidateKey, candidate] of this._trackedSessions) {
+			if (this._trackedSessions.size <= LocalChatSessionsProvider.MAX_TRACKED_SESSIONS) {
+				break;
+			}
+			if (candidate === session || candidate.status.get() === SessionStatus.InProgress) {
+				continue;
+			}
+			this._releaseSessionResources(candidate);
+			this._trackedSessions.delete(candidateKey);
+		}
 	}
 
 	/**
@@ -1197,6 +1600,7 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 
 	private _findSessionByResource(resource: URI): LocalSession | undefined {
 		const cached = this._sessionCache.get(resource.toString());
+			this._touchCachedSession(resource.toString());
 		if (cached) {
 			return cached;
 		}

@@ -46,6 +46,7 @@ import { getOutput } from '../outputHelpers.js';
 import { LargeOutputFileWriter } from '../largeOutputFileWriter.js';
 import { buildCommandDisplayText, extractCdPrefix, isFish, isPowerShell, isWindowsPowerShell, isZsh, normalizeTerminalCommandForDisplay } from '../runInTerminalHelpers.js';
 import type { ICommandLinePresenter } from './commandLinePresenter/commandLinePresenter.js';
+import { isContinuePhysicalAiIde } from '../../../../continue/browser/continueProduct.js';
 import { NodeCommandLinePresenter } from './commandLinePresenter/nodeCommandLinePresenter.js';
 import { PythonCommandLinePresenter } from './commandLinePresenter/pythonCommandLinePresenter.js';
 import { RubyCommandLinePresenter } from './commandLinePresenter/rubyCommandLinePresenter.js';
@@ -3081,6 +3082,15 @@ export class RunInTerminalTool extends Disposable implements IToolImpl {
 		// never emitted. That renders in the user-request lane and starts a new
 		// unwanted agent turn.
 		const handleSessionShouldSuppressSteering = (): boolean => {
+		// Mobius: the Continue agent loop already receives every command's output as a
+		// tool result, so a background completion never needs to re-enter the chat.
+		// Sending it as a Steering request preempts the running turn — the transcript
+		// jumps back to the user lane mid-run and the task stalls after 2-3 todo items.
+		// Never steer for Continue sessions.
+		if (isContinuePhysicalAiIde()) {
+			disposeNotification();
+			return true;
+		}
 			if (sessionRef.object.lastRequest?.response?.isCanceled) {
 				disposeNotification();
 				return true;

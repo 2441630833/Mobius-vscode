@@ -98,6 +98,12 @@ export enum ToolsScope {
 
 export class ChatSelectedTools extends Disposable {
 
+	/**
+	 * Below this many enabled entries the stored selection is treated as corrupt
+	 * (see {@link ChatSelectedTools.entriesMap}) rather than as a deliberate choice.
+	 */
+	private static readonly MIN_ENABLED_TOOLS = 4;
+
 	private readonly _globalState: ObservableMemento<ToolEnablementStates>;
 
 	private readonly _sessionStates = new ObservableMap<string, ToolEnablementStates | undefined>();
@@ -137,7 +143,15 @@ export class ChatSelectedTools extends Disposable {
 		let currentMap = this._sessionStates.observable.read(r).get(currentMode.id);
 		if (!currentMap && currentMode.kind === ChatModeKind.Agent) {
 			const modeTools = currentMode.customTools?.read(r);
-			if (modeTools) {
+			// Mobius fix: an EMPTY allowlist means "this mode file declares no tools",
+			// not "disable every tool". `toToolAndToolSetEnablementMap([])` maps every
+			// registered tool (and tool set) to `false`, so a mode file carrying
+			// `tools: []` — e.g. `.github/agents/Plan.agent.md` — stripped the session
+			// down to the few tools the agent harness adds itself. The agent then
+			// truthfully reported that it had no terminal and could not work, which
+			// looked like a random per-session bug because it only hit chats bound to
+			// that mode. Treat an empty list as "no restriction".
+			if (modeTools && modeTools.length > 0) {
 				currentMap = ToolEnablementStates.fromMap(this._toolsService.toToolAndToolSetEnablementMap(modeTools, lm));
 			}
 		}
@@ -156,6 +170,28 @@ export class ChatSelectedTools extends Disposable {
 			map.set(toolSet, toolSetEnabled);
 			for (const tool of toolSet.getTools(r)) {
 				map.set(tool, toolSetEnabled || currentMap.tools.get(tool.id) === true); // if unknown, use toolSetEnabled
+			}
+		}
+
+		// Mobius fix: an over-aggressive or stale enablement snapshot used to leave a
+		// session with almost nothing enabled — in practice only `manage_todo_list` —
+		// because the file/terminal tools live inside a tool set whose stored entry was
+		// `false`. The agent then honestly reported "no terminal tool available" and
+		// could neither run commands nor edit files.
+		// A chat with fewer than MIN_ENABLED_TOOLS enabled entries is never an
+		// intentional configuration, so heal it instead of shipping a crippled tool
+		// list. Any deliberate choice can simply be re-applied afterwards.
+		if (map.size > 0) {
+			let enabledCount = 0;
+			for (const enabled of map.values()) {
+				if (enabled) {
+					enabledCount++;
+				}
+			}
+			if (enabledCount < ChatSelectedTools.MIN_ENABLED_TOOLS) {
+				for (const entry of map.keys()) {
+					map.set(entry, true);
+				}
 			}
 		}
 		return map;
