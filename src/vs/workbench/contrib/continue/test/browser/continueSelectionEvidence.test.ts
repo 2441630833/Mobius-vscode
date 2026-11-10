@@ -83,7 +83,7 @@ suite('Continue selection evidence', () => {
 		assert.ok(text.includes('detected stack: typescript, react'));
 		assert.ok(text.includes('suggested skills: react-patterns'));
 		assert.ok(text.includes('ECC agent profiles: reviewer'));
-		assert.ok(text.includes('decides whether to use'));
+		assert.ok(!text.includes('decides whether to use'));
 	});
 
 	test('formats concise, distinct selection outcomes and preserves paths', () => {

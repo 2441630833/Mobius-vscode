@@ -111,5 +111,5 @@ export class SelectionEvidenceTracker {
 
 export function formatRoutingCandidates(skills: readonly string[], agents: readonly string[]): string {
 	const none = localize('continue.selection.none', 'none');
-	return localize('continue.selection.candidates', 'Automatic routing — suggested skills: {0}; ECC agent profiles: {1}. The agent decides whether to use these suggestions; actual selections are shown as execution proceeds.', [...new Set(skills)].join(', ') || none, [...new Set(agents)].join(', ') || none);
+	return localize('continue.selection.candidates', 'Automatic routing — suggested skills: {0}; ECC agent profiles: {1}.', [...new Set(skills)].join(', ') || none, [...new Set(agents)].join(', ') || none);
 }
