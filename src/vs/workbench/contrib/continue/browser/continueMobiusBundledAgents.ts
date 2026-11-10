@@ -1,5 +1,9 @@
 /*---------------------------------------------------------------------------------------------
- *  Mobius — bundled Game and Chip custom agents for the Agents mode picker
+ *  Mobius — bundled Chip and PPT custom agents for the Agents mode picker
+ *
+ *  The Game (Godot) agent was retired: the Agents window only surfaces the
+ *  general agent, so a bundled Game entry could still be picked up by restored
+ *  chats and launch a Godot preview nobody asked for.
  *--------------------------------------------------------------------------------------------*/
 
 import { CancellationToken } from '../../../../base/common/cancellation.js';
@@ -17,7 +21,7 @@ import { IWorkspaceContextService } from '../../../../platform/workspace/common/
 import { LocalSessionType } from '../../../../sessions/contrib/providers/localChatSessions/browser/localChatSessionsProvider.js';
 import { CONTINUE_EXTENSION_IDENTIFIER, isContinuePhysicalAiIde } from './continueProduct.js';
 
-const MOBIUS_BUNDLED_AGENT_NAMES = ['Game', 'Chip', 'PPT'] as const;
+const MOBIUS_BUNDLED_AGENT_NAMES = ['Chip', 'PPT'] as const;
 
 const mobiusBundledExtension = {
 	identifier: CONTINUE_EXTENSION_IDENTIFIER,

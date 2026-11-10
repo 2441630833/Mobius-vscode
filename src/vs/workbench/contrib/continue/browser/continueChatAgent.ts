@@ -31,7 +31,6 @@ import {
 	ILanguageModelsService,
 } from '../../chat/common/languageModels.js';
 import { didWriteRequestTodos, initializeRequestTodos, REQUEST_TODO_INSTRUCTIONS, RequestTodoCheckpoint, shouldReconcileRequestTodos } from './continueRequestTodos.js';
-import { formatSuperAgentResult, SuperAgentChatResult } from './continueSuperAgentRouting.js';
 import { IChatTodoListService } from '../../chat/common/tools/chatTodoListService.js';
 import {
 	IChatAgentData,
@@ -138,6 +137,17 @@ const QA_TOOL_TURNS = 64;
 const EXPLORE_BEFORE_EDIT_NUDGE_TURN = 2;
 /** Extra tool turns when a coding run hit the soft cap with zero writes. */
 const EDIT_RESCUE_EXTRA_TURNS = 12;
+/**
+ * Long-horizon continuation: instead of ending the request when the turn budget runs
+ * out with todos still open, grant another block of tool turns and keep going.
+ * A multi-file implementation needs dozens of turns; cutting it at the soft cap is
+ * what made long tasks stop around the 3rd todo item.
+ */
+const LONG_HORIZON_CONTINUATION_TURNS = 24;
+/** Upper bound on continuations so a genuinely runaway loop still terminates. */
+const MAX_LONG_HORIZON_CONTINUATIONS = 8;
+/** Fewer continuations when the run keeps no todo list (no progress marker to trust). */
+const MAX_LONG_HORIZON_CONTINUATIONS_NO_TODO = 3;
 /** How many times to re-ask "is the task done?" before accepting a no-tool stop with writes. */
 const MAX_COMPLETION_VERIFY_NUDGES = 3;
 /** Lightweight one-shot edits — fewer completion loops before accepting done. */
@@ -161,7 +171,7 @@ const MAX_DEAD_END_TOOL_NUDGES = 3;
 /** After tools ran, allow this many empty/no-tool nudge retries before accepting a stop. */
 const MAX_POST_TOOL_CONTINUE_NUDGES = 4;
 /** Cap stream/API error recoveries so a broken provider cannot loop forever. */
-const MAX_STREAM_ERROR_RECOVERIES = 2;
+const MAX_STREAM_ERROR_RECOVERIES = 4;
 /** Transient "Canceled" / EH blips — retry quietly with backoff (coding tasks hit this often). */
 const MAX_TRANSIENT_CANCEL_RECOVERIES = 12;
 /** One-shot rescue after hard stream-error budget is spent on a still-unfinished coding task. */
@@ -179,9 +189,9 @@ const MODEL_CONTEXT_CHAR_BUDGET = 200_000;
  * stuck, not progressing: the call is deterministic, so re-running it cannot
  * produce new information. Fires on the 3rd identical turn.
  */
-const MAX_IDENTICAL_TOOL_REPEATS = 5;
+const MAX_IDENTICAL_TOOL_REPEATS = 8;
 /** Consecutive turns that only rewrite an unchanged todo list before we stop the loop. */
-const MAX_NO_PROGRESS_CONTROL_TURNS = 5;
+const MAX_NO_PROGRESS_CONTROL_TURNS = 8;
 const MAX_TODO_LIST_FORCE_NUDGES = 2;
 /**
  * Hard cap on consecutive tool_choice='required' turns with zero writes.
@@ -537,15 +547,43 @@ export function pruneHistoryForContext(
 
 	const system = kept[0]?.role === ChatMessageRole.System ? kept[0] : undefined;
 	const rest = system ? kept.slice(1) : kept;
+
+	// Phase 2 — compress instead of discarding. Older tool results are replaced by
+	// a one-line stub once they pass a small threshold; the tool_call ↔ tool_result
+	// pairing survives, only the payload is dropped. Without this a long agent run
+	// either overflows the window or gets reset down to its last few turns.
+	const COMPACT_THRESHOLD_CHARS = 2_000;
+	const keepRecentTurns = 6;
+	const compactBefore = Math.max(0, rest.length - keepRecentTurns);
+	const compacted: IChatMessage[] = rest.map((msg, index) => {
+		if (index >= compactBefore) {
+			return msg;
+		}
+		let changed = false;
+		const content = (msg.content ?? []).map(part => {
+			if (part && part.type === 'tool_result' && Array.isArray(part.value)) {
+				const value = part.value.map(v => {
+					if (v && v.type === 'text' && typeof v.value === 'string' && v.value.length > COMPACT_THRESHOLD_CHARS) {
+						changed = true;
+						return { ...v, value: `…[earlier tool output compacted: ${v.value.length} chars]` };
+					}
+					return v;
+				});
+				return changed ? { ...part, value } : part;
+			}
+			return part;
+		});
+		return changed ? { ...msg, content } : msg;
+	});
 	const tail: IChatMessage[] = [];
 	let budget = charBudget - (system ? size([system]) : 0);
-	for (let i = rest.length - 1; i >= 0; i--) {
-		const cost = size([rest[i]]);
+	for (let i = compacted.length - 1; i >= 0; i--) {
+		const cost = size([compacted[i]]);
 		if (tail.length > 0 && budget - cost < 0) {
 			break;
 		}
 		budget -= cost;
-		tail.unshift(rest[i]);
+		tail.unshift(compacted[i]);
 	}
 	// Never lead with a tool_result (its assistant/tool_calls parent was dropped).
 	while (tail.length > 0 && tail[0].role === ChatMessageRole.User && Array.isArray(tail[0].content)
@@ -731,11 +769,19 @@ class ContinueChatAgent implements IChatAgentImplementation {
 
 		const isChipModeSelected = isChipModeExplicitlySelected(request);
 		const isPptModeSelected = isPptModeExplicitlySelected(request);
+		// Mobius: Game mode / Godot tooling is retired. The UI no longer exposes agent mode
+		// lists — only the general agent — so a general run must never route itself into
+		// Game mode, bootstrap Godot, or open a game window on completion. Kept as a single
+		// switch so the tooling can be brought back deliberately rather than by accident.
+		const GAME_MODE_ENABLED = false;
 		const isGameModeSelected = isGameModeExplicitlySelected(request);
 
 		const isPptMode = isPptModeSelected || routedMode === 'ppt';
 		const isChipMode = !isPptMode && (isChipModeSelected || routedMode === 'chip');
-		const isGameMode = !isPptMode && !isChipMode && (isGameModeSelected || routedMode === 'game');
+		// Godot/Game tooling is opt-in only: the auto-router must never turn a generic
+// Agent request into Game mode, otherwise Godot tools and the automatic Godot
+// preview window show up in unrelated work.
+            const isGameMode = GAME_MODE_ENABLED && !isPptMode && !isChipMode && isGameModeSelected;
 
 		if (modeInference && modeInference.mode !== 'agent') {
 			this._logService.info(
@@ -788,19 +834,6 @@ class ContinueChatAgent implements IChatAgentImplementation {
 					eccCandidatesShown = eccPreflightResult.ok;
 				}
 			}
-		}
-		if (isAgentMode && !isPptMode && !isChipMode && !isGameMode && cwd && !token.isCancellationRequested) {
-			const background = await this._commandService.executeCommand<SuperAgentChatResult>('workbench.action.mobius.superagent.route', {
-				root: cwd, session: request.sessionResource.toString(), requestId: request.requestId, text: request.message, modelId,
-				ecc: eccPreflightResult ? { root: eccRoot?.toString(), skills: eccPreflightResult.matchedSkills, agents: eccPreflightResult.matchedAgents, advisory: buildEccAdvisory(eccPreflightResult) } : undefined,
-				context: history.slice(-6).map(h => h.request.message).join('\n\n').slice(-12000),
-				unsupportedContext: request.variables.variables.length > 0 || request.hasHooksEnabled || !!request.subAgentInvocationId,
-			});
-			if (background?.handled) {
-				progress([{ kind: 'markdownContent', content: new MarkdownString().appendText(formatSuperAgentResult(background)) }]);
-				return {};
-			}
-			if (background?.reason) { progress([{ kind: 'markdownContent', content: new MarkdownString().appendText(`Super Agent：${background.reason}\n\n由当前聊天继续处理。\n\n`) }]); }
 		}
 		const activeHarness = MobiusHarnessRegistry.getActiveHarness();
 		const requestedDeepSeekHarness = /^\/deepseek(?:\s+|$)/i.test(request.message.trim());
@@ -884,7 +917,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 					routedSkillNames.unshift('ppt-master');
 				}
 			}
-			if (isGameModeSelected || isGameMode) {
+			if (isGameMode) {
 				const ccgsRoot = resolveCcgsRootUri(cwd, this._workspaceService);
 				const gf3aRoot = resolveGameFactory3ARootUri(cwd, this._workspaceService);
 				const godogenRoot = resolveGodogenRootUri(cwd, this._workspaceService);
@@ -953,7 +986,7 @@ class ContinueChatAgent implements IChatAgentImplementation {
 			if (pptMasterSkill) {
 				agentSystem += `\n\n<ppt-master>\n${pptModeSystemHint(pptMasterSkill)}\n</ppt-master>`;
 			}
-		} else if (isGameModeSelected || isGameMode) {
+		} else if (isGameMode) {
 			const ccgsRel = ccgsRelativePath(resolveCcgsRootUri(cwd, this._workspaceService), this._workspaceService);
 			const gf3aRel = gf3aRelativePath(resolveGameFactory3ARootUri(cwd, this._workspaceService), this._workspaceService);
 			const godogenRel = godogenRelativePath(resolveGodogenRootUri(cwd, this._workspaceService), this._workspaceService);
@@ -1199,7 +1232,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			this._commandService,
 			this._logService,
 			this._configurationService,
-			{ includeFpgaTools: isChipMode, includeGodotTools: isGameMode || isGameModeSelected },
+			{ includeFpgaTools: isChipMode, includeGodotTools: isGameMode },
 		);
 		if (!allowWebSearch) {
 			agentTools = agentTools.filter(t => t.function.name !== 'search_web');
@@ -1207,7 +1240,7 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 		if (!isChipMode) {
 			agentTools = agentTools.filter(t => !isFpgaTool(t.function.name));
 		}
-		if (!isGameMode && !isGameModeSelected) {
+		if (!isGameMode) {
 			agentTools = agentTools.filter(t => !isGodotTool(t.function.name));
 		}
 		/** Keep looping until the user task is done (edits OR investigation), not mere Q&A. */
@@ -1324,6 +1357,8 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					? RUNAWAY_TOOL_TURN_GUARD
 					: QA_TOOL_TURNS;
 		let turnBudget = maxTurns;
+		/** Number of times the budget was extended because todos were still open. */
+		let longHorizonContinuations = 0;
 		let editRescueGranted = false;
 		let terminalCheckpointWarningShown = false;
 		let finalTodoReconciliationAttempts = 0;
@@ -1347,7 +1382,43 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			return true;
 		};
 
-		for (let turn = 0; turn < turnBudget; turn++) {
+		for (let turn = 0; ; turn++) {
+			// Long-horizon guard: the per-request turn budget is a soft cap, not a task
+			// abort. While the todo list still has unfinished items, extend the budget
+			// and tell the model to continue with the next item, instead of forcing a
+			// status summary halfway through the implementation.
+			if (turn >= turnBudget) {
+				const openTodos = request.sessionResource
+					? this._chatTodoListService.getTodos(request.sessionResource).filter(todo => todo.status !== 'completed')
+					: [];
+				// Two ways a long task legitimately needs more turns:
+				//  - an explicit todo list still has open items, or
+				//  - the run is a code change that never reported completion (models often
+				//    skip the todo tool entirely).
+				// Both stay bounded so a genuine runaway still terminates.
+				const hasOpenTodos = openTodos.length > 0;
+				const continuationLimit = hasOpenTodos ? MAX_LONG_HORIZON_CONTINUATIONS : MAX_LONG_HORIZON_CONTINUATIONS_NO_TODO;
+				if (!exitedOnTaskComplete && !needsFinalAnswer && !token.isCancellationRequested
+					&& !stoppedForRateLimit && !stoppedForContextOverflow
+					&& (hasOpenTodos || codeChangeIntent)
+					&& longHorizonContinuations < continuationLimit) {
+					longHorizonContinuations++;
+					turnBudget += LONG_HORIZON_CONTINUATION_TURNS;
+					this._logService.info(`[Continue] Turn budget reached (${hasOpenTodos ? `${openTodos.length} unfinished todo(s)` : 'code change not reported complete'}) — extending by ${LONG_HORIZON_CONTINUATION_TURNS} turns (${longHorizonContinuations}/${continuationLimit})`);
+					messages = [...messages, {
+						role: ChatMessageRole.User,
+						content: [{
+							type: 'text',
+							value: hasOpenTodos
+								? `Continue the task. Unfinished todo items: ${JSON.stringify(openTodos.map(todo => todo.title))}. Pick the next unfinished item and execute it with tools now. Do not ask the user to continue, do not restate the plan, and do not stop with a progress summary.`
+								: 'Continue the implementation from where it stopped. Execute the remaining edits with tools now. Do not ask the user to continue, do not restate the plan, and do not stop with a progress summary.',
+						}],
+					}];
+				} else {
+					break;
+				}
+			}
+
 			if (token.isCancellationRequested) {
 				break;
 			}
@@ -1841,6 +1912,36 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					if (reconcileFinalTodos(assistantText)) {
 						continue;
 					}
+					// Long-horizon: an open todo list means an until-done run must keep going
+					// instead of declaring completion. Without this an "implement X" request
+					// ended as soon as the model produced prose after the 2nd/3rd todo item.
+					{
+						const remainingTodos = request.sessionResource
+							? this._chatTodoListService.getTodos(request.sessionResource).filter(todo => todo.status !== 'completed')
+							: [];
+						if (
+							remainingTodos.length > 0
+							&& !token.isCancellationRequested
+							&& longHorizonContinuations < MAX_LONG_HORIZON_CONTINUATIONS
+						) {
+							longHorizonContinuations++;
+							turnBudget += LONG_HORIZON_CONTINUATION_TURNS;
+							this._logService.info(`[Continue] Until-done run tried to finish with ${remainingTodos.length} unfinished todo(s) — continuing the task`);
+							if (assistantText.trim()) {
+								messages = [...messages, { role: ChatMessageRole.Assistant, content: [{ type: 'text', value: assistantText }] }];
+							}
+							messages = [...messages, {
+								role: ChatMessageRole.User,
+								content: [{
+									type: 'text',
+									value: `The task is not complete — these todo items are still open: ${JSON.stringify(remainingTodos.map(todo => todo.title))}. Continue with the next unfinished item and execute it with tools now. Do not ask the user to continue, do not restate the plan, and do not write a final answer yet.`,
+								}],
+							}];
+							forceRequiredTools = true;
+							lastTurnHadTools = false;
+							continue;
+						}
+					}
 					exitedOnTaskComplete = true;
 					lastAssistantText = assistantText;
 					break;
@@ -1880,6 +1981,38 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 					continue;
 				}
 				// Model stopped tools but produced no answer text (common after web research or local thinking models).
+				// Long-horizon: a tool-less turn is NOT proof that the task is finished. While
+				// todo items are still open, keep the loop alive and push the model onto the
+				// next item. Previously any tool-less turn fell through to
+				// `exitedOnTaskComplete = true`, which is why long implementations ended
+				// around the 2nd/3rd todo item with a progress summary instead of the work.
+				{
+					const remainingTodos = request.sessionResource
+						? this._chatTodoListService.getTodos(request.sessionResource).filter(todo => todo.status !== 'completed')
+						: [];
+					if (
+						remainingTodos.length > 0
+						&& !token.isCancellationRequested
+						&& longHorizonContinuations < MAX_LONG_HORIZON_CONTINUATIONS
+					) {
+						longHorizonContinuations++;
+						turnBudget += LONG_HORIZON_CONTINUATION_TURNS;
+						this._logService.info(`[Continue] Run tried to finish with ${remainingTodos.length} unfinished todo(s) — continuing the task`);
+						if (assistantText.trim()) {
+							messages = [...messages, { role: ChatMessageRole.Assistant, content: [{ type: 'text', value: assistantText }] }];
+						}
+						messages = [...messages, {
+							role: ChatMessageRole.User,
+							content: [{
+								type: 'text',
+								value: `The task is not complete — these todo items are still open: ${JSON.stringify(remainingTodos.map(todo => todo.title))}. Continue with the next unfinished item and execute it with tools now. Do not ask the user to continue, do not restate the plan, and do not write a final answer yet.`,
+							}],
+						}];
+						forceRequiredTools = true;
+						lastTurnHadTools = false;
+						continue;
+					}
+				}
 				if (!assistantText.trim()) {
 					needsFinalAnswer = true;
 				}

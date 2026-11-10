@@ -56,7 +56,6 @@ import { CONTINUE_WEB_SEARCH_ENABLED_SETTING } from './continueWebSearch.js';
 import { registerContinueLocalOcrAction, LocalOcrActionViewItemContribution, CONTINUE_LOCAL_OCR_ENABLED_SETTING } from './continueOcrAction.js';
 import { MOBIUS_HARNESS_ENGINE_SETTING, MobiusHarnessRegistry } from './continueAgentHarness.js';
 import './mobiusCommitAction.js';
-import './continueSuperAgentActions.js';
 import { IWorkspaceTrustEnablementService, IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
 import './media/continueChat.css';
