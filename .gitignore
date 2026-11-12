@@ -50,3 +50,4 @@ dist
 extensions/continue/e2e.log
 # Open-source release: exclude Copilot test simulation cache (LFS objects not available)
 extensions/copilot/test/simulation/cache/
+.tmp-tsc.log

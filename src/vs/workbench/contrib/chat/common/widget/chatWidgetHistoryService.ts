@@ -52,6 +52,18 @@ export type ChatHistoryChange = { kind: 'append'; location: ChatAgentLocation; h
 
 export const ChatInputHistoryMaxEntries = 40;
 
+/**
+ * Upper bound on how many distinct history buckets are persisted.
+ *
+ * A bucket key includes the chat session resource, so every chat that was ever
+ * opened created its own bucket and nothing ever removed it. Users who keep the
+ * Agents window open for weeks accumulated hundreds of buckets — with 40 full
+ * prompt texts each — in the `interactive-session` memento, which is loaded and
+ * parsed on every workspace start. Bounding the number of buckets (rather than
+ * only the entries inside one bucket) keeps that memento small.
+ */
+export const ChatInputHistoryMaxBuckets = 8;
+
 export class ChatWidgetHistoryService extends Disposable implements IChatWidgetHistoryService {
 	_serviceBrand: undefined;
 
@@ -144,9 +156,42 @@ export class ChatWidgetHistoryService extends Disposable implements IChatWidgetH
 		this.viewState.history ??= {};
 
 		const key = this.getKey(location, historyKey);
-		this.viewState.history[key] = this.getHistory(location, historyKey).concat(history).slice(-ChatInputHistoryMaxEntries);
+		const entries = this.getHistory(location, historyKey).concat(history).slice(-ChatInputHistoryMaxEntries);
+		// Delete before writing so the key moves to the end of the object: key order is
+		// insertion order, and {@link pruneHistoryBuckets} drops from the front.
+		delete this.viewState.history[key];
+		this.viewState.history[key] = entries;
+		this.pruneHistoryBuckets(key);
 		this.changed = true;
 		this._onDidChangeHistory.fire({ kind: 'append', location, historyKey, entry: history });
+	}
+
+	/**
+	 * Drops the least recently written history buckets, keeping at most
+	 * {@link ChatInputHistoryMaxBuckets}. The bucket that was just written is never
+	 * dropped.
+	 */
+	private pruneHistoryBuckets(mostRecentKey: string): void {
+		const history = this.viewState.history;
+		if (!history) {
+			return;
+		}
+		const keys = Object.keys(history);
+		const excess = keys.length - ChatInputHistoryMaxBuckets;
+		if (excess <= 0) {
+			return;
+		}
+		let removed = 0;
+		for (const key of keys) {
+			if (removed >= excess) {
+				break;
+			}
+			if (key === mostRecentKey) {
+				continue;
+			}
+			delete history[key];
+			removed++;
+		}
 	}
 
 	moveHistory(location: ChatAgentLocation, fromHistoryKey: string, toHistoryKey: string): void {
@@ -163,8 +208,11 @@ export class ChatWidgetHistoryService extends Disposable implements IChatWidgetH
 
 		const fromKey = this.getKey(location, fromHistoryKey);
 		const toKey = this.getKey(location, toHistoryKey);
-		this.viewState.history[toKey] = this.getHistory(location, toHistoryKey).concat(fromHistory).slice(-ChatInputHistoryMaxEntries);
+		const entries = this.getHistory(location, toHistoryKey).concat(fromHistory).slice(-ChatInputHistoryMaxEntries);
+		delete this.viewState.history[toKey];
+		this.viewState.history[toKey] = entries;
 		delete this.viewState.history[fromKey];
+		this.pruneHistoryBuckets(toKey);
 		this.changed = true;
 		this._onDidChangeHistory.fire({ kind: 'move', location, fromHistoryKey, toHistoryKey });
 	}
