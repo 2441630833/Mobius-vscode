@@ -30,6 +30,7 @@ import {
 	IChatResponseToolUsePart,
 	ILanguageModelsService,
 } from '../../chat/common/languageModels.js';
+import { headroomCompressText } from '../../chat/common/headroom/headroomCompressor.js';
 import { didWriteRequestTodos, initializeRequestTodos, REQUEST_TODO_INSTRUCTIONS, RequestTodoCheckpoint, shouldReconcileRequestTodos } from './continueRequestTodos.js';
 import { IChatTodoListService } from '../../chat/common/tools/chatTodoListService.js';
 import {
@@ -512,8 +513,14 @@ export function pruneHistoryForContext(
 		return messages;
 	}
 
-	const shrink = (text: string): string =>
-		text.length <= MAX_TOOL_RESULT_CHARS ? text : `${text.slice(0, MAX_TOOL_RESULT_CHARS)}\n…[truncated]`;
+	// headroom compression instead of blind head truncation: the error, the failing
+	// test and the summary at the end of a long output survive (see headroomCompressor.ts).
+	const shrink = (text: string): string => headroomCompressText(text, {
+		minChars: MAX_TOOL_RESULT_CHARS,
+		maxChars: MAX_TOOL_RESULT_CHARS,
+		label: 'tool output',
+		note: 'ask to re-run the tool for the full output',
+	});
 	// Truncate oversized text wherever it hides: top-level parts AND the text nested
 	// inside a `tool_result.value` (the classic runaway — a `read_file`/search result).
 	const shrinkPart = (part: IChatMessagePart | undefined): IChatMessagePart | undefined => {
@@ -548,9 +555,9 @@ export function pruneHistoryForContext(
 	const system = kept[0]?.role === ChatMessageRole.System ? kept[0] : undefined;
 	const rest = system ? kept.slice(1) : kept;
 
-	// Phase 2 — compress instead of discarding. Older tool results are replaced by
-	// a one-line stub once they pass a small threshold; the tool_call ↔ tool_result
-	// pairing survives, only the payload is dropped. Without this a long agent run
+	// Phase 2 — compress instead of discarding. Older tool results are headroom-compressed
+	// to a small budget once they pass a threshold; the tool_call ↔ tool_result
+	// pairing survives, only the low-signal payload is dropped. Without this a long agent run
 	// either overflows the window or gets reset down to its last few turns.
 	const COMPACT_THRESHOLD_CHARS = 2_000;
 	const keepRecentTurns = 6;
@@ -565,7 +572,8 @@ export function pruneHistoryForContext(
 				const value = part.value.map(v => {
 					if (v && v.type === 'text' && typeof v.value === 'string' && v.value.length > COMPACT_THRESHOLD_CHARS) {
 						changed = true;
-						return { ...v, value: `…[earlier tool output compacted: ${v.value.length} chars]` };
+						// Keep the signal (errors, summary, head/tail) of earlier outputs instead of a bare stub.
+						return { ...v, value: headroomCompressText(v.value, { minChars: COMPACT_THRESHOLD_CHARS, maxChars: COMPACT_THRESHOLD_CHARS, label: 'earlier tool output' }) };
 					}
 					return v;
 				});

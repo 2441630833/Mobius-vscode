@@ -126,3 +126,23 @@ suite('ObjectMutationLog size-based compaction', () => {
 		assert.strictEqual(small.needsCompaction, false);
 	});
 });
+
+suite('headroomCompressText budgets', () => {
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('never exceeds maxChars, marker included', async () => {
+		const { headroomCompressText } = await import('../../../common/headroom/headroomCompressor.js');
+		const inputs = [
+			Array.from({ length: 5000 }, (_, i) => `line ${i} ${'q'.repeat(30)}`).join('\n'),
+			'word '.repeat(20000),
+			`a\n${'x'.repeat(80000)}\nb`,
+		];
+		for (const maxChars of [2000, 12000, 16384]) {
+			for (const input of inputs) {
+				const out = headroomCompressText(input, { minChars: maxChars, maxChars, label: 'test' });
+				assert.ok(out.length <= maxChars, `${out.length} > ${maxChars}`);
+				assert.strictEqual(headroomCompressText(out, { minChars: maxChars, maxChars, label: 'test' }), out);
+			}
+		}
+	});
+});

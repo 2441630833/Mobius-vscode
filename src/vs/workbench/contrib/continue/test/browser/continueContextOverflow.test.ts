@@ -66,7 +66,37 @@ suite('Continue context overflow handling', () => {
 		];
 		const pruned = pruneHistoryForContext(messages, 1_000_000, 4_096);
 		const text = JSON.stringify(pruned);
-		assert.ok(text.includes('[truncated]'), 'oversized tool result must be truncated');
+		assert.ok(text.includes('[headroom: tool output compressed'), 'oversized tool result must be compressed');
 		assert.ok(!text.includes(huge), 'the 50k tool result must not survive intact');
+	});
+
+	test('pruneHistoryForContext keeps the error at the end of a long tool output', () => {
+		const lines: string[] = [];
+		for (let i = 0; i < 4000; i++) {
+			lines.push(`compiling module ${i} ok`);
+		}
+		lines.push('src/app.ts(42,7): error TS2304: Cannot find name \'foo\'.', 'Found 1 error.');
+		const messages: IChatMessage[] = [
+			{ role: ChatMessageRole.System, content: [{ type: 'text', value: 'system' }] },
+			{ role: ChatMessageRole.Assistant, content: [{ type: 'tool_use', name: 'run_in_terminal', toolCallId: 'a', parameters: {} }] },
+			{ role: ChatMessageRole.User, content: [{ type: 'tool_result', toolCallId: 'a', value: [{ type: 'text', value: lines.join('\n') }] }] },
+		];
+		const text = JSON.stringify(pruneHistoryForContext(messages, 1_000_000, 4_096));
+		assert.ok(text.includes('error TS2304'), 'the compile error at the tail must survive');
+		assert.ok(text.includes('Found 1 error.'), 'the summary line must survive');
+	});
+
+	test('pruneHistoryForContext compresses old tool outputs instead of stubbing them', () => {
+		const old = Array.from({ length: 500 }, (_, i) => `row ${i}`).concat('FATAL: database locked').join('\n');
+		const messages: IChatMessage[] = [
+			{ role: ChatMessageRole.System, content: [{ type: 'text', value: 'system' }] },
+			{ role: ChatMessageRole.Assistant, content: [{ type: 'tool_use', name: 'query', toolCallId: 'a', parameters: {} }] },
+			{ role: ChatMessageRole.User, content: [{ type: 'tool_result', toolCallId: 'a', value: [{ type: 'text', value: old }] }] },
+			...Array.from({ length: 8 }, (_, i): IChatMessage => ({ role: i % 2 ? ChatMessageRole.User : ChatMessageRole.Assistant, content: [{ type: 'text', value: `turn ${i}` }] })),
+		];
+		const pruned = pruneHistoryForContext(messages, 1_000_000, 4_096);
+		const text = JSON.stringify(pruned[2]);
+		assert.ok(text.includes('FATAL: database locked'), 'the error in an old output must survive compaction');
+		assert.ok(text.length < 2_500, `old output must be compacted (${text.length})`);
 	});
 });
