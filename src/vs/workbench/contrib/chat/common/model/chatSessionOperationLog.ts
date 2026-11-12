@@ -14,6 +14,7 @@ import { IChatMarkdownContent, ResponseModelState } from '../chatService/chatSer
 import { ModifiedFileEntryState } from '../editing/chatEditingService.js';
 import { IParsedChatRequest } from '../requestParser/chatParserTypes.js';
 import { IChatAgentEditedFileEvent, IChatDataSerializerLog, IChatModel, IChatPendingRequest, IChatProgressResponseContent, IChatRequestModel, IChatRequestVariableData, ISerializableChatData, ISerializableChatModelInputState, ISerializableChatRequestData, ISerializablePendingRequestData, SerializedChatResponsePart, serializeSendOptions } from './chatModel.js';
+import { compressResponsePartForPersistence } from './chatSessionPersistCompression.js';
 import * as Adapt from './objectMutationLog.js';
 
 /**
@@ -39,7 +40,8 @@ const toJson = <T>(obj: T): T extends { toJSON?(): infer R } ? R : T => {
 };
 
 const responsePartSchema = Adapt.v<IChatProgressResponseContent, SerializedChatResponsePart>(
-	(obj): SerializedChatResponsePart => obj.kind === 'markdownContent' ? obj.content : toJson(obj),
+	// Tool, thinking and progress output is compressed in the persisted copy only (see chatSessionPersistCompression.ts).
+	(obj): SerializedChatResponsePart => obj.kind === 'markdownContent' ? obj.content : compressResponsePartForPersistence(toJson(obj)),
 	(a, b) => {
 		if (isMarkdownString(a) && isMarkdownString(b)) {
 			return a.value === b.value;
@@ -200,8 +202,13 @@ export const storageSchema = Adapt.object<IChatModel, ISerializableChatData>({
 	workingDirectory: Adapt.v(m => m.workingDirectory?.toString()),
 });
 
+/** Rewrite the log as one snapshot once this many bytes were appended since the last snapshot. */
+export const CHAT_LOG_COMPACT_AFTER_BYTES = 4 * 1024 * 1024;
+/** Logs larger than this when loaded are rewritten as one snapshot on their next save. */
+export const CHAT_LOG_COMPACT_ON_LOAD_BYTES = 2 * 1024 * 1024;
+
 export class ChatSessionOperationLog extends Adapt.ObjectMutationLog<IChatModel, ISerializableChatData> implements IChatDataSerializerLog {
 	constructor() {
-		super(storageSchema, 1024);
+		super(storageSchema, 1024, { compactAfterBytes: CHAT_LOG_COMPACT_AFTER_BYTES, compactOnLoadBytes: CHAT_LOG_COMPACT_ON_LOAD_BYTES });
 	}
 }

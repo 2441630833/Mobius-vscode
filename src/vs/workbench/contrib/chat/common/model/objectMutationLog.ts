@@ -289,6 +289,17 @@ export function makeTruncatingReplacer(maxStringChars: number, maxTotalChars: nu
 	};
 }
 
+export interface IObjectMutationLogOptions {
+	/**
+	 * Write a full snapshot once this many bytes (UTF-16 code units) were
+	 * appended since the last snapshot. The entry-count budget alone does not
+	 * bound a log whose individual entries are large.
+	 */
+	readonly compactAfterBytes?: number;
+	/** When a log larger than this many bytes is read, the next write is a full snapshot. */
+	readonly compactOnLoadBytes?: number;
+}
+
 /**
  * An implementation of an append-based mutation logger. Given a `Transform`
  * definition of an object, it can recreate it from a file on disk. It is
@@ -301,11 +312,21 @@ export class ObjectMutationLog<TFrom, TTo> {
 	private _hasPendingWrite = false;
 	private _pendingPrevious: TTo | undefined;
 	private _pendingEntryCount = 0;
+	private _appendedBytes = 0;
+	private _pendingAppendedBytes = 0;
 
 	constructor(
 		private readonly _transform: Transform<TFrom, TTo>,
 		private readonly _compactAfterEntries = 512,
+		private readonly _options: IObjectMutationLogOptions = {},
 	) { }
+
+	/** True when the next {@link write} will produce a full `replace` snapshot. */
+	get needsCompaction(): boolean {
+		return !this._previous
+			|| this._entryCount > this._compactAfterEntries
+			|| (this._options.compactAfterBytes !== undefined && this._appendedBytes > this._options.compactAfterBytes);
+	}
 
 	/**
 	 * Creates an initial log file from the given object.
@@ -326,6 +347,7 @@ export class ObjectMutationLog<TFrom, TTo> {
 	createInitialFromSerialized(value: TTo): VSBuffer {
 		this._previous = value;
 		this._entryCount = 1;
+		this._appendedBytes = 0;
 		this._clearPending();
 		const entry: Entry = { kind: EntryKind.Initial, v: value };
 		return VSBuffer.fromString(stringifyEntryWithFallback(entry) + '\n');
@@ -386,7 +408,11 @@ export class ObjectMutationLog<TFrom, TTo> {
 		}
 
 		this._previous = state as TTo;
-		this._entryCount = lineCount;
+		// A log that is already large is rewritten as one compact snapshot on its next save
+		// instead of being appended to forever.
+		const compactOnLoad = this._options.compactOnLoadBytes !== undefined && len > this._options.compactOnLoadBytes;
+		this._entryCount = compactOnLoad ? Number.POSITIVE_INFINITY : lineCount;
+		this._appendedBytes = 0;
 		this._clearPending();
 		return state as TTo;
 	}
@@ -402,11 +428,12 @@ export class ObjectMutationLog<TFrom, TTo> {
 	write(current: TFrom): { op: 'append' | 'replace'; data: VSBuffer } {
 		const currentValue = this._transform.extract(current);
 
-		if (!this._previous || this._entryCount > this._compactAfterEntries) {
-			// No previous state, create initial
+		if (this.needsCompaction) {
+			// No previous state, or the log grew past its entry/byte budget: write a full snapshot
 			this._hasPendingWrite = true;
 			this._pendingPrevious = currentValue;
 			this._pendingEntryCount = 1;
+			this._pendingAppendedBytes = 0;
 			const entry: Entry = { kind: EntryKind.Initial, v: currentValue };
 			return { op: 'replace', data: VSBuffer.fromString(stringifyEntryWithFallback(entry) + '\n') };
 		}
@@ -439,6 +466,7 @@ export class ObjectMutationLog<TFrom, TTo> {
 		for (const e of entries) {
 			data += stringifyEntryWithFallback(e) + '\n';
 		}
+		this._pendingAppendedBytes = this._appendedBytes + data.length;
 		return { op: 'append', data: VSBuffer.fromString(data) };
 	}
 
@@ -449,6 +477,7 @@ export class ObjectMutationLog<TFrom, TTo> {
 		if (this._hasPendingWrite) {
 			this._previous = this._pendingPrevious;
 			this._entryCount = this._pendingEntryCount;
+			this._appendedBytes = this._pendingAppendedBytes;
 			this._clearPending();
 		}
 	}
@@ -457,6 +486,7 @@ export class ObjectMutationLog<TFrom, TTo> {
 		this._hasPendingWrite = false;
 		this._pendingPrevious = undefined;
 		this._pendingEntryCount = 0;
+		this._pendingAppendedBytes = 0;
 	}
 
 	private _applySet(state: unknown, path: ObjectPath, value: unknown): void {
