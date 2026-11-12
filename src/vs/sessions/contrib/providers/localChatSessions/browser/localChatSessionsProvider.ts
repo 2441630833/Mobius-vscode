@@ -13,14 +13,14 @@ import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { URI, UriComponents } from '../../../../../base/common/uri.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IChatService, IChatSendRequestOptions, IChatDetail, IChatModelReference, convertLegacyChatSessionTiming } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
-import { IChatSessionFileChange2, IChatSessionProviderOptionItem, SessionType } from '../../../../../workbench/contrib/chat/common/chatSessionsService.js';
+import { IChatSessionProviderOptionItem, SessionType } from '../../../../../workbench/contrib/chat/common/chatSessionsService.js';
 import { ISession, IChat, ISessionGitRepository, ISessionFolder, ISessionWorkspace, SessionStatus, ISessionType, ISessionFileChange, toSessionId, SESSION_WORKSPACE_GROUP_LOCAL, IChatCheckpoints } from '../../../../services/sessions/common/session.js';
 import { ChatAgentLocation, ChatConfiguration, ChatModeKind, ChatPermissionLevel, isChatPermissionLevel } from '../../../../../workbench/contrib/chat/common/constants.js';
 import { basename, dirname, isEqual } from '../../../../../base/common/resources.js';
 import { ISendRequestOptions, ISessionChangeEvent, ISessionModelPickerOptions, ISessionsProvider } from '../../../../services/sessions/common/sessionsProvider.js';
 import { isBuiltinChatMode, IChatMode } from '../../../../../workbench/contrib/chat/common/chatModes.js';
 import { IChatModel } from '../../../../../workbench/contrib/chat/common/model/chatModel.js';
-import { IGitService, GitChange } from '../../../../../workbench/contrib/git/common/gitService.js';
+import { IGitService } from '../../../../../workbench/contrib/git/common/gitService.js';
 import { localize } from '../../../../../nls.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { isContinuePhysicalAiIde } from '../../../../../workbench/contrib/continue/browser/continueProduct.js';
@@ -31,6 +31,7 @@ import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.j
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { ILanguageModelChatMetadataAndIdentifier, ILanguageModelsService } from '../../../../../workbench/contrib/chat/common/languageModels.js';
 import { ILanguageModelToolsService } from '../../../../../workbench/contrib/chat/common/tools/languageModelToolsService.js';
+import { SharedRepositoryChanges } from './sharedRepositoryChanges.js';
 import { createChangesets } from '../../copilotChatSessions/browser/copilotChatSessionsChangesets.js';
 import { IMarkdownString } from '../../../../../base/common/htmlContent.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
@@ -255,82 +256,15 @@ class LocalSession extends Disposable {
 				gitHubInfo: constObservable(undefined),
 			};
 
-			// Monotonically increasing version used to discard stale diff results.
-			let diffVersion = 0;
+			if (this._store.isDisposed) {
+				return;
+			}
 
-			// At most one HEAD diff per session at a time, with a pending pass
-			// if repository state changes while a diff is in flight.
-			let diffInFlight = false;
-			let diffPending = false;
-			let latestStateChanges: GitChange[] = [];
-
-			const scheduleDiff = () => {
-				if (diffInFlight) {
-					diffPending = true;
-					return;
-				}
-				diffInFlight = true;
-				diffPending = false;
-				const version = ++diffVersion;
-				const stateChangesSnapshot = latestStateChanges;
-
-				repo.diffBetweenWithStats2('HEAD').finally(() => {
-					diffInFlight = false;
-					if (diffPending && !this._store.isDisposed) {
-						scheduleDiff();
-					}
-				}).then(async diffChanges => {
-					if (this._store.isDisposed || version !== diffVersion) {
-						return;
-					}
-					const trackedUris = new Set(diffChanges.map(el => el.uri.toString()));
-					const changes: IChatSessionFileChange2[] = diffChanges.map(el => ({
-						uri: el.uri,
-						originalUri: el.originalUri,
-						modifiedUri: el.modifiedUri ?? el.uri,
-						insertions: el.insertions,
-						deletions: el.deletions,
-					}));
-					const untrackedFiles = stateChangesSnapshot.filter((el: GitChange) => !trackedUris.has(el.uri.toString()));
-					const lineCountPromises = untrackedFiles.map(async (el: GitChange) => {
-						let insertions = 0;
-						try {
-							const stat = await this.fileService.stat(el.uri);
-							if (!stat.isDirectory) {
-								const content = await this.fileService.readFile(el.uri);
-								const text = content.value.toString();
-								insertions = text.length > 0 ? text.split('\n').length : 0;
-							}
-						} catch {
-							// File may have been deleted between state snapshot and read
-						}
-						return {
-							uri: el.uri,
-							originalUri: undefined,
-							modifiedUri: el.modifiedUri ?? el.uri,
-							insertions,
-							deletions: 0,
-						} satisfies IChatSessionFileChange2;
-					});
-					const untrackedChanges = await Promise.all(lineCountPromises);
-					if (this._store.isDisposed || version !== diffVersion) {
-						return;
-					}
-					changes.push(...untrackedChanges);
-					this._changes.set(changes, undefined);
-				}, () => {
-					if (this._store.isDisposed || version !== diffVersion) {
-						return;
-					}
-					this._changes.set(stateChangesSnapshot.map<IChatSessionFileChange2>((el: GitChange) => ({
-						uri: el.uri,
-						originalUri: el.originalUri,
-						modifiedUri: el.modifiedUri ?? el.uri,
-						insertions: 0,
-						deletions: 0,
-					})), undefined);
-				});
-			};
+			// One diff pipeline per repository, shared by every session on it (see SharedRepositoryChanges).
+			const shared = this._register(SharedRepositoryChanges.acquire(repo, this.fileService));
+			this._register(autorun(reader => {
+				this._changes.set(shared.object.changes.read(reader), undefined);
+			}));
 
 			this._register(autorun((reader) => {
 				const state = repo.state.read(reader);
@@ -354,17 +288,6 @@ class LocalSession extends Disposable {
 						},
 					}],
 				}, undefined);
-
-				const allStateChanges = [...state.workingTreeChanges, ...state.untrackedChanges, ...state.indexChanges];
-				latestStateChanges = allStateChanges;
-
-				if (uncommittedChanges === 0) {
-					diffPending = false;
-					this._changes.set([], undefined);
-					return;
-				}
-
-				scheduleDiff();
 			}));
 		} catch {
 			// No git repository available — workspace stays as-is
