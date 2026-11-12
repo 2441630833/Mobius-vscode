@@ -20,7 +20,7 @@ import { basename, dirname, isEqual } from '../../../../../base/common/resources
 import { ISendRequestOptions, ISessionChangeEvent, ISessionModelPickerOptions, ISessionsProvider } from '../../../../services/sessions/common/sessionsProvider.js';
 import { isBuiltinChatMode, IChatMode } from '../../../../../workbench/contrib/chat/common/chatModes.js';
 import { IChatModel } from '../../../../../workbench/contrib/chat/common/model/chatModel.js';
-import { IGitService } from '../../../../../workbench/contrib/git/common/gitService.js';
+import { IGitService, GitChange } from '../../../../../workbench/contrib/git/common/gitService.js';
 import { localize } from '../../../../../nls.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { isContinuePhysicalAiIde } from '../../../../../workbench/contrib/continue/browser/continueProduct.js';
@@ -258,52 +258,28 @@ class LocalSession extends Disposable {
 			// Monotonically increasing version used to discard stale diff results.
 			let diffVersion = 0;
 
-			// At most one HEAD diff per session at a time (see below).
+			// At most one HEAD diff per session at a time, with a pending pass
+			// if repository state changes while a diff is in flight.
 			let diffInFlight = false;
+			let diffPending = false;
+			let latestStateChanges: GitChange[] = [];
 
-			this._register(autorun((reader) => {
-				const state = repo.state.read(reader);
-				const head = state.HEAD;
-				const branchName = head?.commit ? head.name : undefined;
-				const upstreamBranchName = head?.upstream
-					? `${head.upstream.remote}/${head.upstream.name}`
-					: undefined;
-				const uncommittedChanges = state.workingTreeChanges.length + state.untrackedChanges.length + state.indexChanges.length;
-
-				this._workspaceData.set({
-					...workspace,
-					folders: [{
-						...folder,
-						gitRepository: {
-							...baseGitRepo,
-							uri: repo.rootUri,
-							branchName,
-							upstreamBranchName,
-							uncommittedChanges,
-						},
-					}],
-				}, undefined);
-
-				const allStateChanges = [...state.workingTreeChanges, ...state.untrackedChanges, ...state.indexChanges];
-
-				if (uncommittedChanges === 0) {
-					this._changes.set([], undefined);
-					return;
-				}
-
-				const version = ++diffVersion;
+			const scheduleDiff = () => {
 				if (diffInFlight) {
-					// A diff for this session is already running. During an agent run the
-					// repository emits a state change per edited file, and every cached
-					// session reacted to each of them — with hundreds of cached chats that
-					// meant hundreds of concurrent HEAD diffs, each reading every untracked
-					// file. That is what made long requests progressively slower. Skip the
-					// redundant pass; the next state change recomputes, so the final state
-					// is still reached.
+					diffPending = true;
 					return;
 				}
 				diffInFlight = true;
-				repo.diffBetweenWithStats2('HEAD').finally(() => { diffInFlight = false; }).then(async diffChanges => {
+				diffPending = false;
+				const version = ++diffVersion;
+				const stateChangesSnapshot = latestStateChanges;
+
+				repo.diffBetweenWithStats2('HEAD').finally(() => {
+					diffInFlight = false;
+					if (diffPending && !this._store.isDisposed) {
+						scheduleDiff();
+					}
+				}).then(async diffChanges => {
 					if (this._store.isDisposed || version !== diffVersion) {
 						return;
 					}
@@ -315,8 +291,8 @@ class LocalSession extends Disposable {
 						insertions: el.insertions,
 						deletions: el.deletions,
 					}));
-					const untrackedFiles = allStateChanges.filter(el => !trackedUris.has(el.uri.toString()));
-					const lineCountPromises = untrackedFiles.map(async el => {
+					const untrackedFiles = stateChangesSnapshot.filter((el: GitChange) => !trackedUris.has(el.uri.toString()));
+					const lineCountPromises = untrackedFiles.map(async (el: GitChange) => {
 						let insertions = 0;
 						try {
 							const stat = await this.fileService.stat(el.uri);
@@ -346,7 +322,7 @@ class LocalSession extends Disposable {
 					if (this._store.isDisposed || version !== diffVersion) {
 						return;
 					}
-					this._changes.set(allStateChanges.map<IChatSessionFileChange2>(el => ({
+					this._changes.set(stateChangesSnapshot.map<IChatSessionFileChange2>((el: GitChange) => ({
 						uri: el.uri,
 						originalUri: el.originalUri,
 						modifiedUri: el.modifiedUri ?? el.uri,
@@ -354,6 +330,41 @@ class LocalSession extends Disposable {
 						deletions: 0,
 					})), undefined);
 				});
+			};
+
+			this._register(autorun((reader) => {
+				const state = repo.state.read(reader);
+				const head = state.HEAD;
+				const branchName = head?.commit ? head.name : undefined;
+				const upstreamBranchName = head?.upstream
+					? `${head.upstream.remote}/${head.upstream.name}`
+					: undefined;
+				const uncommittedChanges = state.workingTreeChanges.length + state.untrackedChanges.length + state.indexChanges.length;
+
+				this._workspaceData.set({
+					...workspace,
+					folders: [{
+						...folder,
+						gitRepository: {
+							...baseGitRepo,
+							uri: repo.rootUri,
+							branchName,
+							upstreamBranchName,
+							uncommittedChanges,
+						},
+					}],
+				}, undefined);
+
+				const allStateChanges = [...state.workingTreeChanges, ...state.untrackedChanges, ...state.indexChanges];
+				latestStateChanges = allStateChanges;
+
+				if (uncommittedChanges === 0) {
+					diffPending = false;
+					this._changes.set([], undefined);
+					return;
+				}
+
+				scheduleDiff();
 			}));
 		} catch {
 			// No git repository available — workspace stays as-is
@@ -994,6 +1005,12 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 	private _touchCachedSession(key: string): void {
 		this._sessionCacheLru.delete(key);
 		this._sessionCacheLru.set(key, true);
+		const session = this._sessionCache.get(key);
+		if (session?.parentResource) {
+			const parentKey = session.parentResource.toString();
+			this._sessionCacheLru.delete(parentKey);
+			this._sessionCacheLru.set(parentKey, true);
+		}
 	}
 
 	/** Insert into {@link _sessionCache}, keeping LRU order and the size cap in sync. */
@@ -1030,6 +1047,10 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 				continue;
 			}
 			if (session.isArchived.get()) {
+				continue;
+			}
+			// Only evict at the group (primary) level. Children are evicted along with their primary.
+			if (session.parentResource) {
 				continue;
 			}
 
@@ -1613,8 +1634,8 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 
 	private _findSessionByResource(resource: URI): LocalSession | undefined {
 		const cached = this._sessionCache.get(resource.toString());
-			this._touchCachedSession(resource.toString());
 		if (cached) {
+			this._touchCachedSession(resource.toString());
 			return cached;
 		}
 		for (const session of this._newSessions.values()) {
