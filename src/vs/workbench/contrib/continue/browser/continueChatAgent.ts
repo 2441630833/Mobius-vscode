@@ -1023,15 +1023,21 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 				progress([{ kind: 'warning', content: new MarkdownString(localize('continue.ocr.videoUnsupported', "This model does not declare vision support. Local OCR cannot process videos. Select a compatible multimodal model and resend.")) }]);
 				return {};
 			}
-			if (!await confirmLocalOcrForImages(maybeImages.length, supportsVision, modelMeta?.family ?? modelId, this._configurationService, this._dialogService, token)) {
+			const imageConsent = await confirmLocalOcrForImages(maybeImages.length, supportsVision, modelMeta?.family ?? modelId, this._configurationService, this._dialogService, token);
+			if (imageConsent === 'cancel') {
 				if (!token.isCancellationRequested) {
-					progress([{ kind: 'warning', content: new MarkdownString(localize('continue.ocr.declined', "Image request cancelled. Enable local OCR or select a multimodal model before resending.")) }]);
+					progress([{ kind: 'warning', content: new MarkdownString(localize('continue.ocr.declined', "Image request cancelled. Enable local OCR, send images anyway, or select a multimodal model before resending.")) }]);
 				}
 				return {};
 			}
 
+			// The user may explicitly opt into sending images even when the model does
+			// not advertise image support: the endpoint is the final judge, and capability
+			// metadata is frequently missing for custom/self-hosted providers.
+			const sendImagesDirectly = imageConsent === 'send';
+
 			if (maybeMedia.length) {
-				if (supportsVision) {
+				if (supportsVision || sendImagesDirectly) {
 					// Model natively declares vision support -> direct passthrough
 					const collected = await collectAgentRequestMediaParts(
 						request,

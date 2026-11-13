@@ -13,6 +13,10 @@ export interface ContinueModelEntry {
 	readonly apiBase: string;
 	readonly apiKey: string;
 	readonly profileId?: string;
+	/** Capability tokens declared in config.yaml `capabilities:` (e.g. 'tool_use', 'image_input'). */
+	readonly capabilities?: readonly string[];
+	/** Explicit per-model switch for image input. Wins over declared capabilities and name heuristics. */
+	readonly imageInput?: boolean;
 }
 
 export interface EnvModelProfile {
@@ -87,6 +91,14 @@ const VISION_MODEL_PATTERNS: RegExp[] = [
 	/sensechat/i,
 	/vision/i,
 	/(?:^|[-_])vl(?:[-_]|$)/i,    // explicit -vl- token
+	// Newer multimodal families that the heuristic above missed.
+	/gemma-?3/i,                     // gemma-3 is natively multimodal
+	/llama-?4/i,                     // llama-4 scout/maverick take image input
+	/phi-?4.*(?:multi|vision)/i,     // phi-4-multimodal / phi-4-reasoning-vision
+	/yi-?vl/i,
+	/ernie-?4\.5/i,                  // ernie-4.5 is multimodal
+	/seed-?1\.[6-9]|doubao-?seed/i,
+	/(?:^|[-_])o4(?:[-_]|$)/i,       // o4-mini family
 ];
 
 export function modelSupportsVision(model: string | undefined): boolean {
@@ -94,6 +106,321 @@ export function modelSupportsVision(model: string | undefined): boolean {
 		return false;
 	}
 	return VISION_MODEL_PATTERNS.some(re => re.test(model));
+}
+
+/**
+ * Capability tokens that mean "this endpoint accepts images" (Continue/Mobius `image_input`).
+ * Continue writes `image_input`; other configs spell it `vision`, `image`, `multimodal`, ...
+ */
+const IMAGE_INPUT_CAPABILITY_TOKENS = new Set([
+	'image_input',
+	'imageinput',
+	'image_inputs',
+	'image',
+	'images',
+	'vision',
+	'vision_input',
+	'image_url',
+	'multimodal',
+	'multi_modal',
+	'image_understanding',
+]);
+
+/** Capability tokens that explicitly say "no images" (opt-out escape hatch). */
+const TEXT_ONLY_CAPABILITY_TOKENS = new Set([
+	'no_image_input',
+	'noimages',
+	'no_images',
+	'text_only',
+	'text-only',
+	'textonly',
+]);
+
+/** TIGNN_ALLOW_UNKNOWN_VISION=1: even an explicit non-image capability inventory lets images through. */
+function allowUnknownVision(): boolean {
+	try {
+		const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+		return ['1', 'true', 'yes', 'on'].includes(String(env?.TIGNN_ALLOW_UNKNOWN_VISION ?? '').toLowerCase());
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Conservative mode switch. Mobius talks to arbitrary OpenAI-compatible gateways
+ * (ali / demx / volcano / ...) whose model names it cannot recognise, and those endpoints are
+ * usually multimodal. An unrecognised name is therefore NOT treated as "no image support": the
+ * server is the authority and will reject the image itself if the endpoint is text-only.
+ * Set TIGNN_STRICT_VISION=1 (or TIGNN_ALLOW_UNKNOWN_VISION=0) to restore the old behaviour where
+ * only known vision families / explicitly declared models may receive images.
+ */
+function strictVisionMode(): boolean {
+	try {
+		const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+		const strict = String(env?.TIGNN_STRICT_VISION ?? '').toLowerCase();
+		if (['1', 'true', 'yes', 'on'].includes(strict)) {
+			return true;
+		}
+		const allow = String(env?.TIGNN_ALLOW_UNKNOWN_VISION ?? '').toLowerCase();
+		if (['0', 'false', 'no', 'off'].includes(allow)) {
+			return true;
+		}
+	} catch {
+		// ignore
+	}
+	return false;
+}
+
+export function normalizeCapabilities(capabilities?: readonly string[] | string): string[] {
+	if (!capabilities) {
+		return [];
+	}
+	const tokens = typeof capabilities === 'string' ? capabilities.split(/[,\s]+/) : capabilities;
+	return tokens
+		// YAML flow style (`[tool_use, image_input]`) and quotes must not become part of the token.
+		.map(token => String(token).toLowerCase().replace(/[[\]'"`\s,]/g, ''))
+		.filter(token => token.length > 0);
+}
+
+/** True when the declared capability list contains an image/vision token (e.g. `image_input`). */
+export function declaresImageInput(capabilities?: readonly string[] | string): boolean {
+	return normalizeCapabilities(capabilities).some(token => IMAGE_INPUT_CAPABILITY_TOKENS.has(token));
+}
+
+/** True when the declared capability list explicitly opts out of images. */
+export function declaresTextOnly(capabilities?: readonly string[] | string): boolean {
+	return normalizeCapabilities(capabilities).some(token => TEXT_ONLY_CAPABILITY_TOKENS.has(token));
+}
+
+export interface VisionCapabilityInput {
+	readonly model?: string;
+	readonly capabilities?: readonly string[] | string;
+	readonly imageInput?: boolean;
+}
+
+/**
+ * Single source of truth for "can this model receive images?".
+ *
+ * Order of precedence:
+ * 1. explicit per-model switch (`imageInput: true|false` in config.yaml) — user override always wins;
+ * 2. explicit text-only token (`capabilities: [text_only]`, `capabilities: [no_image_input]`);
+ * 3. declared image tokens (`capabilities: [image_input]`) — this is what Continue itself writes,
+ *    and it must be honoured regardless of the model name;
+ * 4. well-known vision model families (name heuristic);
+ * 5. unknown family/gateway: image capable by default (see {@link strictVisionMode}), because a
+ *    name we do not recognise is not evidence that the endpoint cannot take images.
+ */
+export function resolveModelVision(entry: VisionCapabilityInput | undefined): boolean {
+	if (!entry) {
+		return !strictVisionMode();
+	}
+	if (typeof entry.imageInput === 'boolean') {
+		return entry.imageInput;
+	}
+	if (declaresTextOnly(entry.capabilities)) {
+		return false;
+	}
+	if (declaresImageInput(entry.capabilities)) {
+		return true;
+	}
+	if (modelSupportsVision(entry.model)) {
+		return true;
+	}
+	// Unrecognised model family. If the config declares an explicit capability inventory without any
+	// image token, the user already told us what the endpoint supports — respect that (TIGNN_ALLOW_UNKNOWN_VISION=1
+	// overrides it). Otherwise the name tells us nothing, so do not block the image client-side.
+	const declared = normalizeCapabilities(entry.capabilities);
+	if (declared.length > 0 && !allowUnknownVision()) {
+		return false;
+	}
+	return !strictVisionMode();
+}
+
+/**
+ * Re-attaches capability declarations that the flat line parser above cannot see.
+ *
+ * The config.yaml parser only understands `name/model/apiBase/apiKey`, so a nested list such as
+ *
+ * ```yaml
+ *   - name: ali
+ *     capabilities:
+ *       - tool_use
+ *       - image_input
+ * ```
+ * was silently dropped (and the `- tool_use` line even reset the entry being parsed).
+ * This pass scans the same document for capability declarations and merges them onto the parsed entries.
+ */
+export function applyDeclaredCapabilities(content: string, models: ContinueModelEntry[]): ContinueModelEntry[] {
+	if (!models.length || !content) {
+		return models;
+	}
+	const flags = readDeclaredCapabilities(content);
+	if (!flags.length) {
+		return models;
+	}
+	return models.map(model => {
+		const name = (model.name ?? '').toLowerCase();
+		const modelId = (model.model ?? '').toLowerCase();
+		// Name is the entry identity; the underlying model id is only a fallback (several entries can
+		// point at the same model id, so a model-id match must never shadow a name match).
+		const hit = flags.find(flag => name.length > 0 && !!flag.name && flag.name.toLowerCase() === name)
+			?? flags.find(flag => modelId.length > 0 && !!flag.model && flag.model.toLowerCase() === modelId);
+		if (!hit) {
+			return model;
+		}
+		const capabilities = hit.capabilities.length > 0 ? hit.capabilities : model.capabilities;
+		const imageInput = typeof hit.imageInput === 'boolean' ? hit.imageInput : model.imageInput;
+		return { ...model, capabilities, imageInput };
+	});
+}
+
+interface DeclaredCapabilities {
+	name?: string;
+	model?: string;
+	capabilities: string[];
+	imageInput?: boolean;
+}
+
+function parseBooleanish(raw: string): boolean | undefined {
+	const value = raw.trim().replace(/^['"]|['"]$/g, '').toLowerCase();
+	if (['true', 'yes', 'on', '1'].includes(value)) {
+		return true;
+	}
+	if (['false', 'no', 'off', '0'].includes(value)) {
+		return false;
+	}
+	return undefined;
+}
+
+function stripQuotes(raw: string): string {
+	return raw.trim().replace(/^['"]|['"]$/g, '');
+}
+
+function readDeclaredCapabilities(content: string): DeclaredCapabilities[] {
+	const entries: DeclaredCapabilities[] = [];
+	let current: DeclaredCapabilities | undefined;
+	let entryIndent = -1;
+	let listKeyIndent = -1;
+	let listKey: string | undefined;
+	let insideModels = false;
+
+	const closeEntry = () => {
+		current = undefined;
+		listKey = undefined;
+		listKeyIndent = -1;
+	};
+
+	for (const rawLine of content.split(/\r?\n/)) {
+		const line = rawLine.replace(/\t/g, '    ');
+		const trimmed = line.trim();
+		if (!trimmed || trimmed.startsWith('#')) {
+			continue;
+		}
+		const indent = line.length - line.trimStart().length;
+
+		if (!insideModels) {
+			if (/^models\s*:/.test(trimmed)) {
+				insideModels = true;
+			}
+			continue;
+		}
+
+		if (trimmed.startsWith('- ') || trimmed === '-') {
+			const rest = trimmed === '-' ? '' : trimmed.slice(2).trim();
+			const entry = current;
+			const opensNewEntry = !entry || !listKey || indent <= listKeyIndent || /^[^:\s]+\s*:/.test(rest);
+			if (!opensNewEntry) {
+				if (listKey === 'capabilities') {
+					entry.capabilities.push(...normalizeCapabilities(rest));
+				}
+				continue;
+			}
+			closeEntry();
+			current = { capabilities: [] };
+			entries.push(current);
+			entryIndent = indent;
+			if (rest) {
+				const match = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(rest);
+				if (match) {
+					applyDeclaredKey(current, match[1], match[2], (key, keyIndent) => {
+						listKey = key;
+						listKeyIndent = keyIndent;
+					}, indent + 2);
+				}
+			}
+			continue;
+		}
+
+		if (!current) {
+			// Top level key after the models list (e.g. `version:`): leave the block.
+			if (indent <= entryIndent) {
+				insideModels = false;
+			}
+			continue;
+		}
+
+		if (indent < entryIndent) {
+			insideModels = false;
+			closeEntry();
+			continue;
+		}
+
+		const match = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(trimmed);
+		if (!match) {
+			continue;
+		}
+		applyDeclaredKey(current, match[1], match[2], (key, keyIndent) => {
+			listKey = key;
+			listKeyIndent = keyIndent;
+		}, indent);
+	}
+
+	return entries;
+}
+
+function applyDeclaredKey(
+	entry: DeclaredCapabilities,
+	rawKey: string,
+	rawValue: string,
+	openList: (key: string, indent: number) => void,
+	indent: number,
+): void {
+	const key = rawKey.toLowerCase();
+	const value = rawValue.trim();
+	const declaredKey = key.replace(/[_-]/g, '');
+	switch (declaredKey) {
+		case 'name':
+			if (value) {
+				entry.name = stripQuotes(value);
+			}
+			return;
+		case 'model':
+		case 'modelid':
+			if (value) {
+				entry.model = stripQuotes(value);
+			}
+			return;
+		case 'capabilities':
+		case 'inputmodalities': {
+			if (value) {
+				entry.capabilities.push(...normalizeCapabilities(value));
+			}
+			openList('capabilities', indent);
+			return;
+		}
+		case 'imageinput':
+		case 'vision':
+		case 'supportsvision':
+		case 'supportsimageinput': {
+			const parsed = parseBooleanish(value);
+			if (typeof parsed === 'boolean') {
+				entry.imageInput = parsed;
+			}
+			return;
+		}
+		default:
+			return;
+	}
 }
 
 /** True for retired/local-only chat entries that must not appear in the Agents picker. */
@@ -475,9 +802,15 @@ export function parseConfigYamlModels(content: string): ContinueModelEntry[] {
 		}
 
 		if (trimmed.startsWith('- ')) {
+			const inline = trimmed.slice(2).trim();
+			// Nested list item of the previous key (e.g. `- image_input` under `capabilities:`)
+			// must not be mistaken for the start of a new model entry: doing so truncated the
+			// entry being parsed and dropped every key that came after the list.
+			if (current && !inline.includes(':') && (current.name || current.model)) {
+				continue;
+			}
 			flush();
 			current = {};
-			const inline = trimmed.slice(2).trim();
 			if (inline.includes(':')) {
 				assignYamlField(current, inline);
 			}
@@ -490,7 +823,9 @@ export function parseConfigYamlModels(content: string): ContinueModelEntry[] {
 	}
 
 	flush();
-	return pickCloudModels(models);
+	// The flat parser above cannot see nested `capabilities:` lists, so merge those declarations
+	// back on before the entries reach the language-model registry.
+	return pickCloudModels(applyDeclaredCapabilities(content, models));
 }
 
 function assignYamlField(target: { name?: string; model?: string; apiBase?: string; apiKey?: string }, line: string): void {

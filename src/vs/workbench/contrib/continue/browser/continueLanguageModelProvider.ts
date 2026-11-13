@@ -23,7 +23,7 @@ import {
 	ILanguageModelChatResponse,
 } from '../../chat/common/languageModels.js';
 import { ChatAgentLocation } from '../../chat/common/constants.js';
-import { ContinueModelEntry, modelSupportsVision, pickCloudModels } from './continueModelConfig.js';
+import { ContinueModelEntry, pickCloudModels, resolveModelVision } from './continueModelConfig.js';
 
 export const CONTINUE_LM_VENDOR = 'continue';
 export const CONTINUE_LM_VENDOR_DISPLAY = 'Continue';
@@ -69,7 +69,7 @@ export class ContinueLanguageModelProvider extends Disposable implements ILangua
 					capabilities: {
 						toolCalling: true,
 						agentMode: true,
-						vision: modelSupportsVision(entry.model),
+						vision: resolveModelVision(entry),
 					},
 				},
 			};
