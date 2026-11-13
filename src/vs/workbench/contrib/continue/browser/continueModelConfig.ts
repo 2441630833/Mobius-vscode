@@ -226,12 +226,14 @@ export function resolveModelVision(entry: VisionCapabilityInput | undefined): bo
 	if (modelSupportsVision(entry.model)) {
 		return true;
 	}
-	// Unrecognised model family. If the config declares an explicit capability inventory without any
-	// image token, the user already told us what the endpoint supports — respect that (TIGNN_ALLOW_UNKNOWN_VISION=1
-	// overrides it). Otherwise the name tells us nothing, so do not block the image client-side.
-	const declared = normalizeCapabilities(entry.capabilities);
-	if (declared.length > 0 && !allowUnknownVision()) {
-		return false;
+	// Unrecognised model family. A declared inventory that merely lacks an image token is NOT evidence
+	// that the endpoint refuses images: `capabilities` is a client-side hint, and OpenAI-compatible
+	// gateways (ali, volcano, …) routinely publish only `tool_use` while still accepting `image_url`
+	// parts. The server is the authority here, so images flow through and a genuinely text-only endpoint
+	// answers with its own error instead of Mobius silently dropping the attachment and detouring into
+	// the OCR route. Opt out with `imageInput: false` (per model) or TIGNN_STRICT_VISION=1 (global).
+	if (allowUnknownVision()) {
+		return true;
 	}
 	return !strictVisionMode();
 }

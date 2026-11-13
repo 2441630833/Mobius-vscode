@@ -47,9 +47,15 @@ suite('Continue model vision capability', () => {
 		assert.strictEqual(resolveModelVision(ali), true);
 	});
 
-	test('declared inventory without image tokens stays text-only', () => {
+	test('a non-image capability inventory does not veto images (server is the authority)', () => {
 		const models = parseConfigYamlModels(yaml);
-		assert.strictEqual(resolveModelVision(models.find(m => m.name === 'volcano')), false);
+		// `capabilities: [tool_use]` says nothing about image support: ali/volcano-style gateways still
+		// accept image_url parts. Dropping the attachment locally and detouring into OCR is the bug.
+		assert.strictEqual(resolveModelVision(models.find(m => m.name === 'volcano')), true);
+	});
+
+	test('explicit text_only token or missing entry still blocks detection', () => {
+		assert.strictEqual(resolveModelVision({ model: 'mystery-model', capabilities: ['text_only'] }), false);
 	});
 
 	test('undeclared custom gateway is not blocked client-side', () => {
