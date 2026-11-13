@@ -12,7 +12,6 @@ import { ExtensionIdentifier } from '../../../../platform/extensions/common/exte
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
-import { confirmLocalOcrForImages } from './continueOcrConsent.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IMarkerService, MarkerSeverity } from '../../../../platform/markers/common/markers.js';
@@ -102,13 +101,11 @@ import {
 } from './continueGodogenWorkflow.js';
 import { acquireIndexingPause } from './continueIndexingPause.js';
 import {
-	preprocessAgentRequestOcr,
 	collectAgentRequestMediaParts,
 	isLikelyImageAttachment,
 	isLikelyVideoAttachment,
 } from './continueOcrPreprocessor.js';
 import { isWebSearchEnabled } from './continueWebSearch.js';
-import { BUNDLED_ONNX_OCR } from './continueModelConfig.js';
 import { RunInTerminalTool } from '../../terminalContrib/chatAgentTools/browser/tools/runInTerminalTool.js';
 import { MobiusHarnessRegistry, MOBIUS_HARNESS_ENGINE_SETTING } from './continueAgentHarness.js';
 import { DeepSeekAgentHarness, extractAssistantHistoryText } from './continueDeepSeekHarness.js';
@@ -1017,133 +1014,28 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			const maybeVideos = attached.filter(v => isLikelyVideoAttachment(v));
 			const maybeMedia = [...maybeImages, ...maybeVideos];
 
-			const modelMeta = this._languageModelsService.lookupLanguageModel(modelId);
-			const supportsVision = modelMeta?.capabilities?.vision === true;
-			if (!supportsVision && maybeVideos.length > 0) {
-				progress([{ kind: 'warning', content: new MarkdownString(localize('continue.ocr.videoUnsupported', "This model does not declare vision support. Local OCR cannot process videos. Select a compatible multimodal model and resend.")) }]);
-				return {};
-			}
-			const imageConsent = await confirmLocalOcrForImages(maybeImages.length, supportsVision, modelMeta?.family ?? modelId, this._configurationService, this._dialogService, token);
-			if (imageConsent === 'cancel') {
-				if (!token.isCancellationRequested) {
-					progress([{ kind: 'warning', content: new MarkdownString(localize('continue.ocr.declined', "Image request cancelled. Enable local OCR, send images anyway, or select a multimodal model before resending.")) }]);
-				}
-				return {};
-			}
-
-			// The user may explicitly opt into sending images even when the model does
-			// not advertise image support: the endpoint is the final judge, and capability
-			// metadata is frequently missing for custom/self-hosted providers.
-			const sendImagesDirectly = imageConsent === 'send';
-
 			if (maybeMedia.length) {
-				if (supportsVision || sendImagesDirectly) {
-					// Model natively declares vision support -> direct passthrough
-					const collected = await collectAgentRequestMediaParts(
-						request,
-						this._fileService,
-						this._logService,
-					);
-					visionImageParts = collected.parts;
-					if (collected.unresolved > 0 && collected.parts.length === 0) {
-						progress([{
-							kind: 'warning',
-							content: new MarkdownString(
-								localize(
-									'continue.visionUnresolved',
-									"Found image attachment(s) but could not read image bytes.",
-								),
+				// Direct multimodal passthrough — send image/video parts straight to the model
+				const collected = await collectAgentRequestMediaParts(
+					request,
+					this._fileService,
+					this._logService,
+				);
+				visionImageParts = collected.parts;
+				if (collected.unresolved > 0 && collected.parts.length === 0) {
+					progress([{
+						kind: 'warning',
+						content: new MarkdownString(
+							localize(
+								'continue.visionUnresolved',
+								"Found image attachment(s) but could not read image bytes.",
 							),
-						}]);
-					}
-				} else {
-					// Text-only models reach OCR only after opt-in above.
-					if (maybeImages.length > 0) {
-						progress([{
-							kind: 'markdownContent',
-							content: new MarkdownString(
-								localize(
-									'continue.ocrRunning',
-									"Running local OCR (`{0}`) on {1} image(s)… (click 'OCR' in composer toolbar to toggle off)",
-									BUNDLED_ONNX_OCR.model,
-									maybeImages.length,
-								),
-							),
-						}]);
-
-						const ocr = await preprocessAgentRequestOcr(
-							request,
-							this._commandService,
-							this._fileService,
-							this._logService,
-							token,
-						);
-						if (ocr.unresolvedAttachments > 0 && ocr.imageCount === 0) {
-							progress([{
-								kind: 'warning',
-								content: new MarkdownString(
-									localize(
-										'continue.ocrUnresolved',
-										"Local OCR: found image attachment(s) but could not read image bytes.",
-									),
-								),
-							}]);
-						} else if (ocr.imageCount > 0) {
-							if (ocr.successCount > 0) {
-								progress([{
-									kind: 'markdownContent',
-									content: new MarkdownString(
-										localize(
-											'continue.ocrDone',
-											"Local OCR (`{0}`): extracted text from {1}/{2} image(s).",
-											BUNDLED_ONNX_OCR.model,
-											ocr.successCount,
-											ocr.imageCount,
-										),
-									),
-								}]);
-							} else if (ocr.lastError) {
-								progress([{
-									kind: 'warning',
-									content: new MarkdownString(
-										localize(
-											'continue.ocrErrorDetail',
-											"Local OCR (`{0}`) failed: {1}",
-											BUNDLED_ONNX_OCR.model,
-											ocr.lastError.slice(0, 240),
-										),
-									),
-								}]);
-							} else {
-								progress([{
-									kind: 'markdownContent',
-									content: new MarkdownString(
-										localize(
-											'continue.ocrEmpty',
-											"Local OCR (`{0}`): no text found in {1} image(s).",
-											BUNDLED_ONNX_OCR.model,
-											ocr.imageCount,
-										),
-									),
-								}]);
-							}
-						}
-						ocrExtract = ocr.extractBlock;
-					}
+						),
+					}]);
 				}
 			}
 		} catch (err) {
-			this._logService.warn(`[Continue][OCR] preprocess failed: ${err instanceof Error ? err.message : String(err)}`);
-			progress([{
-				kind: 'warning',
-				content: new MarkdownString(
-					localize(
-						'continue.ocrFailed',
-						"Local OCR failed ({0}). Continuing without image text.",
-						BUNDLED_ONNX_OCR.model,
-					),
-				),
-			}]);
+			this._logService.warn(`[Continue][Media] collection failed: ${err instanceof Error ? err.message : String(err)}`);
 		}
 
 		const isOnline = await checkNetworkOnline();

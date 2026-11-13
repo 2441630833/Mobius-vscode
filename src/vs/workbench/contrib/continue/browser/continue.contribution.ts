@@ -53,7 +53,6 @@ import { registerContinueGodogenWorkflowContribution } from './continueGodogenWo
 import { registerContinueEccWorkflowContribution } from './continueEccWorkflow.js';
 import { registerContinueWebSearchAction, WebSearchActionViewItemContribution } from './continueWebSearchAction.js';
 import { CONTINUE_WEB_SEARCH_ENABLED_SETTING } from './continueWebSearch.js';
-import { registerContinueLocalOcrAction, LocalOcrActionViewItemContribution, CONTINUE_LOCAL_OCR_ENABLED_SETTING } from './continueOcrAction.js';
 import { MOBIUS_HARNESS_ENGINE_SETTING, MobiusHarnessRegistry } from './continueAgentHarness.js';
 import './mobiusCommitAction.js';
 import { IWorkspaceTrustEnablementService, IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
@@ -189,19 +188,14 @@ if (isContinuePhysicalAiIde()) {
 	});
 
 	Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
-		id: 'continueLocalOcr',
-		title: 'Mobius Local OCR',
+		id: 'continueWebSearch',
+		title: 'Mobius Web Search',
 		type: 'object',
 		properties: {
 			[CONTINUE_WEB_SEARCH_ENABLED_SETTING]: {
 				type: 'boolean',
 				default: true,
 				description: 'Allow the agent to search the web. Toggle Web Search in the chat input toolbar to enable or disable search calls.',
-			},
-			[CONTINUE_LOCAL_OCR_ENABLED_SETTING]: {
-				type: 'boolean',
-				default: false,
-				description: 'Extract text from images locally for text-only models. Off by default; attaching images to a model without vision support prompts to enable local OCR. Multimodal models receive images directly.',
 			},
 		},
 	});
@@ -702,7 +696,6 @@ registerWorkbenchContribution2(PhysicalAiWorkspaceTrustContribution.ID, Physical
 registerWorkbenchContribution2(ContinueAgentsDefaultsContribution.ID, ContinueAgentsDefaultsContribution, WorkbenchPhase.BlockStartup);
 registerWorkbenchContribution2(ContinueStartupContribution.ID, ContinueStartupContribution, WorkbenchPhase.AfterRestored);
 registerWorkbenchContribution2(ContinueLanguageModelContribution.ID, ContinueLanguageModelContribution, WorkbenchPhase.AfterRestored);
-registerWorkbenchContribution2(LocalOcrActionViewItemContribution.ID, LocalOcrActionViewItemContribution, WorkbenchPhase.AfterRestored);
 registerWorkbenchContribution2(WebSearchActionViewItemContribution.ID, WebSearchActionViewItemContribution, WorkbenchPhase.AfterRestored);
 class SwitchAgentHarnessAction extends Action2 {
 	constructor() {
@@ -732,5 +725,4 @@ registerAction2(DeleteModelProviderAction);
 registerAction2(RsiEvaluateAction);
 registerAction2(RsiApproveAction);
 registerAction2(RsiRollbackAction);
-registerContinueLocalOcrAction();
 registerContinueWebSearchAction();

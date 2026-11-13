@@ -396,18 +396,6 @@
         "category": "Continue",
         "title": "Open in new window",
         "group": "Continue"
-      },
-      {
-        "command": "continue.runGlmOcr",
-        "category": "Continue",
-        "title": "Run Local GLM-OCR (ONNX)",
-        "group": "Continue"
-      },
-      {
-        "command": "continue.cancelGlmOcr",
-        "category": "Continue",
-        "title": "Cancel Local GLM-OCR",
-        "group": "Continue"
       }
     ],
     "keybindings": [

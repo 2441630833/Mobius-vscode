@@ -20,10 +20,9 @@
 	mask-size: contain;
 }
 
-/* RobotOutlined — Agent */
-.monaco-workbench .codicon.codicon-mobius-mode-agent::before {
-	-webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024'%3E%3Cpath fill='black' d='M300 328a60 60 0 1 0 120 0 60 60 0 1 0-120 0Z'/%3E%3Cpath fill='black' d='M852 64H172c-17.7 0-32 14.3-32 32v660c0 17.7 14.3 32 32 32h680c17.7 0 32-14.3 32-32V96c0-17.7-14.3-32-32-32ZM204 128h616v596H204V128Z'/%3E%3Cpath fill='black' d='M604 328a60 60 0 1 0 120 0 60 60 0 1 0-120 0Z'/%3E%3Cpath fill='black' d='M852 708H172v52h680v-52Z'/%3E%3C/svg%3E");
-	mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024'%3E%3Cpath fill='black' d='M300 328a60 60 0 1 0 120 0 60 60 0 1 0-120 0Z'/%3E%3Cpath fill='black' d='M852 64H172c-17.7 0-32 14.3-32 32v660c0 17.7 14.3 32 32 32h680c17.7 0 32-14.3 32-32V96c0-17.7-14.3-32-32-32ZM204 128h616v596H204V128Z'/%3E%3Cpath fill='black' d='M604 328a60 60 0 1 0 120 0 60 60 0 1 0-120 0Z'/%3E%3Cpath fill='black' d='M852 708H172v52h680v-52Z'/%3E%3C/svg%3E");
+/* RobotOutlined — Agent (retired from input area) */
+.monaco-workbench .codicon.codicon-mobius-mode-agent {
+	display: none !important;
 }
 
 /* Gamepad — Game (Material-style controller, not play) */

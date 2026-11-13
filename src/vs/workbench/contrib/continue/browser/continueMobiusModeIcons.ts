@@ -8,7 +8,7 @@ import { ChatMode, IChatMode } from '../../chat/common/chatModes.js';
 import { CONTINUE_CHIP_AGENT_ID, CONTINUE_GAME_AGENT_ID, CONTINUE_PPT_AGENT_ID } from './continueProduct.js';
 
 /** Registered in continue.contribution.ts — styled via continueMobiusModeIcons.css */
-export const MOBIUS_MODE_AGENT_ICON = ThemeIcon.fromId('mobius-mode-agent');
+export const MOBIUS_MODE_AGENT_ICON: ThemeIcon | undefined = undefined;
 export const MOBIUS_MODE_GAME_ICON = ThemeIcon.fromId('mobius-mode-game');
 export const MOBIUS_MODE_CHIP_ICON = ThemeIcon.fromId('mobius-mode-chip');
 export const MOBIUS_MODE_PPT_ICON = ThemeIcon.fromId('mobius-mode-ppt');
@@ -35,7 +35,7 @@ export function isMobiusAgentMode(mode: IChatMode): boolean {
 }
 
 /** Ant Design Outlined-style icon for Mobius Agent / Game / Chip / PPT pickers. */
-export function getMobiusChatModeIcon(mode: IChatMode): ThemeIcon {
+export function getMobiusChatModeIcon(mode: IChatMode): ThemeIcon | undefined {
 	if (isMobiusGameMode(mode)) {
 		return MOBIUS_MODE_GAME_ICON;
 	}
@@ -46,7 +46,7 @@ export function getMobiusChatModeIcon(mode: IChatMode): ThemeIcon {
 		return MOBIUS_MODE_PPT_ICON;
 	}
 	if (isMobiusAgentMode(mode)) {
-		return MOBIUS_MODE_AGENT_ICON;
+		return undefined;
 	}
-	return mode.icon.get() ?? MOBIUS_MODE_AGENT_ICON;
+	return undefined;
 }

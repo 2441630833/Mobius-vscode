@@ -10,7 +10,6 @@ import { walkDirAsync } from "core/indexing/walkDir";
 import { isModelInstaller } from "core/llm";
 import { NextEditLoggingService } from "core/nextEdit/NextEditLoggingService";
 import { startLocalLemonade } from "core/util/lemonadeHelper";
-import { cancelGlmOcrViaWorker, runGlmOcrViaWorker } from "core/llm/llms/TransformersJsGlmOcrClient";
 import {
   getConfigJsonPath,
   getConfigYamlPath,
@@ -729,35 +728,12 @@ const getCommandsMap: (
       sidebar.webviewProtocol?.request("navigateTo", { path, toggle });
       focusGUI();
     },
-    /** Agents window: run bundled GLM-OCR ONNX on one image attachment. */
-    "continue.runGlmOcr": async (request?: {
-      base64?: string;
-      mimeType?: string;
-      prompt?: string;
-      maxNewTokens?: number;
-    }) => {
-      if (!request?.base64) {
-        return { ok: false, error: "Missing image base64" };
-      }
-      try {
-        const text = await runGlmOcrViaWorker({
-          base64: request.base64,
-          mimeType: request.mimeType ?? "image/png",
-          prompt: request.prompt,
-          maxNewTokens: request.maxNewTokens,
-        });
-        return { ok: true, text };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-        };
-      }
+    /** Agents window: GLM-OCR is retired; all models use multimodal vision. */
+    "continue.runGlmOcr": async () => {
+      return { ok: false, error: "Local OCR is disabled; models process images directly." };
     },
 
-    /** Agents window: kill hung GLM-OCR child after timeout / cancel. */
-    "continue.cancelGlmOcr": (request?: { reason?: string }) => {
-      cancelGlmOcrViaWorker(request?.reason);
+    "continue.cancelGlmOcr": () => {
       return { ok: true };
     },
 

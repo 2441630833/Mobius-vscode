@@ -69,21 +69,6 @@ const workerEsbuildConfig = {
   ],
 };
 
-const glmOcrWorkerEsbuildConfig = {
-  ...workerEsbuildConfig,
-  entryPoints: [
-    path.join(
-      __dirname,
-      "../../../core/llm/llms/transformersJsGlmOcrWorker.ts"
-    ),
-  ],
-  outfile: "out/transformersJsGlmOcrWorker.js",
-  banner: {
-    js: 'module.paths.unshift(require("path").join(__dirname, "glm-ocr-runtime", "node_modules"));',
-  },
-  external: [...workerEsbuildConfig.external, "@huggingface/transformers"],
-};
-
 const chunkWorkerEsbuildConfig = {
   ...workerEsbuildConfig,
   entryPoints: [
@@ -99,19 +84,16 @@ void (async () => {
   if (flags.includes("--watch")) {
     const ctx = await esbuild.context(esbuildConfig);
     const workerCtx = await esbuild.context(workerEsbuildConfig);
-    const glmOcrCtx = await esbuild.context(glmOcrWorkerEsbuildConfig);
     const chunkWorkerCtx = await esbuild.context(chunkWorkerEsbuildConfig);
     await Promise.all([
       ctx.watch(),
       workerCtx.watch(),
-      glmOcrCtx.watch(),
       chunkWorkerCtx.watch(),
     ]);
   } else if (flags.includes("--notify")) {
     const inFile = esbuildConfig.entryPoints[0];
     const outFile = esbuildConfig.outfile;
     const workerOut = workerEsbuildConfig.outfile;
-    const glmOcrOut = glmOcrWorkerEsbuildConfig.outfile;
     const chunkWorkerOut = chunkWorkerEsbuildConfig.outfile;
 
     // The watcher automatically notices changes to source files
@@ -120,7 +102,6 @@ void (async () => {
     if (
       fs.existsSync(outFile) &&
       fs.existsSync(workerOut) &&
-      fs.existsSync(glmOcrOut) &&
       fs.existsSync(chunkWorkerOut)
     ) {
       console.log("VS Code Extension esbuild up to date");
@@ -140,10 +121,9 @@ void (async () => {
   } else {
     await esbuild.build(esbuildConfig);
     await esbuild.build(workerEsbuildConfig);
-    await esbuild.build(glmOcrWorkerEsbuildConfig);
     await esbuild.build(chunkWorkerEsbuildConfig);
     console.log(
-      "VS Code Extension MiniLM + GLM-OCR + chunk worker esbuild complete"
+      "VS Code Extension MiniLM + chunk worker esbuild complete"
     );
   }
 })();

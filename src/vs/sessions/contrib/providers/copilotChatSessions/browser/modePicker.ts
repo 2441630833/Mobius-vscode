@@ -436,7 +436,10 @@ export class ModePicker extends Disposable {
 
 		const selectedMode = this._modePickerModel.selectedMode;
 		if (isContinuePhysicalAiIde()) {
-			dom.append(this._triggerElement, renderIcon(getMobiusChatModeIcon(selectedMode)));
+			const icon = getMobiusChatModeIcon(selectedMode);
+			if (icon) {
+				dom.append(this._triggerElement, renderIcon(icon));
+			}
 		} else {
 			const icon = selectedMode.icon.get();
 			if (icon) {
