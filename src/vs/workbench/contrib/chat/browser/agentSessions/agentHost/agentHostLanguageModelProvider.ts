@@ -8,6 +8,7 @@ import { Emitter } from '../../../../../../base/common/event.js';
 import { Disposable } from '../../../../../../base/common/lifecycle.js';
 import { ConfigSchema, SessionModelInfo } from '../../../../../../platform/agentHost/common/state/sessionState.js';
 import { readAgentModelPricingMeta } from '../../../../../../platform/agentHost/common/agentModelPricing.js';
+import { resolveAgentModelVision } from '../../../../../../platform/agentHost/common/modelVision.js';
 import { nullExtensionDescription } from '../../../../../services/extensions/common/extensions.js';
 import { ILanguageModelChatMetadataAndIdentifier, ILanguageModelChatProvider, ILanguageModelConfigurationSchema } from '../../../common/languageModels.js';
 
@@ -87,7 +88,15 @@ export class AgentHostLanguageModelProvider extends Disposable implements ILangu
 						priceCategory: pricing.priceCategory,
 						targetChatSessionType: this._sessionType,
 						capabilities: {
-							vision: m.supportsVision ?? false,
+							// `supportsVision` is only reported when the upstream catalogue knows the
+							// model; user-configured endpoints (Continue config, self-hosted gateways)
+							// arrive undefined even though they accept image parts. Resolve instead of
+							// defaulting to false so pasted images are not swallowed by the OCR gate.
+							vision: resolveAgentModelVision({
+								id: m.id,
+								name: m.name,
+								reportedSupportsVision: m.supportsVision,
+							}),
 							toolCalling: true,
 							agentMode: true,
 						},
