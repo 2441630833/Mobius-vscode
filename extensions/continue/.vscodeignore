@@ -12,10 +12,6 @@ vsc-extension-quickstart.md
 **/.env
 **/env
 node_modules/**
-!node_modules/@huggingface/
-!node_modules/@huggingface/**
-!node_modules/@img/
-!node_modules/@img/**
 # MiniLM embedding worker requires onnxruntime-node with its real napi-v3 layout.
 # These are copied into node_modules/ by scripts/prepackage.js; without them the
 # worker fails with `Cannot find module 'onnxruntime-node'` and indexing dies.
@@ -37,7 +33,8 @@ e2e
 
 server/exe/**
 !out/node_modules/**
-!out/glm-ocr-runtime/**
+out/node_modules/@huggingface/**
+out/node_modules/@img/**
 !node_modules/@vscode/ripgrep/bin/rg
 
 # Do not ship esbuild in VSIX

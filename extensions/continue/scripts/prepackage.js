@@ -14,7 +14,6 @@ const { copySqlite } = require("./download-copy-sqlite");
 const { generateAndCopyConfigYamlSchema } = require("./generate-copy-config");
 const { installAndCopyNodeModules } = require("./install-copy-nodemodule");
 const { npmInstall } = require("./npm-install");
-const { packageGlmOcr } = require("./package-glm-ocr");
 const {
   writeBuildTimestamp,
   continueDir,
@@ -531,9 +530,6 @@ void (async () => {
     "node_modules/jsdom/lib/jsdom/living/xhr/xhr-sync-worker.js",
     "out/xhr-sync-worker.js",
   );
-
-  // OCR must not ship as a worker without its isolated runtime and local weights.
-  await packageGlmOcr(path.resolve(__dirname, ".."), target);
 
   // Validate the all of the necessary files are present
   validateFilesPresent([
