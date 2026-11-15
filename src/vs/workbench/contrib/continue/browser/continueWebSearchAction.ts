@@ -34,7 +34,8 @@ export class ToggleWebSearchAction extends Action2 {
 			category: localize2('continue.category', "Mobius"),
 			icon: Codicon.globe,
 			f1: true,
-			precondition: ChatContextKeys.enabled,
+			// No precondition: toggling a setting must always work, even before a
+			// chat participant has activated (chatIsEnabled can lag on Linux).
 			toggled: {
 				condition: ContextKeyExpr.notEquals(`config.${CONTINUE_WEB_SEARCH_ENABLED_SETTING}`, false),
 				title: localize('continue.webSearch.enabledTitle', "Web Search: On"),
@@ -89,6 +90,18 @@ export class ToggleWebSearchAction extends Action2 {
 			} catch (err) {
 				notificationService.error(err instanceof Error ? err : String(err));
 				return;
+			}
+		}
+
+		// A higher-precedence scope (e.g. a workspace-folder value) can still
+		// override what we wrote. Clear those so the button always wins.
+		if (isWebSearchEnabled(configurationService) !== next) {
+			for (const scope of [ConfigurationTarget.WORKSPACE_FOLDER, ConfigurationTarget.WORKSPACE, ConfigurationTarget.USER]) {
+				try {
+					await configurationService.updateValue(CONTINUE_WEB_SEARCH_ENABLED_SETTING, scope === ConfigurationTarget.USER ? next : undefined, scope);
+				} catch {
+					// scope not available (e.g. no workspace) — ignore
+				}
 			}
 		}
 

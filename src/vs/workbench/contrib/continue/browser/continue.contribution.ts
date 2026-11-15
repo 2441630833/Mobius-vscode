@@ -187,19 +187,6 @@ if (isContinuePhysicalAiIde()) {
 		},
 	});
 
-	Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
-		id: 'continueWebSearch',
-		title: 'Mobius Web Search',
-		type: 'object',
-		properties: {
-			[CONTINUE_WEB_SEARCH_ENABLED_SETTING]: {
-				type: 'boolean',
-				default: true,
-				description: 'Allow the agent to search the web. Toggle Web Search in the chat input toolbar to enable or disable search calls.',
-			},
-		},
-	});
-
 	Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerDefaultConfigurations([{
 		overrides: {
 			'git.detectSubmodules': false,
@@ -230,6 +217,20 @@ if (isContinuePhysicalAiIde()) {
 		},
 	}]);
 }
+
+// Registered for every build so the toolbar toggle and its default always exist.
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+	id: 'continueWebSearch',
+	title: 'Mobius Web Search',
+	type: 'object',
+	properties: {
+		[CONTINUE_WEB_SEARCH_ENABLED_SETTING]: {
+			type: 'boolean',
+			default: true,
+			description: 'Allow the agent to search the web. Toggle Web Search in the chat input toolbar to enable or disable search calls.',
+		},
+	},
+});
 
 registerContinueChatAgentContribution();
 registerContinueMobiusBundledAgentsContribution();
@@ -408,6 +409,9 @@ class ContinueAgentsDefaultsContribution extends Disposable implements IWorkbenc
 		@IStorageService private readonly storageService: IStorageService,
 	) {
 		super();
+		// Runs for every Mobius build (not only the Physical AI product), because a
+		// stale user value is honoured even when the setting is unregistered.
+		this._repairStaleWebSearchDisable();
 		if (!isContinuePhysicalAiIde()) {
 			return;
 		}
@@ -451,6 +455,25 @@ class ContinueAgentsDefaultsContribution extends Disposable implements IWorkbenc
 		// Never show "Enable Autopilot?" / "Enable Bypass Approvals?" dialogs in Mobius.
 		this.storageService.store(AUTO_APPROVE_DONT_SHOW_AGAIN_KEY, true, StorageScope.PROFILE, StorageTarget.MACHINE);
 		this.storageService.store(AUTOPILOT_DONT_SHOW_AGAIN_KEY, true, StorageScope.PROFILE, StorageTarget.MACHINE);
+	}
+
+	private _repairStaleWebSearchDisable(): void {
+		// One-time repair: older builds (notably on Linux, where the offline probe
+		// misfired) left `continue.webSearch.enabled: false` in settings after users
+		// clicked the toolbar chip while search looked broken. That stale value makes
+		// every search_web call fail with "Web Search is disabled by the user".
+		// Clear it once; later deliberate "Off" clicks are respected.
+		const webSearchResetKey = 'mobius.webSearch.staleDisableReset.v1';
+		if (!this.storageService.getBoolean(webSearchResetKey, StorageScope.APPLICATION, false)) {
+			const inspect = this.configurationService.inspect<boolean>(CONTINUE_WEB_SEARCH_ENABLED_SETTING);
+			if (inspect.userValue === false) {
+				void this.configurationService.updateValue(CONTINUE_WEB_SEARCH_ENABLED_SETTING, undefined, ConfigurationTarget.USER);
+			}
+			if (inspect.workspaceValue === false) {
+				void this.configurationService.updateValue(CONTINUE_WEB_SEARCH_ENABLED_SETTING, undefined, ConfigurationTarget.WORKSPACE);
+			}
+			this.storageService.store(webSearchResetKey, true, StorageScope.APPLICATION, StorageTarget.MACHINE);
+		}
 	}
 }
 

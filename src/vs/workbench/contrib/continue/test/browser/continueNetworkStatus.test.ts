@@ -63,7 +63,7 @@ suite('Continue Network Status & Search Web Gating', () => {
 		assert.strictEqual(hasWebSearchIntent('请搜索一下最新的英伟达模型信息'), true);
 	});
 
-	test('loadContinueAgentTools excludes search_web when offline', async () => {
+	test('loadContinueAgentTools keeps search_web when the reachability probe says offline (Linux false-offline)', async () => {
 		const mockCommandService = {
 			executeCommand: async () => [],
 		} as unknown as ICommandService;
@@ -74,10 +74,10 @@ suite('Continue Network Status & Search Web Gating', () => {
 
 		setNetworkOnlineForTesting(false);
 		const offlineTools = await loadContinueAgentTools(mockCommandService);
-		assert.ok(!offlineTools.some(t => t.function.name === 'search_web'), 'Expected search_web excluded in offline tools');
+		assert.ok(offlineTools.some(t => t.function.name === 'search_web'), 'search_web must stay available; only the user toggle may hide it');
 	});
 
-	test('loadAgentToolSuperset excludes search_web when offline', async () => {
+	test('loadAgentToolSuperset keeps search_web when the reachability probe says offline', async () => {
 		const mockCommandService = {
 			executeCommand: async () => [],
 		} as unknown as ICommandService;
@@ -93,10 +93,10 @@ suite('Continue Network Status & Search Web Gating', () => {
 
 		setNetworkOnlineForTesting(false);
 		const offlineTools = await loadAgentToolSuperset(mockToolsService, mockCommandService);
-		assert.ok(!offlineTools.some(t => t.function.name === 'search_web'), 'Expected search_web excluded from superset when offline');
+		assert.ok(offlineTools.some(t => t.function.name === 'search_web'), 'search_web must stay in superset when probe fails');
 	});
 
-	test('invokeContinueBuiltInTool blocks search_web immediately when offline', async () => {
+	test('invokeContinueBuiltInTool still runs search_web when the probe says offline; real errors come from the tool', async () => {
 		let commandExecuted = false;
 		const mockCommandService = {
 			executeCommand: async () => {
@@ -112,10 +112,20 @@ suite('Continue Network Status & Search Web Gating', () => {
 			{ query: 'test' },
 			'call-1',
 		);
-		assert.strictEqual(commandExecuted, false, 'Command should not be called when offline');
-		assert.strictEqual(result.ok, false);
-		assert.ok(result.text.includes('disabled') || result.text.includes('offline'));
+		assert.strictEqual(commandExecuted, true, 'search must be attempted in the extension host');
+		assert.strictEqual(result.ok, true);
+		assert.ok(!result.text.includes('disabled by the user'));
 	});
+
+	test('invokeContinueBuiltInTool reports a real network error from the extension host', async () => {
+		const mockCommandService = {
+			executeCommand: async () => ({ ok: false, contextItems: [], errorMessage: 'getaddrinfo ENOTFOUND cn.bing.com' }),
+		} as unknown as ICommandService;
+		const result = await invokeContinueBuiltInTool(mockCommandService, 'search_web', { query: 'x' }, 'call-2');
+		assert.strictEqual(result.ok, false);
+		assert.ok(result.text.includes('ENOTFOUND'));
+	});
+
 	test('Web Search defaults on and follows configuration changes', async () => {
 		const configuration = new TestConfigurationService();
 		assert.strictEqual(isWebSearchEnabled(configuration), true);

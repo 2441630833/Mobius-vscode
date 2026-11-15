@@ -29,7 +29,6 @@ import {
 	loadContinueAgentTools,
 	isRetiredOrchestrationTool,
 } from './continueAgentToolsBridge.js';
-import { isNetworkOnline } from './continueNetworkStatus.js';
 import { executeRunTerminalCommand } from './continueTerminalTool.js';
 
 export const CONTINUE_GET_AGENT_CHAT_RULES = 'continue.getAgentChatRules';
@@ -743,7 +742,7 @@ export async function loadAgentToolSuperset(
 	);
 
 	const merged = mergeSchemas(schemas);
-	if (!isNetworkOnline() || !isWebSearchEnabled(configurationService)) {
+	if (!isWebSearchEnabled(configurationService)) {
 		return merged.filter(t => t.function.name !== 'search_web');
 	}
 	return merged;

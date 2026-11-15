@@ -39,4 +39,22 @@ suite('Continue Web Search Toggle', () => {
 		]);
 		assert.strictEqual(notifications.length, 2);
 	});
+
+	test('toggle has no precondition so it is always clickable (Linux: chatIsEnabled can lag)', () => {
+		const action = new ToggleWebSearchAction();
+		assert.strictEqual(action.desc.precondition, undefined);
+	});
+
+	test('a stale "false" left by older builds is flipped back on with one click', async () => {
+		const configuration = new TestConfigurationService({ 'continue.webSearch.enabled': false });
+		const services = store.add(new TestInstantiationService());
+		services.stub(IConfigurationService, configuration);
+		services.stub(IConfigurationService, 'updateValue', async (key: string, value: unknown) => {
+			await configuration.setUserConfiguration(key, value);
+		});
+		services.stub(INotificationService, { info: () => { } } as unknown as INotificationService);
+		assert.strictEqual(isWebSearchEnabled(configuration), false);
+		await services.invokeFunction(accessor => new ToggleWebSearchAction().run(accessor));
+		assert.strictEqual(isWebSearchEnabled(configuration), true);
+	});
 });

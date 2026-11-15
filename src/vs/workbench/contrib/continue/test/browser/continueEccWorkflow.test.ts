@@ -172,6 +172,21 @@ suite('ContinueEccWorkflow', () => {
 		assert.deepStrictEqual(result.matchedSkills, []);
 	});
 
+	test('preflight is skipped (no terminal command) when the packaged script is missing', async () => {
+		let invoked = false;
+		const result = await executeEccPreflight(
+			URI.file('/usr/share/mobius/resources/app/ECC'),
+			{ message: 'search the latest news', requestId: 'missing', sessionResource: URI.parse('test:session') } as any,
+			URI.file('/home/user/project'),
+			{ getTool: () => ({}), invokeTool: async () => { invoked = true; return { content: [] }; } } as any,
+			new NullLogService(), CancellationToken.None,
+			undefined,
+			{ exists: async () => false } as any,
+		);
+		assert.strictEqual(invoked, false, 'must not run `node <missing file>` (MODULE_NOT_FOUND)');
+		assert.strictEqual(result.ok, false);
+	});
+
 	test('collectEccCandidates includes packaged mobius-ecc from appRoot', () => {
 		const mockWorkspace = {
 			getWorkspace: () => ({ folders: [] }),

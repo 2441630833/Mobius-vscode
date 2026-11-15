@@ -234,6 +234,27 @@ export async function executeEccPreflight(
 
 	const prompt = request.message.trim();
 	const preflightScriptUri = await resolveEccPreflightScriptUri(eccRoot, fileService);
+	// Packaged builds (e.g. the Linux .deb/.tar.gz) may not ship the preflight
+	// script. Running `node <missing file>` only prints MODULE_NOT_FOUND in the
+	// user's terminal, so skip it when we can tell the file is absent.
+	if (fileService) {
+		let exists = false;
+		try {
+			exists = await fileService.exists(preflightScriptUri);
+		} catch {
+			exists = false;
+		}
+		if (!exists) {
+			logService.info(`[Continue][ECC] Preflight script not found at ${preflightScriptUri.fsPath}; skipping`);
+			return {
+				ok: false,
+				summary: 'ECC Preflight: unavailable; continuing with the user request',
+				systemPrompt: '',
+				matchedSkills: [],
+				matchedAgents: [],
+			};
+		}
+	}
 
 	const terminalContext: TerminalCommandContext = {
 		sessionResource: request.sessionResource,

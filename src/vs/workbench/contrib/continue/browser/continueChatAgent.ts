@@ -48,7 +48,7 @@ import { ILanguageModelToolsService } from '../../chat/common/tools/languageMode
 import { CONTINUE_EXTENSION_ID, isContinuePhysicalAiIde } from './continueProduct.js';
 import { CONTINUE_LM_VENDOR } from './continueLanguageModelProvider.js';
 import { buildContinueSkillsContext, buildContinueSkillsContextFast, type ContinueSkillsContext, extractSkillRoutingQuery, hasScaffoldProjectIntent, hasWebSearchIntent, loadSkillWarmSnapshot } from './continueSkillsContext.js';
-import { checkNetworkOnline, isNetworkOnline } from './continueNetworkStatus.js';
+import { checkNetworkOnline } from './continueNetworkStatus.js';
 import { ContinueSkillEmbeddingIndex } from './continueSkillEmbeddings.js';
 import { classifySkillRoutingOutcome, ContinueSkillFeedbackStore } from './continueSkillFeedback.js';
 import { AgentMemoryStore, ContinueSelfEvolving, TaskExecutionRecorder } from './continueSelfEvolving.js';
@@ -1038,13 +1038,18 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			this._logService.warn(`[Continue][Media] collection failed: ${err instanceof Error ? err.message : String(err)}`);
 		}
 
-		const isOnline = await checkNetworkOnline();
+		// The renderer-side reachability probe (fetch to bing.com) is only a hint:
+		// on Linux it fails behind proxies / firewalls / without NetworkManager even
+		// when the extension host (which performs the real search, proxy-aware) is
+		// online. Never let it hide search_web — the tool reports real failures itself.
+		const probeOnline = await checkNetworkOnline();
 		const rawWebSearchIntent = hasWebSearchIntent(request.message, { isOnline: true });
 		const webSearchEnabled = isWebSearchEnabled(this._configurationService);
-		const allowWebSearch = isOnline && webSearchEnabled;
+		const isOnline = webSearchEnabled ? true : probeOnline;
+		const allowWebSearch = webSearchEnabled;
 		const webSearchIntent = allowWebSearch && rawWebSearchIntent;
-		if (!isOnline && rawWebSearchIntent) {
-			this._logService.info('[Continue] Offline mode: disabling search_web tool and webSearchIntent for this request');
+		if (!probeOnline && rawWebSearchIntent) {
+			this._logService.info('[Continue] Reachability probe failed; keeping search_web available and letting the tool report real network errors');
 		}
 		const lightweightTask = isLightweightAgentTask(request.message, {
 			codeChangeIntent,
@@ -3164,15 +3169,6 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 			}
 
 			// Remaining Continue core tools (search_web, ls, codebase, …).
-			if (effectiveCall.name === 'search_web' && !isNetworkOnline()) {
-				const reallyOnline = await checkNetworkOnline(true);
-				if (!reallyOnline) {
-					return {
-						ok: false,
-						text: 'Search web is disabled: no network connection detected. Please answer without web search.',
-					};
-				}
-			}
 			const coreParams = reshapeParamsForContinueCore(effectiveCall.name, params);
 			const coreResult = await invokeContinueBuiltInTool(
 				this._commandService,
