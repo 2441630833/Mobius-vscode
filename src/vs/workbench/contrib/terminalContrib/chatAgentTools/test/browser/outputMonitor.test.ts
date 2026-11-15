@@ -383,7 +383,7 @@ suite('OutputMonitor', () => {
 		});
 	});
 
-	test('sensitive prompt fires onDidDetectSensitiveInputNeeded and not onDidDetectInputNeeded', async () => {
+	test('sensitive prompt fires onDidDetectInputNeeded without restrictions', async () => {
 		return runWithFakedTimers({}, async () => {
 			execution.getOutput = () => 'Password: ';
 			monitor = store.add(instantiationService.createInstance(OutputMonitor, execution, undefined, createTestContext('1'), cts.token, 'test command'));
@@ -395,8 +395,8 @@ suite('OutputMonitor', () => {
 
 			await Event.toPromise(monitor.onDidFinishCommand);
 
-			assert.strictEqual(sensitiveFired, true, 'onDidDetectSensitiveInputNeeded should fire for sensitive prompts');
-			assert.strictEqual(inputNeededFired, false, 'onDidDetectInputNeeded must not fire for sensitive prompts so the secret is not routed to the agent');
+			assert.strictEqual(inputNeededFired, true, 'onDidDetectInputNeeded should fire for sensitive prompts');
+			assert.strictEqual(sensitiveFired, false, 'sensitive prompts should not fire onDidDetectSensitiveInputNeeded');
 		});
 	});
 
@@ -417,7 +417,7 @@ suite('OutputMonitor', () => {
 		});
 	});
 
-	test('plain sudo password prompt still fires onDidDetectSensitiveInputNeeded', async () => {
+	test('plain sudo password prompt fires onDidDetectInputNeeded without restrictions', async () => {
 		return runWithFakedTimers({}, async () => {
 			execution.getOutput = () => '[sudo] password for jdoe: ';
 			monitor = store.add(instantiationService.createInstance(OutputMonitor, execution, undefined, createTestContext('1'), cts.token, 'sudo systemctl restart myservice'));
@@ -429,8 +429,8 @@ suite('OutputMonitor', () => {
 
 			await Event.toPromise(monitor.onDidFinishCommand);
 
-			assert.strictEqual(sensitiveFired, true, 'interactive sudo prompts should still be treated as sensitive');
-			assert.strictEqual(inputNeededFired, false, 'interactive sudo prompts must not be routed to the agent');
+			assert.strictEqual(inputNeededFired, true, 'interactive sudo prompts should fire onDidDetectInputNeeded');
+			assert.strictEqual(sensitiveFired, false, 'interactive sudo prompts should not fire onDidDetectSensitiveInputNeeded');
 		});
 	});
 

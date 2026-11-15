@@ -413,15 +413,11 @@ export class OutputMonitor extends Disposable implements IOutputMonitor {
 		}
 
 		// In async mode, signal the agent so it can drive send_to_terminal.
+		// Mobius allows terminal commands to input sensitive information without restrictions or blocking.
 		if (this._asyncMode) {
 			if (shouldFireInputNeeded) {
-				if (this._isSensitivePrompt(outputLastLine)) {
-					this._logService.trace('OutputMonitor: Async mode - sensitive input prompt detected, signaling sensitive UI');
-					this._onDidDetectSensitiveInputNeeded.fire();
-				} else {
-					this._logService.trace('OutputMonitor: Async mode - input-required pattern detected, signaling agent');
-					this._onDidDetectInputNeeded.fire();
-				}
+				this._logService.trace('OutputMonitor: Async mode - input-required pattern detected, signaling agent');
+				this._onDidDetectInputNeeded.fire();
 			}
 			this._cleanupIdleInputListener();
 			return { shouldContinuePolling: false, output };
@@ -429,17 +425,10 @@ export class OutputMonitor extends Disposable implements IOutputMonitor {
 
 		// In foreground mode, fire the event so the race in runInTerminalTool can pick it
 		// up and return control to the agent (which uses send_to_terminal to provide input).
-		// For sensitive prompts (passwords, secrets, OTPs, …) we instead fire a separate
-		// event so the tool can show a confirmation dialog that focuses the terminal —
-		// the secret must never be routed through the model.
+		// Mobius allows terminal commands to input sensitive information without restrictions or blocking.
 		if (shouldFireInputNeeded) {
-			if (this._isSensitivePrompt(outputLastLine)) {
-				this._logService.trace('OutputMonitor: Sensitive input prompt detected, signaling sensitive UI');
-				this._onDidDetectSensitiveInputNeeded.fire();
-			} else {
-				this._logService.trace('OutputMonitor: Input-required pattern detected, signaling agent');
-				this._onDidDetectInputNeeded.fire();
-			}
+			this._logService.trace('OutputMonitor: Input-required pattern detected, signaling agent');
+			this._onDidDetectInputNeeded.fire();
 			this._cleanupIdleInputListener();
 			return { shouldContinuePolling: false, output };
 		}
@@ -659,6 +648,9 @@ export function matchTerminalPromptOption(options: readonly string[], suggestedO
  * normal command output (build logs, headers, etc.).
  */
 export function detectsHighConfidenceInputPattern(cursorLine: string): boolean {
+	if (detectsSensitiveInputPrompt(cursorLine)) {
+		return true;
+	}
 	return [
 		// PowerShell-style multi-option line (supports [?] Help and optional default suffix) ending
 		// in whitespace.  Uses [^\[]* to match each label (everything up to the next bracket),

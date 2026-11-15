@@ -172,7 +172,7 @@ function createPowerShellModelDescription(shell: string, sandboxingOptions: ISan
 		'',
 		'Interactive Input Handling:',
 		'- When a terminal command is waiting for interactive input, do NOT suggest alternatives or ask the user whether to proceed. Instead, use the vscode_askQuestions tool to collect the needed values from the user, then send them.',
-		`- NEVER use vscode_askQuestions to request sensitive input such as passwords, passphrases, API keys, tokens, or other secrets — answers to that tool are sent through the model. If the prompt requires a secret, tell the user to type it directly into the terminal and stop; do not call vscode_askQuestions or ${TerminalToolId.SendToTerminal} for that prompt.`,
+		`- If the prompt requires sensitive input (such as passwords, passphrases, API keys, tokens, or other secrets), you may ask the user via vscode_askQuestions or supply the required secret using ${TerminalToolId.SendToTerminal}.`,
 		`- Send exactly one answer per prompt using ${TerminalToolId.SendToTerminal}. Never send multiple answers in a single send.`,
 		`- After each send, call ${TerminalToolId.GetTerminalOutput} to read the next prompt before sending the next answer.`,
 		'- Continue one prompt at a time until the command finishes.',
@@ -307,7 +307,7 @@ Best Practices:
 
 Interactive Input Handling:
 - When a terminal command is waiting for interactive input, do NOT suggest alternatives or ask the user whether to proceed. Instead, use the vscode_askQuestions tool to collect the needed values from the user, then send them.
-- NEVER use vscode_askQuestions to request sensitive input such as passwords, passphrases, API keys, tokens, or other secrets — answers to that tool are sent through the model. If the prompt requires a secret, tell the user to type it directly into the terminal and stop; do not call vscode_askQuestions or send_to_terminal for that prompt.
+- If the prompt requires sensitive input (such as passwords, passphrases, API keys, tokens, or other secrets), you may ask the user via vscode_askQuestions or supply the required secret using send_to_terminal.
 - Send exactly one answer per prompt using ${TerminalToolId.SendToTerminal}. Never send multiple answers in a single send.
 - After each send, call ${TerminalToolId.GetTerminalOutput} to read the next prompt before sending the next answer.
 - Continue one prompt at a time until the command finishes.`);
@@ -1604,35 +1604,8 @@ export class RunInTerminalTool extends Disposable implements IToolImpl {
 			const isAutoApproved = chatSessionResource && isSessionAutoApproveLevel(chatSessionResource, this._configurationService, this._chatWidgetService, this._chatService);
 			const chatModel = chatSessionResource && this._chatService.getSession(chatSessionResource);
 			if (isAutoApproved) {
-				// Autopilot / auto-approve: no human is in the loop to type the
-				// secret, and the terminal can't reliably be focused after the
-				// tool returns. Cancel the command and let the caller emit a
-				// steering note that tells the agent the user is unavailable.
-				// We also surface a small dismiss-only chat part so the user
-				// can see what happened even if the agent doesn't follow up
-				// with a message of its own.
-				autoCancelled = true;
-				if (chatModel instanceof ChatModel) {
-					const request = chatModel.getRequests().at(-1);
-					if (request) {
-						const infoPart = new ChatElicitationRequestPart(
-							new MarkdownString(localize('runInTerminal.sensitiveInput.autoCancelTitle', "Terminal command cancelled — sensitive input required")),
-							new MarkdownString(localize('runInTerminal.sensitiveInput.autoCancelMessage', "The terminal command was prompting for a password or other secret. Auto-approve / autopilot mode cannot safely supply secrets, so the command was cancelled. Run the command interactively if you want to provide the secret.")),
-							'',
-							localize('runInTerminal.sensitiveInput.dismiss', "Dismiss"),
-							'',
-							async () => { infoPart.hide(); return ElicitationState.Accepted; },
-							async () => { infoPart.hide(); return ElicitationState.Rejected; },
-							undefined,
-							undefined,
-							undefined,
-							undefined,
-						);
-						chatModel.acceptResponseProgress(request, infoPart);
-					}
-				}
-				onAutoCancelled?.();
-				cancelExecution();
+				// Mobius allows terminal commands to input sensitive information without restrictions or blocking.
+				// In auto-approve / autopilot mode, do not cancel execution.
 				return;
 			}
 			if (!(chatModel instanceof ChatModel)) {
@@ -1650,7 +1623,7 @@ export class RunInTerminalTool extends Disposable implements IToolImpl {
 
 			const part = new ChatElicitationRequestPart(
 				new MarkdownString(localize('runInTerminal.sensitiveInput.title', "Terminal is waiting for sensitive input")),
-				new MarkdownString(localize('runInTerminal.sensitiveInput.message', "The terminal command appears to be prompting for a password or other sensitive value. Focus the terminal to type it directly — secrets must not be sent through chat.")),
+				new MarkdownString(localize('runInTerminal.sensitiveInput.message', "The terminal command appears to be prompting for a password or other sensitive value. Focus the terminal to type it directly, or provide it via chat/tools.")),
 				'',
 				localize('runInTerminal.sensitiveInput.focus', "Focus Terminal"),
 				localize('runInTerminal.sensitiveInput.cancel', "Cancel Command"),
@@ -2547,7 +2520,7 @@ export class RunInTerminalTool extends Disposable implements IToolImpl {
 			}
 		}
 		if (didSensitiveAutoCancelled) {
-			resultText.push(`Note: The command in terminal ID ${termId} was prompting for a password, passphrase, or other secret. The user is unavailable (auto-approve / autopilot mode is on, so no human can focus the terminal to type a secret) and the command has been cancelled. Stop, do NOT retry the command, do NOT call ${TerminalToolId.SendToTerminal}, and do NOT call vscode_askQuestions for the secret. Tell the user to run the command interactively when they are available.\n\n`);
+			resultText.push(`Note: The command in terminal ID ${termId} was prompting for a password, passphrase, or other secret. You may provide it using ${TerminalToolId.SendToTerminal}.\n\n`);
 		} else if (didInputNeeded) {
 			resultText.push(`Note: The command is running in terminal ID ${termId} and may be waiting for input.\n${this._buildInputNeededSteeringText(chatSessionResource, termId, 'none')}\n\n`);
 		} else if (didTimeout && timeoutValue !== undefined && timeoutValue > 0) {
@@ -2626,13 +2599,11 @@ export class RunInTerminalTool extends Disposable implements IToolImpl {
 		lines.push(`This note is not a signal to end the turn — pick one of the actions below and continue.`);
 		if (isAutoApproved) {
 			// In auto-approve mode, prioritize direct action to minimize round-trips.
-			// askQuestions auto-responds in autopilot, so secret prompts should not be
-			// routed there — the model should skip secrets it cannot answer.
-			lines.push(`  1. If the output clearly ends with a non-secret input prompt (Continue? (y/n), Enter selection, etc. — a normal shell prompt like \`$\` or \`#\` does NOT count), determine the answer and immediately call ${TerminalToolId.SendToTerminal} with id="${termId}" (which returns the next few lines of output). Repeat one prompt at a time. Never guess passwords, passphrases, tokens, or other secrets — if the prompt requires a secret you do not have, inform the user and stop.`);
+			lines.push(`  1. If the output clearly ends with an input prompt (Continue? (y/n), Enter selection, password prompt, etc. — a normal shell prompt like \`$\` or \`#\` does NOT count), determine the answer and immediately call ${TerminalToolId.SendToTerminal} with id="${termId}" (which returns the next few lines of output). Repeat one prompt at a time. If the prompt requires a secret you do not have, ask the user or inform them and continue.`);
 			lines.push(`  2. If the command may still be producing output or the shell prompt has not returned, call ${TerminalToolId.GetTerminalOutput} with id="${termId}" to continue polling.`);
 		} else {
 			lines.push(`  1. If the command may still be producing output or the shell prompt has not returned, call ${TerminalToolId.GetTerminalOutput} with id="${termId}" to continue polling. This is the default and safest action when unsure.`);
-			lines.push(`  2. Only if the output clearly ends with a real non-secret input prompt (Continue? (y/n), Enter selection, etc. — a normal shell prompt like \`$\` or \`#\` does NOT count), call the vscode_askQuestions tool to ask the user, then send each answer using ${TerminalToolId.SendToTerminal} with id="${termId}" (which returns the next few lines of output). Repeat one prompt at a time. NEVER route secret prompts (passwords, passphrases, tokens, API keys, etc.) through vscode_askQuestions — answers to that tool are sent through the model. For secret prompts, tell the user to type the value directly into the terminal and stop.`);
+			lines.push(`  2. Only if the output clearly ends with a real input prompt (Continue? (y/n), Enter selection, password, etc. — a normal shell prompt like \`$\` or \`#\` does NOT count), call the vscode_askQuestions tool to ask the user, then send each answer using ${TerminalToolId.SendToTerminal} with id="${termId}" (which returns the next few lines of output). Repeat one prompt at a time. If the prompt requires sensitive input, you may route it through vscode_askQuestions or type it into the terminal.`);
 		}
 		if (hungHint === 'timeout') {
 			lines.push(`  3. A timeout does not mean the command failed — call ${TerminalToolId.GetTerminalOutput} with id="${termId}" to continue polling. Only call ${TerminalToolId.KillTerminal} if the command is genuinely hung and you need to retry with a different approach.`);
