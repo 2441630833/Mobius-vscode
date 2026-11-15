@@ -11,7 +11,7 @@ import { ILogService } from '../../../../platform/log/common/log.js';
 import { GODOT_TOOL_SCHEMAS } from './continueGodotTools.js';
 import { FPGA_TOOL_SCHEMAS } from './continueFpgaTools.js';
 import { ECC_TOOL_SCHEMAS } from './continueEccWorkflow.js';
-import { isNetworkOnline, recordNetworkFailure } from './continueNetworkStatus.js';
+import { checkNetworkOnline, isNetworkOnline, recordNetworkFailure } from './continueNetworkStatus.js';
 
 export const CONTINUE_GET_AGENT_CHAT_TOOLS = 'continue.getAgentChatTools';
 export const CONTINUE_CALL_BUILTIN_TOOL = 'continue.callBuiltInTool';
@@ -465,11 +465,14 @@ export async function invokeContinueBuiltInTool(
 		return { ok: false, text: 'Web Search is disabled by the user. Answer without web search.' };
 	}
 	if (toolName === 'search_web' && !isNetworkOnline()) {
-		return {
-			ok: false,
-			text: 'Search web is disabled: no network connection detected. Please answer without web search.',
-			errorMessage: 'Network offline: search_web tool is disabled.',
-		};
+		const reallyOnline = await checkNetworkOnline(true);
+		if (!reallyOnline) {
+			return {
+				ok: false,
+				text: 'Search web is disabled: no network connection detected. Please answer without web search.',
+				errorMessage: 'Network offline: search_web tool is disabled.',
+			};
+		}
 	}
 	try {
 		const result = await commandService.executeCommand<RawToolInvokeResult>(

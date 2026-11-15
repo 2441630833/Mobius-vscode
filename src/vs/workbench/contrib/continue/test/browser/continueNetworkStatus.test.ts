@@ -20,6 +20,11 @@ suite('Continue Network Status & Search Web Gating', () => {
 		setNetworkOnlineForTesting(undefined);
 	});
 
+	test('isNetworkOnline defaults to true for Linux/Electron compatibility', () => {
+		setNetworkOnlineForTesting(undefined);
+		assert.strictEqual(isNetworkOnline(), true);
+	});
+
 	test('isNetworkOnline reflects testing override', () => {
 		setNetworkOnlineForTesting(true);
 		assert.strictEqual(isNetworkOnline(), true);

@@ -20,7 +20,7 @@ import { IAccessibilityService } from '../../../../platform/accessibility/common
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { ChatContextKeys } from '../../chat/common/actions/chatContextKeys.js';
 import { ChatAgentLocation } from '../../chat/common/constants.js';
-import { CONTINUE_WEB_SEARCH_ENABLED_SETTING } from './continueWebSearch.js';
+import { CONTINUE_WEB_SEARCH_ENABLED_SETTING, isWebSearchEnabled } from './continueWebSearch.js';
 
 export const TOGGLE_WEB_SEARCH_COMMAND_ID = 'continue.toggleWebSearch';
 
@@ -71,10 +71,26 @@ export class ToggleWebSearchAction extends Action2 {
 		const configurationService = accessor.get(IConfigurationService);
 		const notificationService = accessor.get(INotificationService);
 
-		const current = configurationService.getValue<boolean>(CONTINUE_WEB_SEARCH_ENABLED_SETTING) ?? true;
+		const inspect = configurationService.inspect<boolean>(CONTINUE_WEB_SEARCH_ENABLED_SETTING);
+		const current = inspect?.value ?? configurationService.getValue<boolean>(CONTINUE_WEB_SEARCH_ENABLED_SETTING) ?? true;
 		const next = !current;
 
-		await configurationService.updateValue(CONTINUE_WEB_SEARCH_ENABLED_SETTING, next, ConfigurationTarget.USER);
+		const target = inspect?.workspaceFolderValue !== undefined
+			? ConfigurationTarget.WORKSPACE_FOLDER
+			: inspect?.workspaceValue !== undefined
+				? ConfigurationTarget.WORKSPACE
+				: ConfigurationTarget.USER;
+
+		try {
+			await configurationService.updateValue(CONTINUE_WEB_SEARCH_ENABLED_SETTING, next, target);
+		} catch {
+			try {
+				await configurationService.updateValue(CONTINUE_WEB_SEARCH_ENABLED_SETTING, next);
+			} catch (err) {
+				notificationService.error(err instanceof Error ? err : String(err));
+				return;
+			}
+		}
 
 		if (next) {
 			notificationService.info(localize(
@@ -133,9 +149,14 @@ export class WebSearchButtonActionViewItem extends MenuEntryActionViewItem {
 		this._updateSearchState();
 	}
 
+	override async onClick(event: MouseEvent): Promise<void> {
+		await super.onClick(event);
+		this._updateSearchState();
+	}
+
 	protected override updateLabel(): void {
 		if (this.label) {
-			const enabled = this.configurationService.getValue<boolean>(CONTINUE_WEB_SEARCH_ENABLED_SETTING) ?? true;
+			const enabled = isWebSearchEnabled(this.configurationService);
 			this.label.textContent = enabled
 				? localize('continue.webSearch.onLabel', "Web Search On")
 				: localize('continue.webSearch.offLabel', "Web Search Off");
@@ -143,7 +164,7 @@ export class WebSearchButtonActionViewItem extends MenuEntryActionViewItem {
 	}
 
 	private _updateSearchState(): void {
-		const enabled = this.configurationService.getValue<boolean>(CONTINUE_WEB_SEARCH_ENABLED_SETTING) ?? true;
+		const enabled = isWebSearchEnabled(this.configurationService);
 		this.updateLabel();
 		if (this.label) {
 			this.label.classList.toggle('checked', enabled);

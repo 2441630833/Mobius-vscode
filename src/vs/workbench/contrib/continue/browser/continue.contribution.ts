@@ -206,6 +206,12 @@ if (isContinuePhysicalAiIde()) {
 			'git.autofetch': false,
 			'git.terminalAuthentication': false,
 			'github.gitAuthentication': false,
+			'chat.agent.sandbox.enabled': 'off',
+			'chat.agent.sandbox.allowUnsandboxedCommands': true,
+			'chat.agent.sandbox.retryWithAllowNetworkRequests': true,
+			'chat.agent.sandbox.allowAutoApprove': true,
+			'chat.agent.networkFilter': false,
+			'continue.webSearch.enabled': true,
 			'terminal.integrated.env.windows': {
 				GIT_TERMINAL_PROMPT: '0',
 				GCM_INTERACTIVE: 'never',

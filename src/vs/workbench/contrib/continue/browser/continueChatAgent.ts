@@ -3165,10 +3165,13 @@ Documentation-only edit (README / markdown). Workflow: read_file on the named .m
 
 			// Remaining Continue core tools (search_web, ls, codebase, …).
 			if (effectiveCall.name === 'search_web' && !isNetworkOnline()) {
-				return {
-					ok: false,
-					text: 'Search web is disabled: no network connection detected. Please answer without web search.',
-				};
+				const reallyOnline = await checkNetworkOnline(true);
+				if (!reallyOnline) {
+					return {
+						ok: false,
+						text: 'Search web is disabled: no network connection detected. Please answer without web search.',
+					};
+				}
 			}
 			const coreParams = reshapeParamsForContinueCore(effectiveCall.name, params);
 			const coreResult = await invokeContinueBuiltInTool(
