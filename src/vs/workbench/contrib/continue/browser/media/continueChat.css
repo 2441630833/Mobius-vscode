@@ -110,9 +110,9 @@
 }
 
 .monaco-workbench :is(.chat-input-toolbar, .chat-execute-toolbar) .action-label:is(.chat-local-ocr-button, .chat-web-search-button).checked {
-	background-color: var(--vscode-badge-background, rgba(0, 122, 204, 0.2));
-	color: var(--vscode-badge-foreground, #ffffff);
-	border-color: var(--vscode-focusBorder, #007acc);
+	background-color: transparent;
+	color: var(--vscode-foreground, #cccccc);
+	border-color: var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.45));
 	font-weight: 500;
 }
 
